@@ -68,6 +68,13 @@ from lerobot.cameras import (  # noqa: F401
 )
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
+# Import WebRTC camera support
+try:
+    from lerobot.cameras.webrtc.configuration_webrtc import WebRTCCameraConfig  # noqa: F401
+except ImportError:
+    # WebRTC dependencies might not be available
+    pass
+
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.image_writer import safe_stop_image_writer
@@ -79,6 +86,8 @@ from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    QnbotW,
+    QnbotWConfig,
     bi_so100_follower,
     hope_jr,
     koch_follower,
@@ -259,16 +268,32 @@ def record_loop(
 
             action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
         else:
-            logging.info(
-                "No policy or teleoperator provided, skipping action generation."
-                "This is likely to happen when resetting the environment without a teleop device."
-                "The robot won't be at its rest position at the start of the next episode."
-            )
-            continue
+            # For ROS2 robots without teleop/policy, use current observation as action
+            # This allows recording the robot's current state as both observation and action
+            if robot.name in ['qnbot_w']:
+                # Extract position values from observation for action
+                action = {}
+                for key, value in observation.items():
+                    if key.endswith('.pos'):
+                        action[key] = value
+                logging.debug(f"Using observation as action for ROS2 robot: {len(action)} joints")
+            else:
+                logging.info(
+                    "No policy or teleoperator provided, skipping action generation."
+                    "This is likely to happen when resetting the environment without a teleop device."
+                    "The robot won't be at its rest position at the start of the next episode."
+                )
+                continue
 
         # Action can eventually be clipped using `max_relative_target`,
         # so action actually sent is saved in the dataset.
-        sent_action = robot.send_action(action)
+        # For ROS2 robots in observation-only mode, don't send commands
+        if robot.name in ['qnbot_w'] and teleop is None and policy is None:
+            # In observation-only mode, just record the current state as action
+            sent_action = action
+            logging.debug("Recording observation as action without sending commands")
+        else:
+            sent_action = robot.send_action(action)
 
         if dataset is not None:
             action_frame = build_dataset_frame(dataset.features, sent_action, prefix="action")

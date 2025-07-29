@@ -65,5 +65,9 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from .bi_so100_leader import BiSO100Leader
 
         return BiSO100Leader(config)
+    elif config.type == "qnbot_w_teleop":
+        from .qnbot_w_teleop import QnbotWTeleop
+
+        return QnbotWTeleop(config)
     else:
         raise ValueError(config.type)

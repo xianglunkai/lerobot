@@ -67,9 +67,11 @@ def update_policy(
     start_time = time.perf_counter()
     device = get_device_from_parameters(policy)
     policy.train()
+    # 使用自动混合精读（AMP）进行前向传播损失计算
     with torch.autocast(device_type=device.type) if use_amp else nullcontext():
         loss, output_dict = policy.forward(batch)
         # TODO(rcadene): policy.unnormalize_outputs(out_dict)
+    # Backward pass with scaling
     grad_scaler.scale(loss).backward()
 
     # Unscale the gradient of the optimizer's assigned params in-place **prior to gradient clipping**.

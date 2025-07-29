@@ -12,13 +12,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .camera import Camera
-from .configs import CameraConfig, ColorMode, Cv2Rotation
-from .utils import make_cameras_from_configs
-
-# Import WebRTC camera
-try:
-    from .webrtc import WebRTCCamera, WebRTCCameraConfig
-except ImportError:
-    # WebRTC dependencies might not be available
-    pass
+from .camera_webrtc import WebRTCCamera
+from .configuration_webrtc import WebRTCCameraConfig 
