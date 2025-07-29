@@ -244,7 +244,14 @@ class PI0Policy(PreTrainedPolicy):
             config.output_features, config.normalization_mapping, dataset_stats
         )
 
-        self.language_tokenizer = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
+        from modelscope import snapshot_download
+        model_dir = snapshot_download(
+            "google/paligemma-3b-pt-224", 
+            cache_dir="./models"  # 指定本地缓存路径
+        )
+        # from huggingface_hub
+        # model_dir = "google/paligemma-3b-pt-224"
+        self.language_tokenizer = AutoTokenizer.from_pretrained(model_dir)
         self.model = PI0FlowMatching(config)
 
         self.reset()
