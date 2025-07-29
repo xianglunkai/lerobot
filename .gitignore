@@ -173,3 +173,9 @@ outputs/
 
 # Dev folders
 .cache/*
+
+# data
+datasets/
+
+# modules
+modules/
