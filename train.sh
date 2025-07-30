@@ -2,7 +2,7 @@
 rm -rf outputs/qnbot_cherry_transfer_pi0
 
 python3 -m lerobot.scripts.train \
-    --dataset.root=./dataset/qnbot_data1 \
+    --dataset.root=./datasets/qnbot_data1 \
     --dataset.repo_id=bradley/qnbot_cherry_transfer_20250705 \
     --policy.type=pi0 \
     --policy.repo_id=lerobot/pi0 \
