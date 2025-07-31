@@ -6,8 +6,9 @@ python3 -m lerobot.scripts.train \
     --dataset.repo_id=bradley/qnbot_cherry_transfer_20250705 \
     --policy.type=pi0 \
     --policy.repo_id=lerobot/pi0 \
+    --policy.train_expert_only=true \
     --output_dir=outputs/qnbot_cherry_transfer_pi0 \
-    --batch_size=8 \
+    --batch_size=4 \
     --steps=10000 \
     --policy.device=cuda \
     --wandb.enable=true \
