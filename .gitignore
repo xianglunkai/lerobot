@@ -183,9 +183,7 @@ datasets/
 
 # modules
 modules/
-<<<<<<< HEAD
-=======
 
 # modles
 models/
->>>>>>> 4b92b3d (add ignore files)
+checkpoints/
