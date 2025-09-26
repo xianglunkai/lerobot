@@ -782,6 +782,7 @@ traitlets==5.14.3
     #   ipython
     #   jupyter-core
     #   matplotlib-inline
+<<<<<<< HEAD
     #   nbformat
 transformers==4.57.1
     # via
@@ -790,6 +791,11 @@ transformers==4.57.1
     #   peft
 transforms3d==0.4.2
     # via teleop
+=======
+# transformers==4.51.3
+transformers
+    # via lerobot
+>>>>>>> 804af91 (add support cobot magic robot)
 triton==3.3.1
     # via torch
 typing-extensions==4.15.0
