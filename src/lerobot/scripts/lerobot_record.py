@@ -105,13 +105,7 @@ from lerobot.processor.rename_processor import rename_stats
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
-<<<<<<< HEAD
     bi_so_follower,
-=======
-    QnbotW,
-    QnbotWConfig,
-    bi_so100_follower,
->>>>>>> 79ff1ea (add qnbot robot)
     earthrover_mini_plus,
     hope_jr,
     koch_follower,
@@ -120,6 +114,8 @@ from lerobot.robots import (  # noqa: F401
     reachy2,
     so_follower,
     unitree_g1,
+    qnbot_w,
+    cobot_magic,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
@@ -229,8 +225,8 @@ class RecordConfig:
             self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
             self.policy.pretrained_path = policy_path
 
-        if self.teleop is None and self.policy is None:
-            raise ValueError("Choose a policy, a teleoperator or both to control the robot")
+        # if self.teleop is None and self.policy is None:
+        #     raise ValueError("Choose a policy, a teleoperator or both to control the robot")
 
     @classmethod
     def __get_path_fields__(cls) -> list[str]:
@@ -373,14 +369,15 @@ def record_loop(
             act = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
             act_processed_teleop = teleop_action_processor((act, obs))
         else:
-            # For ROS2 robots without teleop/policy, use current observation as action
+            # For ROS1/2 robots without teleop/policy, use current observation as action
             # This allows recording the robot's current state as both observation and action
-            if robot.name in ['qnbot_w']:
+            if robot.name in ['qnbot_w', 'cobot_magic']:
                 # Extract position values from observation for action
                 action = {}
-                for key, value in observation.items():
+                for key, value in obs.items():
                     if key.endswith('.pos'):
                         action[key] = value
+                act_processed_teleop = teleop_action_processor((action, obs))
                 logging.debug(f"Using observation as action for ROS2 robot: {len(action)} joints")
             else:
                 logging.info(
@@ -400,7 +397,7 @@ def record_loop(
         # Action can eventually be clipped using `max_relative_target`,
         # so action actually sent is saved in the dataset.
         # For ROS2 robots in observation-only mode, don't send commands
-        if robot.name in ['qnbot_w'] and teleop is None and policy is None:
+        if robot.name in ['qnbot_w', 'cobot_magic'] and teleop is None and policy is None:
             # In observation-only mode, just record the current state as action
             sent_action = action
             logging.debug("Recording observation as action without sending commands")
