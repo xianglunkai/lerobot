@@ -186,3 +186,5 @@ modules/
 
 # modles
 models/
+
+checkpoints/
