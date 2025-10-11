@@ -65,7 +65,8 @@ except ImportError:
     logging.warning("ROS2 not available. QnbotW robot will not be functional but can be imported for training.")
 
 from lerobot.cameras.utils import make_cameras_from_configs
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+
 
 from ..robot import Robot
 from .config_qnbot_w import QnbotWConfig

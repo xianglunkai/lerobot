@@ -23,19 +23,19 @@ export ROS_HOSTNAME=192.168.1.163
 export ROS_MASTER_URI=http://192.168.1.139:11311
 
 
-    python3 -m lerobot.record \
+python3 -m lerobot.scripts.lerobot_record \
     --robot.type=cobot_magic \
-    --robot.id=cobot_magic_recording \
+    --robot.id=pour_water \
     --robot.cameras='{
         "high": {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30},
         "left": {"type": "opencv", "index_or_path": 1, "width": 640, "height": 480, "fps": 30},
         "right": {"type": "opencv", "index_or_path": 2, "width": 640, "height": 480, "fps": 30}
     }' \
-    --dataset.repo_id=bradley/cobot_magic_$(date +%Y%m%d_%H%M%S) \
-    --dataset.single_task="fold towel" \
-    --dataset.num_episodes=1 \
-    --dataset.episode_time_s=60 \
+    --dataset.repo_id=lerobot/pour_water_$(date +%Y%m%d_%H%M%S) \
+    --dataset.single_task="pour water from the bottle into the cup until it is one-third full, then put it down" \
+    --dataset.num_episodes=15 \
+    --dataset.episode_time_s=40 \
     --dataset.fps=30 \
-    --dataset.video=true \
+    --dataset.video=True \
     --dataset.push_to_hub=false \
     --display_data=true
