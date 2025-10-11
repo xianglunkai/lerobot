@@ -37,7 +37,7 @@ ROS1_AVAILABLE = True
 #     logging.warning("ROS1 not available. CobotMagic robot will not be functional but can be imported for training.")
 
 from lerobot.cameras.utils import make_cameras_from_configs
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..robot import Robot
 from .config_cobot_magic import CobotMagicConfig  # 导入你的配置类
