@@ -22,6 +22,8 @@
 export ROS_HOSTNAME=192.168.1.163
 export ROS_MASTER_URI=http://192.168.1.139:11311
 
+export HF_LEROBOT_HOME=/data/huggingface/lerobot
+export HF_HOME=/data/huggingface
 
 python3 -m lerobot.scripts.lerobot_record \
     --robot.type=cobot_magic \
@@ -33,9 +35,10 @@ python3 -m lerobot.scripts.lerobot_record \
     }' \
     --dataset.repo_id=lerobot/pour_water_$(date +%Y%m%d_%H%M%S) \
     --dataset.single_task="pour water from the bottle into the cup until it is one-third full, then put it down" \
-    --dataset.num_episodes=15 \
-    --dataset.episode_time_s=40 \
+    --dataset.num_episodes=50 \
     --dataset.fps=30 \
-    --dataset.video=True \
+    --dataset.video=False \
     --dataset.push_to_hub=false \
-    --display_data=true
+    --display_data=true \
+    --dataset.episode_time_s=40 \
+    --dataset.reset_time_s=10 \
