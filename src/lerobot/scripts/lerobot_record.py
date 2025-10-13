@@ -339,6 +339,7 @@ def record_loop(
 
         if policy is not None or dataset is not None:
             observation_frame = build_dataset_frame(dataset.features, obs_processed, prefix=OBS_STR)
+            print(f"observation_frame keys: {list(observation_frame.keys())}")
 
         # Get action from either policy or teleop
         if policy is not None and preprocessor is not None and postprocessor is not None:
@@ -394,15 +395,15 @@ def record_loop(
         else:
             action_values = act_processed_teleop
             robot_action_to_send = robot_action_processor((act_processed_teleop, obs))
-        # Action can eventually be clipped using `max_relative_target`,
-        # so action actually sent is saved in the dataset.
-        # For ROS2 robots in observation-only mode, don't send commands
-        if robot.name in ['qnbot_w', 'cobot_magic'] and teleop is None and policy is None:
-            # In observation-only mode, just record the current state as action
-            sent_action = action
-            logging.debug("Recording observation as action without sending commands")
-        else:
-            sent_action = robot.send_action(action)
+        # # Action can eventually be clipped using `max_relative_target`,
+        # # so action actually sent is saved in the dataset.
+        # # For ROS2 robots in observation-only mode, don't send commands
+        # if robot.name in ['qnbot_w', 'cobot_magic'] and teleop is None and policy is None:
+        #     # In observation-only mode, just record the current state as action
+        #     sent_action = action
+        #     logging.debug("Recording observation as action without sending commands")
+        # else:
+        #     sent_action = robot.send_action(action)
 
         # Send action to robot
         # Action can eventually be clipped using `max_relative_target`,
