@@ -336,10 +336,11 @@ def record_loop(
 
         # Applies a pipeline to the raw robot observation, default is IdentityProcessor
         obs_processed = robot_observation_processor(obs)
+        # print(f"obs_processed:{obs_processed}")
 
         if policy is not None or dataset is not None:
             observation_frame = build_dataset_frame(dataset.features, obs_processed, prefix=OBS_STR)
-            print(f"observation_frame keys: {list(observation_frame.keys())}")
+            # print(f"observation_frame : {observation_frame}")
 
         # Get action from either policy or teleop
         if policy is not None and preprocessor is not None and postprocessor is not None:
@@ -459,6 +460,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             use_videos=cfg.dataset.video,
         ),
     )
+    # print(f"dataset_features: {dataset_features}")
 
     dataset = None
     listener = None

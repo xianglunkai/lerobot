@@ -27,18 +27,18 @@ export HF_HOME=/data/huggingface
 
 python3 -m lerobot.scripts.lerobot_record \
     --robot.type=cobot_magic \
-    --robot.id=pour_water \
+    --robot.id=lerobot_adjust_bottle_action_from_slave \
     --robot.cameras='{
         "high": {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30},
         "left": {"type": "opencv", "index_or_path": 1, "width": 640, "height": 480, "fps": 30},
         "right": {"type": "opencv", "index_or_path": 2, "width": 640, "height": 480, "fps": 30}
     }' \
-    --dataset.repo_id=lerobot/pour_water_$(date +%Y%m%d_%H%M%S) \
-    --dataset.single_task="pour water from the bottle into the cup until it is one-third full, then put it down" \
-    --dataset.num_episodes=50 \
+    --dataset.repo_id=lerobot/lerobot_adjust_bottle_action_from_slave \
+    --dataset.single_task="use the one arm to grasp the bottle on the table, handover it to the another arm and place it on the black book" \
+    --dataset.num_episodes=30 \
     --dataset.fps=30 \
-    --dataset.video=False \
+    --dataset.video=True \
     --dataset.push_to_hub=false \
     --display_data=true \
-    --dataset.episode_time_s=40 \
-    --dataset.reset_time_s=10 \
+    --dataset.episode_time_s=60 \
+    --dataset.reset_time_s=60 \
