@@ -30,6 +30,7 @@ from std_msgs.msg import Float64MultiArray
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from cv_bridge import CvBridge
 from sensor_msgs.msg import Image
+from geometry_msgs.msg import PoseStamped
 
 ROS1_AVAILABLE = True
 # except ImportError:
@@ -76,6 +77,20 @@ class CobotMagicROS1Node:
             self.right_joint_state_callback,
             queue_size=10
         )
+        # rospy.Subscriber(
+        #     config.endpose_left_topic,
+        #     PoseStamped,
+        #     self.endpose_left_callback,
+        #     queue_size=1000,
+        #     tcp_nodelay=True,
+        # )
+        # rospy.Subscriber(
+        #     config.endpose_right_topic,
+        #     PoseStamped,
+        #     self.endpose_right_callback,
+        #     queue_size=1000,
+        #     tcp_nodelay=True,
+        # )
         
         # Command publishers (根据配置使用独立的话题)
         self.left_arm_pub = rospy.Publisher(

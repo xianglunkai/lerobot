@@ -185,5 +185,5 @@ datasets/
 modules/
 
 # modles
-models/
+pretrain_model/
 checkpoints/
