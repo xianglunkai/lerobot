@@ -42,3 +42,4 @@ python3 -m lerobot.scripts.lerobot_record \
     --display_data=true \
     --dataset.episode_time_s=60 \
     --dataset.reset_time_s=60 \
+
