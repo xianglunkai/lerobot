@@ -225,8 +225,8 @@ class RecordConfig:
             self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
             self.policy.pretrained_path = policy_path
 
-        # if self.teleop is None and self.policy is None:
-        #     raise ValueError("Choose a policy, a teleoperator or both to control the robot")
+        if self.teleop is None and self.policy is None:
+            raise ValueError("Choose a policy, a teleoperator or both to control the robot")
 
     @classmethod
     def __get_path_fields__(cls) -> list[str]:
@@ -371,7 +371,7 @@ def record_loop(
             act = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
             act_processed_teleop = teleop_action_processor((act, obs))
         else:
-            # For ROS1/2 robots without teleop/policy, use current observation as action
+            # For ROS2 robots without teleop/policy, use current observation as action
             # This allows recording the robot's current state as both observation and action
             if robot.name in ['qnbot_w', 'cobot_magic']:
                 # Extract position values from observation for action
@@ -396,21 +396,17 @@ def record_loop(
         else:
             action_values = act_processed_teleop
             robot_action_to_send = robot_action_processor((act_processed_teleop, obs))
-        # # Action can eventually be clipped using `max_relative_target`,
-        # # so action actually sent is saved in the dataset.
-        # # For ROS2 robots in observation-only mode, don't send commands
-        # if robot.name in ['qnbot_w', 'cobot_magic'] and teleop is None and policy is None:
-        #     # In observation-only mode, just record the current state as action
-        #     sent_action = action
-        #     logging.debug("Recording observation as action without sending commands")
-        # else:
-        #     sent_action = robot.send_action(action)
-
-        # Send action to robot
+            
         # Action can eventually be clipped using `max_relative_target`,
-        # so action actually sent is saved in the dataset. action = postprocessor.process(action)
-        # TODO(steven, pepijn, adil): we should use a pipeline step to clip the action, so the sent action is the action that we input to the robot.
-        _sent_action = robot.send_action(robot_action_to_send)
+        # so action actually sent is saved in the dataset.
+        # For ROS2 robots in observation-only mode, don't send commands
+        if robot.name in ['qnbot_w', 'cobot_magic'] and teleop is None and policy is None:
+            # In observation-only mode, just record the current state as action
+            _sent_action = action
+            logging.debug("Recording observation as action without sending commands")
+        else:
+            # TODO(steven, pepijn, adil): we should use a pipeline step to clip the action, so the sent action is the action that we input to the robot.
+            _sent_action = robot.send_action(robot_action_to_send)
 
         # Write to dataset
         if dataset is not None:

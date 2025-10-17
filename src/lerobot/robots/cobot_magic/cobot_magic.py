@@ -46,6 +46,35 @@ from .config_cobot_magic import CobotMagicConfig  # 导入你的配置类
 logger = logging.getLogger(__name__)
 
 
+# 移动底座速度控制映射
+COBOTMAGIC_VEL = {
+    "mobile_base.vx": "linear.x",
+    "mobile_base.vy": "linear.y",
+    "mobile_base.vtheta": "angular.z",
+}
+
+# 右臂关节映射
+COBOTMAGIC_R_ARM_JOINTS = {
+    "right_waist.pos": "right_joint0",
+    "right_shoulder.pos": "right_joint1",
+    "right_elbow.pos": "right_joint2",
+    "right_forearm_roll.pos": "right_joint3",
+    "right_wrist_angle.pos": "right_joint4",
+    "right_wrist_rotate.pos": "right_joint5",
+    "right_gripper.pos": "right_joint6",
+}
+
+# 左臂关节映射
+COBOTMAGIC_L_ARM_JOINTS = {
+    "left_waist.pos": "left_joint0",
+    "left_shoulder.pos": "left_joint1",
+    "left_elbow.pos": "left_joint2",
+    "left_forearm_roll.pos": "left_joint3",
+    "left_wrist_angle.pos": "left_joint4",
+    "left_wrist_rotate.pos": "left_joint5",
+    "left_gripper.pos": "left_joint6",
+}
+
 class CobotMagicROS1Node:
     """ROS1 node for CobotMagic robot communication."""
     
@@ -77,6 +106,7 @@ class CobotMagicROS1Node:
             self.right_joint_state_callback,
             queue_size=10
         )
+        
         # rospy.Subscriber(
         #     config.endpose_left_topic,
         #     PoseStamped,

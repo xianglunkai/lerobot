@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ..config import TeleoperatorConfig
 
@@ -23,23 +23,51 @@ class CobotMagicTeleopConfig(TeleoperatorConfig):
     """
     Configuration class for dual arm teleoperator.
     
-    Note: This is primarily included for completeness. For ROS2-based 
-    dual arm recording, teleoperator is typically not needed as data 
-    is recorded directly from robot state.
+    For ROS2-based dual arm recording, teleoperator is typically not needed as data 
+    is recorded directly from robot master arm.
     """
     
-    # Configuration for the left arm teleoperator
-    left_teleop: TeleoperatorConfig
+    # ROS2 node configuration
+    node_name: str = "lerobot_cobot_magic_teleop_node"
+    connection_timeout = 5.0  # seconds
     
-    # Configuration for the right arm teleoperator
-    right_teleop: TeleoperatorConfig
+    # Whether to use the present position of the joints as actions
+    # if False, the goal position of the joints will be used
+    use_present_position: bool = False
+
+    # Whether to use delta actions (relative changes) or absolute actions (absolute changes)
+    use_delta_actions:  bool = True
+    delta_actions_mask: list[bool] = field(default_factory=lambda: [True, True, True, True, True, True, True])
+    
+    # Which parts of the robot to use
+    with_mobile_base: bool = False
+    with_l_arm: bool = True
+    with_r_arm: bool = True
+    
+    # Control command topics (for reading actions)
+    left_arm_command_topic: str = "/master/joint_left"
+    right_arm_command_topic: str = "/master/joint_right" 
+    mobile_command_topic: str = "/cmd_vel"
+    
+    # Joint state topic (for reading robot state)
+    left_joint_states_topic: str = "/puppet/joint_left"
+    right_joint_states_topic: str = "/puppet/joint_right"
+    mobile_base_state_topic: str = "/odom_raw"
+    
+    # Joint names configuration
+    left_arm_joints: list[str] = field(default_factory=lambda: ['left_joint0', 'left_joint1', 'left_joint2', 'left_joint3', 'left_joint4', 'left_joint5', 'left_joint6'])
+    
+    right_arm_joints: list[str] = field(default_factory=lambda:['right_joint0', 'right_joint1', 'right_joint2', 'right_joint3', 'right_joint4', 'right_joint5', 'right_joint6'])
+   
     
     def __post_init__(self):
-        super().__post_init__()
-        
-        # Basic validation
-        if self.left_teleop.id == self.right_teleop.id:
+        if not (
+            self.with_mobile_base
+            or self.with_l_arm
+            or self.with_r_arm
+        ):
             raise ValueError(
-                f"Left and right teleoperator must have different IDs. "
-                f"Both teleoperators currently have ID: '{self.left_teleop.id}'"
-            ) 
+                "No Cobot magic teleop part used.\n"
+                "At least one part of the robot must be set to True "
+                "(with_mobile_base, with_l_arm, with_r_arm)"
+            )
