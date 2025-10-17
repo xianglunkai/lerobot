@@ -35,7 +35,7 @@ class CobotMagicConfig(RobotConfig):
     """
     
     # ROS2 node configuration
-    node_name: str = "lerobot_cobot_magic_node"
+    node_name: str = "lerobot_cobot_magic_robot_node"
     
     # Joint state topic (for reading robot state)
     left_joint_states_topic: str = "/puppet/joint_left"
