@@ -89,7 +89,6 @@ def update_policy(
     """
     start_time = time.perf_counter()
     policy.train()
-<<<<<<< HEAD
 
     # Get RA-BC weights if enabled
     rabc_batch_weights = None
@@ -116,14 +115,6 @@ def update_policy(
             loss, output_dict = policy.forward(batch)
 
         # TODO(rcadene): policy.unnormalize_outputs(out_dict)
-=======
-    # 使用自动混合精读（AMP）进行前向传播损失计算
-    with torch.autocast(device_type=device.type) if use_amp else nullcontext():
-        loss, output_dict = policy.forward(batch)
-        # TODO(rcadene): policy.unnormalize_outputs(out_dict)
-    # Backward pass with scaling
-    grad_scaler.scale(loss).backward()
->>>>>>> 2eda964 (add qnbot robot)
 
     # Use accelerator's backward method
     accelerator.backward(loss)
