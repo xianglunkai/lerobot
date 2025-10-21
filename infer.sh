@@ -13,12 +13,12 @@
     # --dataset.push_to_hub=false \
     # --display_data=true
 
-    python3 -m lerobot.record \
+    python3 -m lerobot.scripts.lerobot_record \
     --robot.type=cobot_magic \
-    --robot.id=cobot_magic_recording \
-    --policy.path=checkpoints/smolvla/checkpoints/010000/pretrained_model \
-    --dataset.repo_id=bradley/eval_cobot_magic_inference_$(date +%Y%m%d_%H%M%S) \
-    --dataset.single_task="fold_towel" \
+    --robot.id=lerobot_hover_bottle_action_from_slave \
+    --policy.path=/home/xlk/work/lerobot/checkpoints/hover_bottle/025000/pretrained_model \
+    --dataset.repo_id=lerobot/eval_lerobot_hover_bottle_action_from_slave2 \
+    --dataset.single_task="use the one arm to grasp the bottle on the table, handover it to the another arm and place it on the black book" \
     --dataset.num_episodes=1 \
     --dataset.episode_time_s=60 \
     --dataset.fps=30 \
