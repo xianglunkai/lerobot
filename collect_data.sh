@@ -25,6 +25,7 @@ export ROS_MASTER_URI=http://192.168.1.139:11311
 export HF_LEROBOT_HOME=/data/huggingface/lerobot
 export HF_HOME=/data/huggingface
 
+
 python3 -m lerobot.scripts.lerobot_record \
     --robot.type=cobot_magic \
     --robot.id=lerobot_hover_bottle_action_from_slave \
