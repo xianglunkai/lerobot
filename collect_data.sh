@@ -34,7 +34,7 @@ python3 -m lerobot.scripts.lerobot_record \
         "left": {"type": "opencv", "index_or_path": 1, "width": 640, "height": 480, "fps": 30},
         "right": {"type": "opencv", "index_or_path": 2, "width": 640, "height": 480, "fps": 30}
     }' \
-    --dataset.repo_id=lerobot/lerobot_hover_bottle_action_from_slave \
+    --dataset.repo_id=lerobot/lerobot_hover_bottle_action_from_slave_$(date +%Y%m%d_%H%M%S) \
     --dataset.single_task="use the one arm to grasp the bottle on the table, handover it to the another arm and place it on the black book" \
     --dataset.num_episodes=30 \
     --dataset.fps=30 \
@@ -43,5 +43,5 @@ python3 -m lerobot.scripts.lerobot_record \
     --display_data=true \
     --dataset.episode_time_s=60 \
     --dataset.reset_time_s=60 \
-    --teleop.type=cobot_magic_teleop \
-    ---teleop.id=lerobot_hover_bottle_action_from_slave \
+    # --teleop.type=cobot_magic_teleop \
+    # --teleop.id=lerobot_hover_bottle_action_from_slave \
