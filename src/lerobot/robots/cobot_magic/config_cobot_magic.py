@@ -44,6 +44,7 @@ class CobotMagicConfig(RobotConfig):
     # Control command topics (for sending actions)
     left_arm_command_topic: str = "/master/joint_left"
     right_arm_command_topic: str = "/master/joint_right" 
+    robot_base_cmd_topic: str = "/cmd_vel"
 
     # Joint names configuration
     left_arm_joints: list[str] = field(default_factory=lambda: ['left_joint0', 'left_joint1', 'left_joint2', 'left_joint3', 'left_joint4', 'left_joint5', 'left_joint6'])
@@ -56,6 +57,7 @@ class CobotMagicConfig(RobotConfig):
     cam_high_topic: str = "/camera_f/color/image_raw"
     cam_left_topic: str = "/camera_l/color/image_raw"
     cam_right_topic: str = "/camera_r/color/image_raw"
+    cam_use_deque: bool  = True
     
     # Control rate
     control_rate: float = 100.0  # Hz

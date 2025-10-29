@@ -209,3 +209,11 @@ class Robot(abc.ABC):
     def disconnect(self) -> None:
         """Disconnect from the robot and perform any necessary cleanup."""
         pass
+    
+    @abc.abstractmethod
+    def reset_to_default_positions(self) -> None:
+        """
+        Reset the robot to its default positions.
+        This method should move all joints and components to their predefined default states.
+        """
+        pass
