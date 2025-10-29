@@ -324,6 +324,7 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
             render_mode="human",
             use_gripper=use_gripper,
             gripper_penalty=gripper_penalty,
+            max_episode_steps = 600
         )
 
         return env, None
@@ -704,6 +705,7 @@ def control_loop(
 
         episode_step += 1
 
+        print(f"Episode {episode_idx} Step {episode_step} Reward: {transition[TransitionKey.REWARD]}:.3f terminated: {terminated} truncated: {truncated}")
         # Handle episode termination
         if terminated or truncated:
             episode_time = time.perf_counter() - episode_start_time

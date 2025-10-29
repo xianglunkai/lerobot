@@ -75,6 +75,16 @@ COBOTMAGIC_L_ARM_JOINTS = {
     "left_gripper.pos": "left_joint6",
 }
 
+SUB_TOPIC_QUEUE_SIZE = 1000  # 订阅话题队列大小
+PUB_TOPIC_QUEUE_SIZE = 10  # 发布话题队列大小
+
+def jpeg_mapping(img):
+    img = cv2.imencode(".jpg", img)[1].tobytes()
+    img = cv2.imdecode(np.frombuffer(img, np.uint8), cv2.IMREAD_COLOR)
+    return img
+
+from collections import deque
+
 class CobotMagicROS1Node:
     """ROS1 node for CobotMagic robot communication."""
     
@@ -90,101 +100,123 @@ class CobotMagicROS1Node:
         self.joint_positions = {}
         self.joint_velocities = {}
         self.joint_efforts = {}
-        self.joint_state_lock = threading.Lock()
-        self.last_joint_state_time = None
+        self.joint_state_timestamp = {}
+        
+        self.img_left_deque = deque()
+        self.img_right_deque = deque()
+        self.img_front_deque = deque()
+        self.puppet_arm_left_deque = deque()
+        self.puppet_arm_right_deque = deque()
+        
         
         # Joint state subscribers (根据配置使用左右臂独立的话题)
+        self.joint_state_lock = threading.Lock()
         self.left_joint_state_sub = rospy.Subscriber(
             config.left_joint_states_topic,  # 例如: "/puppet/joint_left"
             JointState,
             self.left_joint_state_callback,
-            queue_size=10
+            queue_size=SUB_TOPIC_QUEUE_SIZE,
+            tcp_nodelay=True,
         )
         self.right_joint_state_sub = rospy.Subscriber(
             config.right_joint_states_topic,  # 例如: "/puppet/joint_right"
             JointState,
             self.right_joint_state_callback,
-            queue_size=10
+            queue_size=SUB_TOPIC_QUEUE_SIZE,
+            tcp_nodelay=True,
         )
-        
-        # rospy.Subscriber(
-        #     config.endpose_left_topic,
-        #     PoseStamped,
-        #     self.endpose_left_callback,
-        #     queue_size=1000,
-        #     tcp_nodelay=True,
-        # )
-        # rospy.Subscriber(
-        #     config.endpose_right_topic,
-        #     PoseStamped,
-        #     self.endpose_right_callback,
-        #     queue_size=1000,
-        #     tcp_nodelay=True,
-        # )
+    
         
         # Command publishers (根据配置使用独立的话题)
         self.left_arm_pub = rospy.Publisher(
             config.left_arm_command_topic,  # 例如: "/master/joint_left"
             JointState,  # 使用JointState消息类型
-            queue_size=10
+            queue_size=PUB_TOPIC_QUEUE_SIZE
         )
         self.right_arm_pub = rospy.Publisher(
             config.right_arm_command_topic,  # 例如: "/master/joint_right"
             JointState,  # 使用JointState消息类型
-            queue_size=10
+            queue_size=PUB_TOPIC_QUEUE_SIZE
         )
-        
         
         # 添加相机订阅者
         self.camera_subs = {}
         self.camera_images = {}
         self.camera_lock = threading.Lock()
         self.cv_bridge = CvBridge()
+        self.camera_images_timestamp = {}
         
 
         # 根据配置创建相机订阅者
-        # if hasattr(config, 'cam_high_topic'):
-        #     rospy.Subscriber(config.cam_high_topic, Image, self.img_high_img_callback, queue_size=1000, tcp_nodelay=True)
-        # if hasattr(config, 'cam_left_topic'):
-        #     rospy.Subscriber(config.cam_left_topic, Image, self.img_left_img_callback, queue_size=1000, tcp_nodelay=True)
-        # if hasattr(config, 'cam_right_topic'):
-        #     rospy.Subscriber(config.cam_right_topic, Image, self.img_right_img_callback, queue_size=1000, tcp_nodelay=True)
-
-        if hasattr(config, 'cam_left_topic'):
-            self._create_camera_subscriber('left', config.cam_left_topic)
-        if hasattr(config, 'cam_high_topic'):
-            self._create_camera_subscriber('high', config.cam_high_topic)
-        if hasattr(config, 'cam_right_topic'):
-            self._create_camera_subscriber('right', config.cam_right_topic)
+        if config.cam_use_deque:
+            if hasattr(config, 'cam_high_topic'):
+                rospy.Subscriber(config.cam_high_topic, Image, self.img_high_img_callback, queue_size=1000, tcp_nodelay=True)
+            if hasattr(config, 'cam_left_topic'):
+                rospy.Subscriber(config.cam_left_topic, Image, self.img_left_img_callback, queue_size=1000, tcp_nodelay=True)
+            if hasattr(config, 'cam_right_topic'):
+                rospy.Subscriber(config.cam_right_topic, Image, self.img_right_img_callback, queue_size=1000, tcp_nodelay=True)
+        else:
+            if hasattr(config, 'cam_left_topic'):
+                self._create_camera_subscriber('left', config.cam_left_topic)
+            if hasattr(config, 'cam_high_topic'):
+                self._create_camera_subscriber('high', config.cam_high_topic)
+            if hasattr(config, 'cam_right_topic'):
+                self._create_camera_subscriber('right', config.cam_right_topic)
+            
+        # 其他订阅者（如果需要）
+        # from nav_msgs.msg import Odometry
+        # rospy.Subscriber(
+        #     config.robot_base_topic,
+        #     Odometry,
+        #     self.robot_base_callback,
+        #     queue_size=SUB_TOPIC_QUEUE_SIZE,
+        #     tcp_nodelay=True,
+        # )
+                
+        # rospy.Subscriber(
+        #     config.endpose_left_topic,
+        #     PoseStamped,
+        #     self.endpose_left_callback,
+        #     queue_size=SUB_TOPIC_QUEUE_SIZE,
+        #     tcp_nodelay=True,
+        # )
+        # rospy.Subscriber(
+        #     config.endpose_right_topic,
+        #     PoseStamped,
+        #     self.endpose_right_callback,
+        #     queue_size=SUB_TOPIC_QUEUE_SIZE,
+        #     tcp_nodelay=True,
+        # )
+        
+        # 其他发布者（如果需要）
+        # from geometry_msgs.msg import Twist
+        # self.endpose_left_publisher = rospy.Publisher(config.endpose_left_cmd_topic, PosCmd, queue_size=10)
+        # self.endpose_right_publisher = rospy.Publisher(config.endpose_right_cmd_topic, PosCmd, queue_size=10)
+        # self.robot_base_publisher = rospy.Publisher(config.robot_base_cmd_topic, Twist, queue_size=10)
+            
         logger.info(f"CobotMagicROS1Node initialized with {len(self.camera_subs)} cameras")
+        
         logger.info(f"CobotMagicROS1Node initialized with node name: {config.node_name}")
     
     
     
     def img_high_img_callback(self, msg):
         try:
-            # 将ROS Image消息转换为OpenCV格式
-            cv_image = self.cv_bridge.imgmsg_to_cv2(msg, 'passthrough')
-            # cv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
-            
-            # print("11111")
-            # 安全地更新图像数据
-            # with self.camera_lock:
-            self.camera_images["high"] = cv_image
+            if len(self.img_front_deque) >= 2 * SUB_TOPIC_QUEUE_SIZE:
+                self.img_front_deque.popleft()
+            self.img_front_deque.append(msg)
+            self.camera_images_timestamp["high"] = time.time()
                 
         except Exception as e:
             logger.error(f"Error processing image from camera high: {e}")
     
     
     def img_left_img_callback(self, msg):
-        try:
-            # 将ROS Image消息转换为OpenCV格式
-            cv_image = self.cv_bridge.imgmsg_to_cv2(msg, 'passthrough')
-            # cv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
-            # print("2222")
-            # 安全地更新图像数据
-            # with self.camera_lock:
-            self.camera_images["left"] = cv_image
+        try:      
+            if len(self.img_left_deque) >= 2 * SUB_TOPIC_QUEUE_SIZE:
+                self.img_left_deque.popleft()
+            self.img_left_deque.append(msg)
+            self.camera_images_timestamp["left"] = time.time()
                 
         except Exception as e:
             logger.error(f"Error processing image from camera left: {e}")
@@ -192,13 +224,10 @@ class CobotMagicROS1Node:
     
     def img_right_img_callback(self, msg):
         try:
-            # 将ROS Image消息转换为OpenCV格式
-            cv_image = self.cv_bridge.imgmsg_to_cv2(msg, 'passthrough')
-            # cv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
-            # print("3333")
-            # 安全地更新图像数据
-            # with self.camera_lock:
-            self.camera_images["right"] = cv_image
+            if len(self.img_right_deque) >= 2 * SUB_TOPIC_QUEUE_SIZE:
+                self.img_right_deque.popleft()
+            self.img_right_deque.append(msg)
+            self.camera_images_timestamp["right"] = time.time()
                 
         except Exception as e:
             logger.error(f"Error processing image from camera right: {e}") 
@@ -207,10 +236,18 @@ class CobotMagicROS1Node:
     def left_joint_state_callback(self, msg: JointState):
         """Callback for left arm joint state messages."""
         self._process_joint_states(msg, "left_")
+        if len(self.puppet_arm_left_deque) >= 2 * SUB_TOPIC_QUEUE_SIZE:
+            self.puppet_arm_left_deque.popleft()
+        self.puppet_arm_left_deque.append(msg)
+        self.joint_state_timestamp["left_joint"] = time.time()
     
     def right_joint_state_callback(self, msg: JointState):
         """Callback for right arm joint state messages."""
         self._process_joint_states(msg, "right_")
+        if len(self.puppet_arm_right_deque) >= 2 * SUB_TOPIC_QUEUE_SIZE:
+            self.puppet_arm_right_deque.popleft()
+        self.puppet_arm_right_deque.append(msg)
+        self.joint_state_timestamp["right_joint"] = time.time()
     
     def _process_joint_states(self, msg: JointState, prefix: str):
         """通用处理关节状态回调"""
@@ -223,7 +260,7 @@ class CobotMagicROS1Node:
                     self.joint_velocities[full_name] = msg.velocity[i]
                 if i < len(msg.effort):
                     self.joint_efforts[full_name] = msg.effort[i]
-            self.last_joint_state_time = time.time()
+         
     
     def get_joint_states(self) -> Dict[str, float]:
         """Get current joint positions."""
@@ -266,7 +303,8 @@ class CobotMagicROS1Node:
                 topic,
                 Image,
                 lambda msg, cam=camera_name: self._camera_callback(msg, cam),
-                queue_size=10  # 只需要最新的图像
+                queue_size=SUB_TOPIC_QUEUE_SIZE,
+                tcp_nodelay=True
             )
             self.camera_subs[camera_name] = sub
             logger.info(f"Subscribed to camera topic: {topic} for camera: {camera_name}")
@@ -282,17 +320,131 @@ class CobotMagicROS1Node:
             
             # 安全地更新图像数据
             with self.camera_lock:
-                self.camera_images[camera_name] = cv_image
+                self.camera_images[camera_name] = jpeg_mapping(cv_image)
+            
+                self.camera_images_timestamp[camera_name] = time.time()
                 
         except Exception as e:
             logger.error(f"Error processing image from camera {camera_name}: {e}")
     
     def get_camera_images(self) -> Dict[str, np.ndarray]:
         """获取所有相机的当前图像"""
-        # with self.camera_lock:
-        return self.camera_images.copy()
+        with self.camera_lock:
+            return self.camera_images.copy()
+    
+    def get_frame(self, max_retries=5, retry_delay=0.01):
+        
+        for attempt in range(max_retries):
+            required_queues_empty = (
+                not self.img_left_deque or 
+                not self.img_right_deque or 
+                not self.img_front_deque or
+                not self.puppet_arm_left_deque or  # 新增臂数据检查
+                not self.puppet_arm_right_deque    # 新增臂数据检查
+            )
+            
+            if required_queues_empty:
+                time.sleep(retry_delay)
+                continue
+                
+            timestamps = [
+                self.img_left_deque[-1].header.stamp.to_sec(),
+                self.img_right_deque[-1].header.stamp.to_sec(),
+                self.img_front_deque[-1].header.stamp.to_sec(),
+                self.puppet_arm_left_deque[-1].header.stamp.to_sec(),  # 新增臂数据时间戳
+                self.puppet_arm_right_deque[-1].header.stamp.to_sec()  # 新增臂数据时间戳
+            ]
 
+            frame_time = min(timestamps)
 
+            try:
+                # 处理左图像队列
+                while self.img_left_deque and self.img_left_deque[0].header.stamp.to_sec() < frame_time:
+                    self.img_left_deque.popleft()
+                img_left = self.cv_bridge.imgmsg_to_cv2(self.img_left_deque[0], 'passthrough')
+                self.img_left_deque.popleft()
+
+                # 处理右图像队列
+                while self.img_right_deque and self.img_right_deque[0].header.stamp.to_sec() < frame_time:
+                    self.img_right_deque.popleft()
+                img_right = self.cv_bridge.imgmsg_to_cv2(self.img_right_deque[0], 'passthrough')
+                self.img_right_deque.popleft()
+
+                # 处理前图像队列
+                while self.img_front_deque and self.img_front_deque[0].header.stamp.to_sec() < frame_time:
+                    self.img_front_deque.popleft()
+                img_front = self.cv_bridge.imgmsg_to_cv2(self.img_front_deque[0], 'passthrough')
+                self.img_front_deque.popleft()
+
+                # 处理左机械臂数据队列
+                while self.puppet_arm_left_deque and self.puppet_arm_left_deque[0].header.stamp.to_sec() < frame_time:
+                    self.puppet_arm_left_deque.popleft()
+                puppet_arm_left = self.puppet_arm_left_deque.popleft()
+
+                # 处理右机械臂数据队列
+                while self.puppet_arm_right_deque and self.puppet_arm_right_deque[0].header.stamp.to_sec() < frame_time:
+                    self.puppet_arm_right_deque.popleft()
+                puppet_arm_right = self.puppet_arm_right_deque.popleft()
+
+            except IndexError:
+                # 如果在处理过程中任何队列变空，重试
+                time.sleep(retry_delay)
+                continue
+
+            # 成功获取所有数据，返回元组
+
+            return (
+                img_front,
+                img_left,
+                img_right,
+                puppet_arm_left,
+                puppet_arm_right,
+            )
+    def observation(self):
+        motor_position = {}
+        cameras = {}
+        if self.config.cam_use_deque:
+        
+            while True and not rospy.is_shutdown():
+                result = self.get_frame()
+                if not result:
+                    print("syn fail when get_ros_observation")
+                    continue
+                (
+                    img_front,
+                    img_left,
+                    img_right,   
+                    puppet_arm_left,
+                    puppet_arm_right
+                ) = result
+                
+                for i, name in enumerate(puppet_arm_left.name):
+                    full_name = f"left_{name}"  
+                    if i < len(puppet_arm_left.position):
+                        motor_position[full_name] = puppet_arm_left.position[i]
+
+                for i, name in enumerate(puppet_arm_right.name):
+                    full_name = f"right_{name}"  
+                    if i < len(puppet_arm_right.position):
+                        motor_position[full_name] = puppet_arm_right.position[i]
+                
+                cameras["high"] = jpeg_mapping(img_front)
+                cameras["left"] = jpeg_mapping(img_left)
+                cameras["right"] = jpeg_mapping(img_right)
+            
+                return motor_position, cameras
+        else:
+                   
+            # Get joint states from ROS1
+            joint_states = self.get_joint_states()
+            
+            # 获取相机图像
+            camera_images = self.get_camera_images()
+            
+            return joint_states, camera_images
+        
+        
+                    
 class CobotMagicBase(Robot):
     """Base class for CobotMagic robot with common functionality."""
     
@@ -330,21 +482,6 @@ class CobotMagicBase(Robot):
         print("Combined observation features from joints and cameras.", {**self._joint_features, **self._cameras_ft})
         return {**self._joint_features, **self._cameras_ft}
     
-    
-    # @cached_property
-    # def observation_features(self) -> dict[str, type | tuple]:
-    #     """Combined observation features from joints and cameras."""
-    #     features = self._joint_features.copy()
-        
-    #     # 添加相机特征 (根据配置中的相机话题)
-    #     if hasattr(self.config, 'cam_high_topic'):
-    #         features['camera_high'] = (480, 640, 3)  # 假设分辨率
-    #     if hasattr(self.config, 'cam_left_topic'):
-    #         features['camera_left'] = (480, 640, 3)
-    #     if hasattr(self.config, 'cam_right_topic'):
-    #         features['camera_right'] = (480, 640, 3)  
-        
-    #     return features
     
     @property
     def action_features(self) -> Dict[str, type]:
@@ -394,17 +531,22 @@ class CobotMagic(CobotMagicBase):
         """Check if ROS1 node is connected."""
         if not ROS1_AVAILABLE:
             return False
+        now = time.time()
         
         camera_images_ready = False
+        joint_states_ready = False
         if self.ros_node:
-            # with self.ros_node.camera_lock:
-            camera_images_ready = len(self.ros_node.camera_images) >= len(self.cameras)
+            cameras_time = np.array(list(self.ros_node.camera_images_timestamp.values()))
+            if len(cameras_time) == 3 and abs(max(cameras_time - now)) < 3.0:
+                camera_images_ready = True
+                    
+            joints_time = np.array(list(self.ros_node.joint_state_timestamp.values()))
+            if len(joints_time) == 2 and abs(max(joints_time - now)) < 3.0:
+                joint_states_ready = True
                 
-        joint_states_ready =  (self.ros_node is not None and 
-                self.ros_node.last_joint_state_time is not None and
-                (time.time() - self.ros_node.last_joint_state_time) < 3.0)
+            return joint_states_ready and camera_images_ready
         
-        return joint_states_ready and camera_images_ready
+        return False
     
     def connect(self, calibrate: bool = True) -> None:
         """Connect to ROS1 and cameras."""
@@ -433,7 +575,7 @@ class CobotMagic(CobotMagicBase):
             time.sleep(0.1)
             
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"Failed to receive joint states from {self}")
+            raise DeviceNotConnectedError(f"Failed to receive states from {self}")
         
         logger.info(f"{self} connected successfully")
     
@@ -451,11 +593,7 @@ class CobotMagic(CobotMagicBase):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected")
         
-        # Get joint states from ROS1
-        joint_states = self.ros_node.get_joint_states()
-        
-        # 获取相机图像
-        camera_images = self.ros_node.get_camera_images()
+        joint_states, camera_images = self.ros_node.observation()
         
         # Build observation dictionary
         observation = {}
@@ -512,3 +650,24 @@ class CobotMagic(CobotMagicBase):
         #     self.ros_node = None
         
         logger.info(f"{self} disconnected")
+    
+    def reset_to_default_positions(self) -> None:
+        """
+        Reset the robot to its default positions.
+        This method should move all joints and components to their predefined default states.
+        """
+        if not ROS1_AVAILABLE:
+            return
+        
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected")
+        
+        # 定义默认位置（根据实际需求调整）
+        self._reset_position_left= [-0.00133514404296875, 0.00209808349609375, 0.01583099365234375, -0.032616615295410156, -0.00286102294921875, 0.00095367431640625, 0.09]
+        self._reset_position_right = [-0.00133514404296875, 0.00438690185546875, 0.034523963928222656, -0.053597450256347656, -0.00476837158203125, -0.00209808349609375, 0.09]
+
+        # 发布默认位置命令
+        self.ros_node.publish_left_arm_command(self._reset_position_left)
+        self.ros_node.publish_right_arm_command(self._reset_position_right)
+        
+        logger.info(f"{self} reset to default positions")
