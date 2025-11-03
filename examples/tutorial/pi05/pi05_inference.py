@@ -14,7 +14,7 @@ MAX_STEPS_PER_EPISODE = 10000
 CONTROL_FREQUENCY = 30  # Hz
 
 device = torch.device("cuda")  # or "cuda" or "cpu" or "mps"
-model_id = "/home/xlk/work/lerobot/checkpoints/hover_bottle/030000/pretrained_model"
+model_id = "/home/xlk/work/lerobot/checkpoints/fold_towel/checkpoint-20k/pretrained_model"
 
 
 model = PI05Policy.from_pretrained(pretrained_name_or_path=model_id)
@@ -65,7 +65,8 @@ for i, key in enumerate(robot.action_features):
 for _ in range(MAX_EPISODES):
     robot.send_action(reset_action) # reset robot to initial position
     time.sleep(3)
-    
+    step_time = 1 / CONTROL_FREQUENCY
+    last_step_time = time.time()
     for _ in range(MAX_STEPS_PER_EPISODE):
         t0 = time.perf_counter()
         
@@ -82,11 +83,16 @@ for _ in range(MAX_EPISODES):
         robot.send_action(action)
         
         t1 = time.perf_counter()
-        print(f"Step time: {t1 - t0:.3f} seconds")
+        # print(f"Step time: {t1 - t0:.3f} seconds")
         
-        # maintain control frequency
-        sleep_time = (1.0 / CONTROL_FREQUENCY) - (t1 - t0)
-        if sleep_time > 0:
-            time.sleep(sleep_time)
+
+        # Sleep to maintain the desired frame rate
+        now = time.time()
+        dt = now - last_step_time
+        if dt < step_time:
+            time.sleep(step_time - dt)
+            last_step_time = time.time()
+        else:
+            last_step_time = now
 
     print("Episode finished! Starting new episode...")

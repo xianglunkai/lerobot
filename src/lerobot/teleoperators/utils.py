@@ -100,10 +100,10 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> "Teleoperator":
 
         return OpenArmMini(config)
         return QnbotWTeleop(config)
-    elif config.type == "cobot_magic_teleop":
-        from .cobot_magic_teleop import CobotMagicTeleop
+    elif config.type == "agilex_cobot_teleop":
+        from .agilex_cobot_teleop import AgilexCobotTeleop
         
-        return CobotMagicTeleop(config)
+        return AgilexCobotTeleop(config)
     else:
         try:
             return cast("Teleoperator", make_device_from_device_class(config))

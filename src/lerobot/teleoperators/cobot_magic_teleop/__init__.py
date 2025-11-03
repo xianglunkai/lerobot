@@ -1,2 +1,0 @@
-from .config_cobot_magic_teleop import CobotMagicTeleopConfig
-from .cobot_magic_teleop import CobotMagicTeleop
