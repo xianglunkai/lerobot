@@ -13,58 +13,40 @@
     # --dataset.push_to_hub=false \
     # --display_data=true
 
+    # python3 -m lerobot.scripts.lerobot_record \
+    # --robot.type=cobot_magic \
+    # --robot.id=lerobot_hover_bottle_action_from_slave \
+    # --robot.cameras='{
+    #     "high": {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30},
+    #     "left": {"type": "opencv", "index_or_path": 1, "width": 640, "height": 480, "fps": 30},
+    #     "right": {"type": "opencv", "index_or_path": 2, "width": 640, "height": 480, "fps": 30}
+    # }' \
+    # --policy.path=/home/xlk/work/lerobot/checkpoints/hover_bottle/030000/pretrained_model \
+    # --dataset.repo_id=lerobot/eval_lerobot_hover_bottle_action_from_slave_$(date +%Y%m%d_%H%M%S) \
+    # --dataset.single_task="Use the one arm to grasp the bottle on the table, handover it to the another arm and place it on the black book" \
+    # --dataset.num_episodes=1 \
+    # --dataset.episode_time_s=60 \
+    # --dataset.fps=25 \
+    # --dataset.video=True \
+    # --dataset.push_to_hub=false \
+    # --display_data=False
+
+
+
     python3 -m lerobot.scripts.lerobot_record \
     --robot.type=cobot_magic \
-    --robot.id=lerobot_hover_bottle_action_from_slave \
+    --robot.id=lerobot_fold_towel \
     --robot.cameras='{
         "high": {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30},
         "left": {"type": "opencv", "index_or_path": 1, "width": 640, "height": 480, "fps": 30},
         "right": {"type": "opencv", "index_or_path": 2, "width": 640, "height": 480, "fps": 30}
     }' \
-    --policy.path=/home/xlk/work/lerobot/checkpoints/hover_bottle/030000/pretrained_model \
-    --policy.device=cuda \
-    --dataset.repo_id=lerobot/eval_lerobot_hover_bottle_action_from_slave_$(date +%Y%m%d_%H%M%S) \
-    --dataset.single_task="Use the one arm to grasp the bottle on the table, handover it to the another arm and place it on the black book" \
+    --policy.path=/home/xlk/work/lerobot/checkpoints/fold_towel/checkpoint-20k/pretrained_model \
+    --dataset.repo_id=lerobot/eval_lerobot_fold_towel_$(date +%Y%m%d_%H%M%S) \
+    --dataset.single_task="Carefully fold the towel and then place the folded towel on the black notebook" \
     --dataset.num_episodes=1 \
     --dataset.episode_time_s=60 \
-    --dataset.fps=25 \
+    --dataset.fps=30 \
     --dataset.video=True \
     --dataset.push_to_hub=false \
-    --display_data=False
-
-
-    # python3 -m lerobot.scripts.lerobot_record \
-    # --robot.type=cobot_magic \
-    # --robot.id=lerobot_fold_towel \
-    # --robot.cameras='{
-    #     "high": {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30},
-    #     "left": {"type": "opencv", "index_or_path": 1, "width": 640, "height": 480, "fps": 30},
-    #     "right": {"type": "opencv", "index_or_path": 2, "width": 640, "height": 480, "fps": 30}
-    # }' \
-    # --policy.path=/home/xlk/work/lerobot/checkpoints/fold_towel/005000/pretrained_model \
-    # --dataset.repo_id=lerobot/eval_lerobot_fold_towel_$(date +%Y%m%d_%H%M%S) \
-    # --dataset.single_task="Carefully fold the towel and then place the folded towel on the black notebook" \
-    # --dataset.num_episodes=1 \
-    # --dataset.episode_time_s=60 \
-    # --dataset.fps=30 \
-    # --dataset.video=True \
-    # --dataset.push_to_hub=false \
-    # --display_data=true
-
-    # python3 -m lerobot.scripts.lerobot_record \
-    # --robot.type=cobot_magic \
-    # --robot.id=lerobot_fold_towel \
-    # --robot.cameras='{
-    #     "high": {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30},
-    #     "left": {"type": "opencv", "index_or_path": 1, "width": 640, "height": 480, "fps": 30},
-    #     "right": {"type": "opencv", "index_or_path": 2, "width": 640, "height": 480, "fps": 30}
-    # }' \
-    # --policy.path=/home/xlk/work/lerobot/checkpoints/fold_towel/020000/pretrained_model \
-    # --dataset.repo_id=lerobot/eval_lerobot_fold_towel_$(date +%Y%m%d_%H%M%S) \
-    # --dataset.single_task="Carefully fold the towel and then place the folded towel on the black notebook" \
-    # --dataset.num_episodes=1 \
-    # --dataset.episode_time_s=60 \
-    # --dataset.fps=30 \
-    # --dataset.video=True \
-    # --dataset.push_to_hub=false \
-    # --display_data=true
+    --display_data=true

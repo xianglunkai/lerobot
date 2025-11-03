@@ -73,6 +73,10 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .cobot_magic import CobotMagic
 
         return CobotMagic(config)
+    elif config.type == "agilex_cobot":
+        from .agilex_cobot import AgilexCobot
+
+        return AgilexCobot(config)
     else:
         try:
             return cast(Robot, make_device_from_device_class(config))

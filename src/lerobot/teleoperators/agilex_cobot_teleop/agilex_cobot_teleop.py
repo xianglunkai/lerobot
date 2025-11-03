@@ -27,7 +27,7 @@ import tf.transformations as tf_trans
 
 from ..teleoperator import Teleoperator
 from ..utils import make_teleoperator_from_config
-from .config_cobot_magic_teleop import CobotMagicTeleopConfig
+from .config_agilex_cobot_teleop import AgilexCobotTeleopConfig
 
 logger = logging.getLogger(__name__)
 
@@ -78,16 +78,16 @@ class BaseState:
     angular_velocity: Dict[str, float]  # vroll, vpitch, vyaw
     last_update: float
 
-class CobotMagicTeleop(Teleoperator):
+class AgilexCobotTeleop(Teleoperator):
     """
     CobotMagic teleoperator that wraps two single-arm teleoperators into a bimanual system.
     Uses ROS1 subscriptions for state monitoring and command reception.
     """
     
-    config_class = CobotMagicTeleopConfig
+    config_class = AgilexCobotTeleopConfig
     name = "cobot_magic_teleop"
     
-    def __init__(self, config: CobotMagicTeleopConfig):
+    def __init__(self, config: AgilexCobotTeleopConfig):
         super().__init__(config)
         self.config = config
         
@@ -132,6 +132,8 @@ class CobotMagicTeleop(Teleoperator):
             joints.update(COBOTMAGIC_L_ARM_JOINTS)
         if self.config.with_r_arm:
             joints.update(COBOTMAGIC_R_ARM_JOINTS)
+        if self.config.with_mobile_base:
+            joints.update(COBOTMAGIC_VEL)
         return joints
 
     def _create_action_features_list(self) -> List[str]:
@@ -235,15 +237,17 @@ class CobotMagicTeleop(Teleoperator):
         """左臂关节状态回调"""
         with self._state_lock:
             positions = {}
+            velocity = {}
             for i, name in enumerate(msg.name):
                 full_name = f"{"left_"}{name}"  # 添加前缀以区分左右臂关节
                 if full_name in self._joint_name_to_key:
                     key = self._joint_name_to_key[full_name]
                     positions[key] = msg.position[i] if i < len(msg.position) else 0.0
+                    velocity[key] = msg.velocity[i] if i < len(msg.velocity) else 0.0
             
             self._left_arm_state = ArmState(
                 positions=positions,
-                velocities={},  # 可根据需要添加
+                velocities=velocity,  # 可根据需要添加
                 efforts={},     # 可根据需要添加
                 last_update=time.time()
             )
@@ -252,15 +256,17 @@ class CobotMagicTeleop(Teleoperator):
         """右臂关节状态回调"""
         with self._state_lock:
             positions = {}
+            velocity = {}
             for i, name in enumerate(msg.name):
                 full_name = f"{"right_"}{name}"  # 添加前缀以区分左右臂关节
                 if full_name in self._joint_name_to_key:
                     key = self._joint_name_to_key[full_name]
                     positions[key] = msg.position[i] if i < len(msg.position) else 0.0
+                    velocity[key] = msg.velocity[i] if i < len(msg.velocity) else 0.0
             
             self._right_arm_state = ArmState(
                 positions=positions,
-                velocities={},
+                velocities=velocity,
                 efforts={},
                 last_update=time.time()
             )

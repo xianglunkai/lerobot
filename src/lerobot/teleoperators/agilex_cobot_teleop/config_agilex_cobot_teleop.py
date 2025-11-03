@@ -17,9 +17,9 @@ from dataclasses import dataclass, field
 from ..config import TeleoperatorConfig
 
 
-@TeleoperatorConfig.register_subclass("cobot_magic_teleop")
+@TeleoperatorConfig.register_subclass("agilex_cobot_teleop")
 @dataclass
-class CobotMagicTeleopConfig(TeleoperatorConfig):
+class AgilexCobotTeleopConfig(TeleoperatorConfig):
     """
     Configuration class for dual arm teleoperator.
     
@@ -28,7 +28,7 @@ class CobotMagicTeleopConfig(TeleoperatorConfig):
     """
     
     # ROS2 node configuration
-    node_name: str = "lerobot_cobot_magic_teleop_node"
+    node_name: str = "lerobot_agilex_cobot_teleop_node"
     connection_timeout = 5.0  # seconds
     
     # Whether to use the present position of the joints as actions
@@ -36,7 +36,7 @@ class CobotMagicTeleopConfig(TeleoperatorConfig):
     use_present_position: bool = False
 
     # Whether to use delta actions (relative changes) or absolute actions (absolute changes)
-    use_delta_actions:  bool = True
+    use_delta_actions:  bool = False
     delta_actions_mask: list[bool] = field(default_factory=lambda: [True, True, True, True, True, True, True])
     
     # Which parts of the robot to use
