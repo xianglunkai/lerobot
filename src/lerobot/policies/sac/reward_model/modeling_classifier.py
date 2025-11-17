@@ -221,6 +221,8 @@ class Classifier(PreTrainedPolicy):
 
     def predict(self, xs: list) -> ClassifierOutput:
         """Forward pass of the classifier for inference."""
+        device = next(self.parameters()).device
+        xs = [x.to(device) for x in xs]
         encoder_outputs = torch.hstack(
             [self._get_encoder_output(x, img_key) for x, img_key in zip(xs, self.image_keys, strict=True)]
         )
