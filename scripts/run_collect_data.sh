@@ -37,11 +37,33 @@ python3 -m lerobot.scripts.lerobot_record \
     --dataset.repo_id=lerobot/lerobot_hover_bottle_action_from_slave_$(date +%Y%m%d_%H%M%S) \
     --dataset.single_task="use the one arm to grasp the bottle on the table, handover it to the another arm and place it on the black book" \
     --dataset.num_episodes=30 \
-    --dataset.fps=30 \
+    --dataset.fps=50 \
     --dataset.video=True \
     --dataset.push_to_hub=false \
     --display_data=true \
     --dataset.episode_time_s=60 \
     --dataset.reset_time_s=60 \
-    # --teleop.type=cobot_magic_teleop \
-    # --teleop.id=lerobot_hover_bottle_action_from_slave \
+
+
+# python3 -m lerobot.scripts.lerobot_record \
+#     --robot.type=agilex_cobot \
+#     --robot.id=lerobot_hover_bottle_action_from_slave \
+#     --robot.cameras='{
+#         "high": {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30},
+#         "left": {"type": "opencv", "index_or_path": 1, "width": 640, "height": 480, "fps": 30},
+#         "right": {"type": "opencv", "index_or_path": 2, "width": 640, "height": 480, "fps": 30}
+#     }' \
+#     --robot.use_external_commands=true \
+#     --robot.ros_config.with_mobile_base=false \
+#     --teleop.type=agilex_cobot_teleop \
+#     --teleop.use_present_position=false \
+#     --teleop.use_eef_pose_action=false \
+#     --dataset.repo_id=lerobot/lerobot_hover_bottle_action_from_slave_$(date +%Y%m%d_%H%M%S) \
+#     --dataset.single_task="use the one arm to grasp the bottle on the table, handover it to the another arm and place it on the black book" \
+#     --dataset.num_episodes=30 \
+#     --dataset.fps=50 \
+#     --dataset.video=True \
+#     --dataset.push_to_hub=false \
+#     --display_data=true \
+#     --dataset.episode_time_s=60 \
+#     --dataset.reset_time_s=60 \

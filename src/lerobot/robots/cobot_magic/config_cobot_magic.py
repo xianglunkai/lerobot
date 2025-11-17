@@ -17,7 +17,8 @@ from typing import Dict, Any
 
 from lerobot.cameras import CameraConfig
 from ..config import RobotConfig
-
+from lerobot.cameras.configs import ColorMode
+from lerobot.cameras.opencv import OpenCVCameraConfig
 
 @RobotConfig.register_subclass("cobot_magic")
 @dataclass
@@ -63,6 +64,30 @@ class CobotMagicConfig(RobotConfig):
     control_rate: float = 100.0  # Hz
 
     def __post_init__(self):
+          
+        self.cameras["high"] = OpenCVCameraConfig(
+                index_or_path = 0,
+                fps=50,
+                width=640,
+                height=480,
+                color_mode=ColorMode.RGB,
+            )
+  
+        self.cameras["left"] = OpenCVCameraConfig(
+                index_or_path = 1,
+                fps=50,
+                width=640,
+                height=480,
+                color_mode=ColorMode.RGB,
+            )
+       
+        self.cameras["right"] = OpenCVCameraConfig(
+                index_or_path = 2,
+                fps=50,
+                width=640,
+                height=480,
+                color_mode=ColorMode.RGB,
+            )
         super().__post_init__()
         
         # Validate joint configuration

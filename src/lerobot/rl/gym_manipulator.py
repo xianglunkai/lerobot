@@ -56,6 +56,8 @@ from lerobot.robots import (  # noqa: F401
     RobotConfig,
     make_robot_from_config,
     so_follower,
+    agilex_cobot,  # noqa: F401
+    cobot_magic,  # noqa: F401
 )
 from lerobot.robots.robot import Robot
 from lerobot.robots.so_follower.robot_kinematic_processor import (
@@ -70,12 +72,14 @@ from lerobot.teleoperators import (
     keyboard,  # noqa: F401
     make_teleoperator_from_config,
     so_leader,  # noqa: F401
+    agilex_cobot_teleop,  # noqa: F401
 )
 from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGES, OBS_STATE, REWARD
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import log_say
+from lerobot.utils.import_utils import register_third_party_devices
 
 from .joint_observations_processor import JointVelocityProcessorStep, MotorCurrentProcessorStep
 
@@ -106,6 +110,12 @@ class GymManipulatorConfig:
 
 def reset_follower_position(robot_arm: Robot, target_position: np.ndarray) -> None:
     """Reset robot arm to target position using smooth trajectory."""
+    
+    # special case for agilex cobot to reset directly
+    if robot_arm.robot_type == "agilex_cobot":
+        robot_arm.control_robot_with_continuous(left_pos_cmd=target_position)
+        return
+    
     current_position_dict = robot_arm.bus.sync_read("Present_Position")
     current_position = np.array(
         [current_position_dict[name] for name in current_position_dict], dtype=np.float32
@@ -151,16 +161,19 @@ class RobotEnv(gym.Env):
         # Episode tracking.
         self.current_step = 0
         self.episode_data = None
-
-        self._joint_names = [f"{key}.pos" for key in self.robot.bus.motors]
-        self._image_keys = self.robot.cameras.keys()
+        if self.robot.name in ['agilex_cobot', 'cobot_magic']:
+            self._joint_names = self.robot.motors_features.keys()
+            self._image_keys = self.robot.camera_features.keys()
+        else:   
+            self._joint_names = [f"{key}.pos" for key in self.robot.bus.motors]
+            self._image_keys = self.robot.cameras.keys()
 
         self.reset_pose = reset_pose
         self.reset_time_s = reset_time_s
 
         self.use_gripper = use_gripper
 
-        self._joint_names = list(self.robot.bus.motors.keys())
+        self._joint_names = list(self._joint_names)
         self._raw_joint_positions = None
 
         self._setup_spaces()
@@ -168,8 +181,12 @@ class RobotEnv(gym.Env):
     def _get_observation(self) -> RobotObservation:
         """Get current robot observation including joint positions and camera images."""
         obs_dict = self.robot.get_observation()
-        raw_joint_joint_position = {f"{name}.pos": obs_dict[f"{name}.pos"] for name in self._joint_names}
-        joint_positions = np.array([raw_joint_joint_position[f"{name}.pos"] for name in self._joint_names])
+        if self.robot.name in ['agilex_cobot', 'cobot_magic']:
+            raw_joint_joint_position = {f"{name}": obs_dict[f"{name}"] for name in self._joint_names}
+            joint_positions = np.array([raw_joint_joint_position[f"{name}"] for name in self._joint_names])
+        else:
+            raw_joint_joint_position = {f"{name}.pos": obs_dict[f"{name}.pos"] for name in self._joint_names}
+            joint_positions = np.array([raw_joint_joint_position[f"{name}.pos"] for name in self._joint_names])
 
         images = {key: obs_dict[key] for key in self._image_keys}
 
@@ -242,24 +259,37 @@ class RobotEnv(gym.Env):
 
         precise_sleep(max(self.reset_time_s - (time.perf_counter() - start_time), 0.0))
 
+  
         super().reset(seed=seed, options=options)
 
         # Reset episode tracking variables.
         self.current_step = 0
         self.episode_data = None
         obs = self._get_observation()
-        self._raw_joint_positions = {f"{key}.pos": obs[f"{key}.pos"] for key in self._joint_names}
+        # print(f"obs.key: {obs.keys()}\n _joint_names: {self._joint_names}")
+        if self.robot.name in ['agilex_cobot', 'cobot_magic']:
+            self._raw_joint_positions = {f"{key}": obs[f"{key}"] for key in self._joint_names}
+        else:
+            self._raw_joint_positions = {f"{key}.pos": obs[f"{key}.pos"] for key in self._joint_names}
         return obs, {TeleopEvents.IS_INTERVENTION: False}
 
     def step(self, action) -> tuple[RobotObservation, float, bool, bool, dict[str, Any]]:
         """Execute one environment step with given action."""
-        joint_targets_dict = {f"{key}.pos": action[i] for i, key in enumerate(self.robot.bus.motors.keys())}
+        
+        # print(f"action : {action}")
+        if self.robot.name in ['agilex_cobot', 'cobot_magic']:
+            joint_targets_dict = {f"{key}": action[i] for i, key in enumerate(self._joint_names)}
+        else:
+            joint_targets_dict = {f"{key}.pos": action[i] for i, key in enumerate(self.robot.bus.motors.keys())}
 
         self.robot.send_action(joint_targets_dict)
 
         obs = self._get_observation()
 
-        self._raw_joint_positions = {f"{key}.pos": obs[f"{key}.pos"] for key in self._joint_names}
+        if self.robot.name in ['agilex_cobot', 'cobot_magic']:
+            self._raw_joint_positions = {f"{key}": obs[f"{key}"] for key in self._joint_names}
+        else:
+            self._raw_joint_positions = {f"{key}.pos": obs[f"{key}.pos"] for key in self._joint_names}
 
         if self.display_cameras:
             self.render()
@@ -283,11 +313,13 @@ class RobotEnv(gym.Env):
         import cv2
 
         current_observation = self._get_observation()
+        print(f"current_observation:{current_observation}")
         if current_observation is not None:
-            image_keys = [key for key in current_observation if "image" in key]
+            images_dict = current_observation["pixels"]
+            image_keys = [key for key in images_dict.keys()]
 
             for key in image_keys:
-                cv2.imshow(key, cv2.cvtColor(current_observation[key].numpy(), cv2.COLOR_RGB2BGR))
+                cv2.imshow(key, cv2.cvtColor(images_dict[key], cv2.COLOR_RGB2BGR))
                 cv2.waitKey(1)
 
     def close(self) -> None:
@@ -396,7 +428,7 @@ def make_processors(
 
     # Full processor pipeline for real robot environment
     # Get robot and motor information for kinematics
-    motor_names = list(env.robot.bus.motors.keys())
+    motor_names = list(cfg.processor.inverse_kinematics.joint_names)
 
     # Set up kinematics solver if inverse kinematics is configured
     kinematics_solver = None
@@ -405,6 +437,7 @@ def make_processors(
             urdf_path=cfg.processor.inverse_kinematics.urdf_path,
             target_frame_name=cfg.processor.inverse_kinematics.target_frame_name,
             joint_names=motor_names,
+            use_rad=cfg.processor.inverse_kinematics.use_rad,
         )
 
     env_pipeline_steps = [VanillaObservationProcessorStep()]
@@ -545,7 +578,7 @@ def step_env_and_process_transition(
     )
     processed_action_transition = action_processor(transition)
     processed_action = processed_action_transition[TransitionKey.ACTION]
-
+    
     obs, reward, terminated, truncated, info = env.step(processed_action)
 
     reward = reward + processed_action_transition[TransitionKey.REWARD]
@@ -689,6 +722,7 @@ def control_loop(
             action_to_record = transition[TransitionKey.COMPLEMENTARY_DATA].get(
                 "teleop_action", transition[TransitionKey.ACTION]
             )
+            # print(f"action_to_record: {action_to_record}")
             frame = {
                 **observations,
                 ACTION: action_to_record.cpu(),
@@ -771,6 +805,7 @@ def replay_trajectory(
 
 @parser.wrap()
 def main(cfg: GymManipulatorConfig) -> None:
+    register_third_party_devices()
     """Main entry point for gym manipulator script."""
     env, teleop_device = make_robot_env(cfg.env)
     env_processor, action_processor = make_processors(env, teleop_device, cfg.env, cfg.device)

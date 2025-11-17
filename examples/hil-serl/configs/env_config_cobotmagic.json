@@ -1,46 +1,88 @@
 {
-  "env": {
-    "type": "gym_manipulator",
-    "name": "real_robot",
-    "fps": 10,
-    "processor": {
-      "control_mode": "gamepad",
-      
-      "observation": {
-        "display_cameras": false
-      },
-      "image_preprocessing": {
-        "crop_params_dict": {},
-        "resize_size": [128, 128]
-      },
-      "gripper": {
-        "use_gripper": true,
-        "gripper_penalty": 0.0
-      },
-      "reset": {
-        "reset_time_s": 5.0,
-        "control_time_s": 20.0,
-        "terminate_on_success": true
-      }
+    "env": {
+        "robot": {
+            "type": "agilex_cobot",
+            "use_external_commands": false,
+            "ros_config": {
+                "with_r_arm": false,
+                "with_right_camera":false,
+                "with_front_camera":false
+            }
+        },
+        "teleop": {
+            "type": "gamepad",
+            "use_gripper": true
+        },
+        "processor": {
+            "control_mode": "gamepad",
+            "observation": {
+                "display_cameras": false,
+                "add_joint_velocity_to_observation": true,
+                "add_current_to_observation": false
+            },
+            "image_preprocessing": {
+                "crop_params_dict": {},
+                "resize_size": [128, 128]            
+            },
+            "gripper": {
+                "use_gripper": true,
+                "gripper_penalty": 0
+            },
+            "reset": {
+                "fixed_reset_joint_positions": [
+                    -0.0101, 
+                    1.752, 
+                    -1.2962, 
+                    0.0528, 
+                    1.0715, 
+                    0.0407,
+                    0.05
+                ],
+                "reset_time_s": 5,
+                "control_time_s": 30.0,
+                "terminate_on_success": true
+            },
+            "inverse_kinematics": {
+                "urdf_path": "/home/xlk/work/lerobot/examples/hil-serl/aloha_new_description/urdf",
+                "target_frame_name": "gripper_frame_link",
+                "joint_names": ["left_joint0","left_joint1", "left_joint2", "left_joint3", "left_joint4", "left_joint5", "left_joint6"],   
+                "end_effector_bounds": {
+                    "min": [
+                        0.2865, 
+                        -0.239, 
+                        0.1248
+                    ],
+                    "max": [
+                        0.4483, 
+                        0.0773, 
+                        0.2500
+                    ]
+                },
+                "end_effector_step_sizes": {
+                    "x": 0.005,
+                    "y": 0.005,
+                    "z": 0.005
+                },
+                "use_rad": true
+            },
+            "reward_classifier": {
+                "pretrained_path": null,
+                "success_threshold": 0.5,
+                "success_reward": 1.0
+            },
+            "max_gripper_pos": 30
+        },
+        "name": "real_robot",
+        "fps": 30
     },
-    "robot": {
-      // ... robot configuration ...
+    "dataset": {
+        "repo_id": "pick_tool_into_box",
+        "root": null,
+        "task": "pick a tool into black box",
+        "num_episodes_to_record": 40,
+        "replay_episode": null,
+        "push_to_hub": false
     },
-    "teleop": {
-      "teleop": {
-      "type": "gamepad",
-      "use_gripper": true
-    }
-  },
-  "dataset": {
-    "repo_id": "username/pick_lift_cube",
-    "root": null,
-    "task": "pick_and_lift",
-    "num_episodes_to_record": 15,
-    "replay_episode": 0,
-    "push_to_hub": true
-  },
-  "mode": "record",
-  "device": "cuda"
+    "mode": "record",
+    "device": "cuda"
 }
-  

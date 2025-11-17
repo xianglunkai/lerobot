@@ -1,451 +1,134 @@
-# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-import rospy
-from sensor_msgs.msg import JointState
-from geometry_msgs.msg import Twist
-from nav_msgs.msg import Odometry
-from std_msgs.msg import Header
+# agilex_cobot_teleop.py
 import logging
-from functools import cached_property
-from typing import Any, Dict, Optional, List
 import time
 import threading
-from dataclasses import dataclass
-import tf.transformations as tf_trans
+from typing import Any, Dict, Optional, List
 
 from ..teleoperator import Teleoperator
-from ..utils import make_teleoperator_from_config
 from .config_agilex_cobot_teleop import AgilexCobotTeleopConfig
+from lerobot.utils.agilex_cobot_ros_manager import AgilexCobotROSManager
 
 logger = logging.getLogger(__name__)
 
-# 移动底座速度控制映射
-COBOTMAGIC_VEL = {
-    "mobile_base.vx": "linear.x",
-    "mobile_base.vy": "linear.y",
-    "mobile_base.vtheta": "angular.z",
-}
-
-# 右臂关节映射
-COBOTMAGIC_R_ARM_JOINTS = {
-    "right_waist.pos": "right_joint0",
-    "right_shoulder.pos": "right_joint1",
-    "right_elbow.pos": "right_joint2",
-    "right_forearm_roll.pos": "right_joint3",
-    "right_wrist_angle.pos": "right_joint4",
-    "right_wrist_rotate.pos": "right_joint5",
-    "right_gripper.pos": "right_joint6",
-}
-
-# 左臂关节映射
-COBOTMAGIC_L_ARM_JOINTS = {
-    "left_waist.pos": "left_joint0",
-    "left_shoulder.pos": "left_joint1",
-    "left_elbow.pos": "left_joint2",
-    "left_forearm_roll.pos": "left_joint3",
-    "left_wrist_angle.pos": "left_joint4",
-    "left_wrist_rotate.pos": "left_joint5",
-    "left_gripper.pos": "left_joint6",
-}
-
-# 状态数据结构
-@dataclass
-class ArmState:
-    positions: Dict[str, float]
-    velocities: Dict[str, float]
-    efforts: Dict[str, float]
-    last_update: float
-
-    
-@dataclass
-class BaseState:
-    """移动底座状态数据结构"""
-    position: Dict[str, float]  # x, y, z 位置
-    orientation: Dict[str, float]  # 四元数 (x, y, z, w) 或 欧拉角 (roll, pitch, yaw)
-    linear_velocity: Dict[str, float]  # vx, vy, vz
-    angular_velocity: Dict[str, float]  # vroll, vpitch, vyaw
-    last_update: float
 
 class AgilexCobotTeleop(Teleoperator):
     """
-    CobotMagic teleoperator that wraps two single-arm teleoperators into a bimanual system.
-    Uses ROS1 subscriptions for state monitoring and command reception.
+    Agilex Cobot Teleoperator using the singleton ROS manager.
+    This class focuses on teleoperation logic while delegating ROS communication to the ROS manager.
     """
     
     config_class = AgilexCobotTeleopConfig
-    name = "cobot_magic_teleop"
+    name = "agilex_cobot_teleop"
     
     def __init__(self, config: AgilexCobotTeleopConfig):
         super().__init__(config)
         self.config = config
         
-        # ROS状态存储
-        self._left_arm_state: Optional[ArmState] = None
-        self._right_arm_state: Optional[ArmState] = None
-        self._mobile_base_state: Optional[BaseState] = None
+        # ROS manager (singleton, will be initialized in connect)
+        self.ros_manager: Optional[AgilexCobotROSManager] = None
         
-        # 动作命令存储
-        self._left_arm_command: Optional[Dict[str, float]] = None
-        self._right_arm_command: Optional[Dict[str, float]] = None
-        self._mobile_base_command: Optional[Dict[str, float]] = None
-        
-        # 连接状态和锁
+        # Connection state
         self._connected = False
         self._connection_lock = threading.Lock()
-        self._state_lock = threading.Lock()
-        self._command_lock = threading.Lock()
         
-        # 生成关节映射字典
-        self.joints_dict: dict[str, str] = self._generate_joints_dict()
+        # Build joint lists
+        self.all_joints = (
+            config.ros_config.left_arm_joints + 
+            config.ros_config.right_arm_joints
+        )
         
-        # 创建反向映射用于状态处理
-        self._joint_name_to_key = {v: k for k, v in self.joints_dict.items()}
-    
-        # 创建动作特征列表（用于delta_actions_mask映射）
+        self.robot_base = (
+            config.ros_config.mobile_base_joints if config.ros_config.with_mobile_base else []
+        )
+        
+        # Create action features and delta mask
         self._action_features_list = self._create_action_features_list()
-        
-        # 创建delta_actions_mask映射字典
         self._delta_mask_dict = self._create_delta_mask_dict()
-        logger.info(f"Delta actions mask: {self._delta_mask_dict}")
         
-        # ROS节点初始化（延迟到connect方法中）
-        self._node_initialized = False
-        
-        logger.info(f"{self.name} initialized with config: {config}")
-
-    def _generate_joints_dict(self) -> dict[str, str]:
-        """生成关节映射字典"""
-        joints = {}
-        if self.config.with_l_arm:
-            joints.update(COBOTMAGIC_L_ARM_JOINTS)
-        if self.config.with_r_arm:
-            joints.update(COBOTMAGIC_R_ARM_JOINTS)
-        if self.config.with_mobile_base:
-            joints.update(COBOTMAGIC_VEL)
-        return joints
-
+        logger.info(f"{self.name} initialized with delta mask: {self._delta_mask_dict}")
+    
     def _create_action_features_list(self) -> List[str]:
-        """创建动作特征列表（用于delta_actions_mask映射）"""
+        """Create action features list for delta_actions_mask mapping."""
         features = []
         
-        # 添加左臂关节
-        if self.config.with_l_arm:
-            features.extend(COBOTMAGIC_L_ARM_JOINTS.keys())
+        if self.config.ros_config.with_l_arm:
+            features.extend(self.config.ros_config.left_arm_joints)
         
-        # 添加右臂关节
-        if self.config.with_r_arm:
-            features.extend(COBOTMAGIC_R_ARM_JOINTS.keys())
+        if self.config.ros_config.with_r_arm:
+            features.extend(self.config.ros_config.right_arm_joints)
         
-        # 添加移动底座速度
-        if self.config.with_mobile_base:
-            features.extend(COBOTMAGIC_VEL.keys())
+        if self.config.ros_config.with_mobile_base:
+            features.extend(self.config.ros_config.mobile_base_joints)
         
         return features
     
     def _create_delta_mask_dict(self) -> Dict[str, bool]:
-        """创建delta_actions_mask映射字典"""
+        """Create delta_actions_mask mapping dictionary."""
         mask_dict = {}
         
         for i, feature_name in enumerate(self._action_features_list):
             if i < len(self.config.delta_actions_mask):
                 mask_dict[feature_name] = self.config.delta_actions_mask[i]
             else:
-                # 如果mask长度不够，默认使用相对动作
                 mask_dict[feature_name] = True
                 logger.warning(f"Delta actions mask not specified for {feature_name}, using default (True)")
         
         return mask_dict
 
-    def _init_ros_node(self):
-        """初始化ROS节点和订阅器"""
-        if not self._node_initialized:
-            try:
-                # 初始化ROS节点
-                rospy.init_node(self.config.node_name, anonymous=True)
-                
-                # 状态订阅器
-                if self.config.with_l_arm:
-                    rospy.Subscriber(
-                        self.config.left_joint_states_topic, 
-                        JointState,
-                        self._left_joint_state_callback,
-                        queue_size=10
-                    )
-                
-                if self.config.with_r_arm:
-                    rospy.Subscriber(
-                        self.config.right_joint_states_topic, 
-                        JointState,
-                        self._right_joint_state_callback,
-                        queue_size=10
-                    )
-                
-                if self.config.with_mobile_base:
-                    rospy.Subscriber(
-                        self.config.mobile_base_state_topic,
-                        Odometry,
-                        self._mobile_base_state_callback,
-                        queue_size=10
-                    )
-                
-                # 命令订阅器
-                if self.config.with_l_arm:
-                    rospy.Subscriber(
-                        self.config.left_arm_command_topic, 
-                        JointState,
-                        self._left_arm_command_callback,
-                        queue_size=10
-                    )
-                
-                if self.config.with_r_arm:
-                    rospy.Subscriber(
-                        self.config.right_arm_command_topic, 
-                        JointState,
-                        self._right_arm_command_callback,
-                        queue_size=10
-                    )
-                
-                if self.config.with_mobile_base:
-                    rospy.Subscriber(
-                        self.config.mobile_command_topic,
-                        Twist,
-                        self._mobile_base_command_callback,
-                        queue_size=10
-                    )
-                
-                self._node_initialized = True
-                logger.info("ROS node and subscribers initialized successfully")
-                
-            except Exception as e:
-                logger.error(f"Failed to initialize ROS node: {e}")
-                raise
-
-    # ROS回调函数
-    def _left_joint_state_callback(self, msg: JointState):
-        """左臂关节状态回调"""
-        with self._state_lock:
-            positions = {}
-            velocity = {}
-            for i, name in enumerate(msg.name):
-                full_name = f"{"left_"}{name}"  # 添加前缀以区分左右臂关节
-                if full_name in self._joint_name_to_key:
-                    key = self._joint_name_to_key[full_name]
-                    positions[key] = msg.position[i] if i < len(msg.position) else 0.0
-                    velocity[key] = msg.velocity[i] if i < len(msg.velocity) else 0.0
-            
-            self._left_arm_state = ArmState(
-                positions=positions,
-                velocities=velocity,  # 可根据需要添加
-                efforts={},     # 可根据需要添加
-                last_update=time.time()
-            )
-
-    def _right_joint_state_callback(self, msg: JointState):
-        """右臂关节状态回调"""
-        with self._state_lock:
-            positions = {}
-            velocity = {}
-            for i, name in enumerate(msg.name):
-                full_name = f"{"right_"}{name}"  # 添加前缀以区分左右臂关节
-                if full_name in self._joint_name_to_key:
-                    key = self._joint_name_to_key[full_name]
-                    positions[key] = msg.position[i] if i < len(msg.position) else 0.0
-                    velocity[key] = msg.velocity[i] if i < len(msg.velocity) else 0.0
-            
-            self._right_arm_state = ArmState(
-                positions=positions,
-                velocities=velocity,
-                efforts={},
-                last_update=time.time()
-            )
-
-    def _mobile_base_state_callback(self, msg: Odometry):
-        """移动底座状态回调 - 处理 Odometry 消息"""
-        try:
-            with self._state_lock:
-                # 提取位置信息
-                position = {
-                    "x": msg.pose.pose.position.x,
-                    "y": msg.pose.pose.position.y,
-                    "z": msg.pose.pose.position.z
-                }
-                
-                # 提取方向信息（四元数）
-                orientation_quat = {
-                    "x": msg.pose.pose.orientation.x,
-                    "y": msg.pose.pose.orientation.y,
-                    "z": msg.pose.pose.orientation.z,
-                    "w": msg.pose.pose.orientation.w
-                }
-                
-                # 将四元数转换为欧拉角（可选，便于理解）
-                euler_angles = self._quaternion_to_euler(orientation_quat)
-                
-                # 提取线速度和角速度
-                linear_velocity = {
-                    "x": msg.twist.twist.linear.x,
-                    "y": msg.twist.twist.linear.y,
-                    "z": msg.twist.twist.linear.z
-                }
-                
-                angular_velocity = {
-                    "x": msg.twist.twist.angular.x,
-                    "y": msg.twist.twist.angular.y,
-                    "z": msg.twist.twist.angular.z
-                }
-                
-                self._mobile_base_state = BaseState(
-                    position=position,
-                    orientation={
-                        "quaternion": orientation_quat,
-                        "euler": euler_angles  # 添加欧拉角表示
-                    },
-                    linear_velocity=linear_velocity,
-                    angular_velocity=angular_velocity,
-                    last_update=time.time()
-                )
-                
-                # 调试日志（可选）
-                if self.config.debug_mode:
-                    logger.debug(f"Mobile base state updated - "
-                               f"Position: ({position['x']:.3f}, {position['y']:.3f}, {position['z']:.3f}), "
-                               f"Linear vel: ({linear_velocity['x']:.3f}, {linear_velocity['y']:.3f}), "
-                               f"Angular vel: {angular_velocity['z']:.3f}")
-                
-        except Exception as e:
-            logger.error(f"Error processing mobile base odometry: {e}")
-    def _quaternion_to_euler(self, quat: Dict[str, float]) -> Dict[str, float]:
-        """将四元数转换为欧拉角"""
-        try:
-            # 从四元数获取欧拉角 (roll, pitch, yaw)
-            euler = tf_trans.euler_from_quaternion([
-                quat["w"],
-                quat["x"],
-                quat["y"], 
-                quat["z"],
-            ])
-            
-            return {
-                "roll": euler[0],
-                "pitch": euler[1],
-                "yaw": euler[2]
-            }
-        except Exception as e:
-            logger.warning(f"Failed to convert quaternion to Euler angles: {e}")
-            return {"roll": 0.0, "pitch": 0.0, "yaw": 0.0}
-
-
-    def _left_arm_command_callback(self, msg: JointState):
-        """左臂命令回调"""
-        with self._command_lock:
-            command = {}
-            for i, name in enumerate(msg.name):
-                full_name = f"{"left_"}{name}"  # 添加前缀以区分左右臂关节
-                if full_name in self._joint_name_to_key:
-                    key = self._joint_name_to_key[full_name]
-                    command[key] = msg.position[i] if i < len(msg.position) else 0.0
-            
-            self._left_arm_command = command
-
-    def _right_arm_command_callback(self, msg: JointState):
-        """右臂命令回调"""
-        with self._command_lock:
-            command = {}
-            for i, name in enumerate(msg.name):
-                full_name = f"{"right_"}{name}"  # 添加前缀以区分左右臂关节
-                if full_name in self._joint_name_to_key:
-                    key = self._joint_name_to_key[full_name]
-                    command[key] = msg.position[i] if i < len(msg.position) else 0.0
-            
-            self._right_arm_command = command
-
-    def _mobile_base_command_callback(self, msg: Twist):
-        """移动底座命令回调"""
-        with self._command_lock:
-            self._mobile_base_command = {
-                "mobile_base.vx": msg.linear.x,
-                "mobile_base.vy": msg.linear.y,
-                "mobile_base.vtheta": msg.angular.z
-            }
-
     @property
-    def action_features(self) -> dict[str, type]:
-        """返回动作特征字典"""
-        if self.config.with_mobile_base:
+    def _joint_features(self) -> dict[str, type]:
+        """Get joint position features."""
+        return {f"{joint}.pos": float for joint in self.all_joints}
+    
+    @property
+    def _robot_base_features(self) -> dict[str, type]:
+        """Get mobile base features."""
+        return {f"{joint}.pos": float for joint in self.robot_base}
+    
+    @property
+    def motors_features(self) -> dict[str, type]:
+        """Get all motor features including joints and mobile base."""
+        if self.config.ros_config.with_mobile_base:
             return {
-                **dict.fromkeys(self.joints_dict.keys(), float),
-                **dict.fromkeys(COBOTMAGIC_VEL.keys(), float),
+                **dict.fromkeys(self._joint_features.keys(), float),
+                **dict.fromkeys(self._robot_base_features.keys(), float),
             }
         else:
-            return dict.fromkeys(self.joints_dict.keys(), float)
+            return dict.fromkeys(self._joint_features.keys(), float)
+        
+    @property
+    def action_features(self) -> dict[str, type]:
+        """Get action features (same as motors_features for teleoperator)."""
+        return self.motors_features
 
     @property
     def feedback_features(self) -> dict[str, type]:
-        """返回反馈特征字典"""
+        """Return feedback features dictionary."""
         return {}
 
     @property
     def is_connected(self) -> bool:
-        """检查是否连接到ROS并收到状态更新"""
-        if not self._connected:
-            return False
-        
-        # 检查最近是否收到状态更新
-        current_time = time.time()
-        timeout = self.config.connection_timeout  # 默认5秒
-        
-        with self._state_lock:
-            # 检查左臂
-            if self.config.with_l_arm:
-                if (self._left_arm_state is None or 
-                    current_time - self._left_arm_state.last_update > timeout):
-                    return False
-            
-            # 检查右臂
-            if self.config.with_r_arm:
-                if (self._right_arm_state is None or 
-                    current_time - self._right_arm_state.last_update > timeout):
-                    return False
-            
-            # 检查移动底座
-            if self.config.with_mobile_base:
-                if (self._mobile_base_state is None or 
-                    current_time - self._mobile_base_state.last_update > timeout):
-                    return False
-        
-        return True
+        """Check if connected to ROS with recent updates."""
+        return self.ros_manager is not None and self.ros_manager.is_connected()
 
     def connect(self, calibrate: bool = True) -> None:
-        """连接到ROS并初始化订阅器"""
+        """Connect to ROS via the singleton ROS manager."""
         with self._connection_lock:
             if self._connected:
                 logger.warning("Already connected")
                 return
             
             try:
-                # 初始化ROS节点
-                self._init_ros_node()
+                # Initialize ROS manager (singleton)
+                # Note: We need to convert our teleop config to ROS manager config
+                self.ros_manager = AgilexCobotROSManager(self.config.ros_config)
                 
-                # 等待首次状态更新
+                # Wait for initial state updates
                 logger.info("Waiting for initial state updates...")
                 start_time = time.time()
-                timeout = self.config.connection_timeout
+                timeout = getattr(self.config.ros_config, 'connection_timeout', 5.0)
                 
-                while time.time() - start_time < timeout:
-                    if self.is_connected:
-                        break
+                while not self.is_connected and (time.time() - start_time) < timeout:
                     time.sleep(0.1)
                 
                 if not self.is_connected:
@@ -454,6 +137,9 @@ class AgilexCobotTeleop(Teleoperator):
                 self._connected = True
                 logger.info(f"{self.name} connected successfully")
                 
+                if calibrate:
+                    self.calibrate()
+                
             except Exception as e:
                 logger.error(f"Connection failed: {e}")
                 self._connected = False
@@ -461,157 +147,217 @@ class AgilexCobotTeleop(Teleoperator):
 
     @property
     def is_calibrated(self) -> bool:
-        """检查是否已校准"""
-        # 这里可以添加实际的校准检查逻辑
-        return True
+        """Check if calibrated."""
+        return getattr(self, '_calibration_status', True)
 
     def calibrate(self) -> None:
-        """执行校准程序"""
-        # 这里可以添加实际的校准逻辑
-        logger.info("Calibration procedure would be implemented here")
-        pass
+        """Execute calibration procedure."""
+        logger.info("Starting calibration procedure...")
+        # Add actual calibration logic here
+        self._calibration_status = True
+        logger.info("Calibration completed.")
 
     def configure(self) -> None:
-        """配置机器人参数"""
-        # 这里可以添加配置逻辑
+        """Configure robot parameters."""
         logger.info("Configuration procedure would be implemented here")
-        pass
 
     def get_action(self) -> dict[str, float]:
-        """获取当前动作状态，包括关节位置和移动底座速度"""
+        """
+        Get current action state including joint positions and mobile base velocity.
+        
+        Returns:
+            Dictionary containing joint positions and mobile base velocities.
+            Keys are formatted as "joint_name.pos" for joints and "mobile_base.vx", etc. for base.
+        """
         start = time.perf_counter()
         
-        # 检查连接状态
         if not self.is_connected:
             logger.warning("Not connected, cannot get action state")
             return {}
         
-        joint_action = {}
-        vel_action = {}
-        
         try:
-            # 获取关节动作（位置）
+            # Get synchronized observation from ROS manager
+            slave_positions = self.ros_manager.get_slave_joint_states()
+            master_positions = self.ros_manager.get_master_joint_states()
+            robot_base = self.ros_manager.get_robot_base_state()
+            endpose = self.ros_manager.get_end_effector_poses()
+            
+            # The motor_positions dictionary already contains:
+            # - left_joint0, left_joint1, ..., left_joint6
+            # - right_joint0, right_joint1, ..., right_joint6  
+            # - vx, vy, vtheta (if with_mobile_base)
+            
+            # Format the keys to match the expected action features
+            action_dict = {}
+            
             if self.config.use_present_position:
-                # 使用当前位置（从状态订阅获取）
-                with self._state_lock:
-                    # 左臂当前位置
-                    if self.config.with_l_arm and self._left_arm_state:
-                        joint_action.update(self._left_arm_state.positions)
-                    
-                    # 右臂当前位置
-                    if self.config.with_r_arm and self._right_arm_state:
-                        joint_action.update(self._right_arm_state.positions)
+            # Add joint positions with proper formatting
+                for joint_name, position in slave_positions.items():
+                    if joint_name.startswith(('left_', 'right_')):
+                        # Joints: convert "left_joint0" to "left_joint0.pos"
+                        action_dict[f"{joint_name}.pos"] = position
             else:
-                # 使用目标位置（从命令订阅获取）
-                with self._command_lock:
-                    # 左臂目标位置
-                    if self.config.with_l_arm and self._left_arm_command:
-                        joint_action.update(self._left_arm_command)
-                    
-                    # 右臂目标位置
-                    if self.config.with_r_arm and self._right_arm_command:
-                        joint_action.update(self._right_arm_command)
+                # Use goal positions if not using present positions
+                for joint_name, position in master_positions.items():
+                    if joint_name.startswith(('left_', 'right_')):
+                        action_dict[f"{joint_name}.pos"] = position
             
-            # 如果没有移动底座，直接返回关节动作
-            if not self.config.with_mobile_base:
-                dt_ms = (time.perf_counter() - start) * 1e3
-                if dt_ms > 50.0:
-                    logger.debug(f"{self.name} read joint action: {dt_ms:.1f}ms")
-                return joint_action
+            # Add mobile base velocities if applicable
+            if self.config.ros_config.with_mobile_base:
+                for joint_name, velocity in robot_base.items():
+                    action_dict[f"{joint_name}.pos"] = velocity
             
-            # 获取移动底座速度动作
-            if self.config.use_present_position:
-                # 使用当前实际速度（从状态订阅获取）
-                with self._state_lock:
-                    if self._mobile_base_state:
-                        # 映射到标准的速度键
-                        vel_action = {
-                            "mobile_base.vx": self._mobile_base_state.linear.get("x", 0.0),
-                            "mobile_base.vy": self._mobile_base_state.linear.get("y", 0.0),
-                            "mobile_base.vtheta": self._mobile_base_state.angular.get("z", 0.0)
-                        }
-            else:
-                # 使用最后命令速度（从命令订阅获取）
-                with self._command_lock:
-                    if self._mobile_base_command:
-                        vel_action = self._mobile_base_command.copy()
-            
-            # 合并关节动作和速度动作
-            result = {**joint_action, **vel_action}
-            
-            dt_ms = (time.perf_counter() - start) * 1e3
-            if dt_ms > 50.0:
-                logger.debug(f"{self.name} read action: {dt_ms:.1f}ms")
-            
-            return result
+            if self.config.use_eef_pose_action:
+                for joint_name, position in endpose.items():
+                    # End effector poses: convert "x" to "x.pos", etc.
+                    action_dict[f"{joint_name}.pos"] = position
+    
+                
+            return action_dict
             
         except Exception as e:
             logger.error(f"Error getting action state: {e}")
             return {}
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
-        """发送反馈信息（未实现）"""
-        raise NotImplementedError("Feedback sending not implemented for ROS-based teleoperator")
+        """Send feedback information (not implemented for this teleoperator)."""
+        raise NotImplementedError("Feedback sending not implemented for AgilexCobotTeleop")
 
     def disconnect(self) -> None:
-        """断开连接"""
+        """Disconnect from ROS."""
         with self._connection_lock:
             if not self._connected:
                 return
             
-            # 关闭ROS节点
-            try:
-                rospy.signal_shutdown("Disconnecting teleoperator")
-                self._node_initialized = False
-            except:
-                pass
-            
-            # 重置状态
-            with self._state_lock:
-                self._left_arm_state = None
-                self._right_arm_state = None
-                self._mobile_base_state = None
-            
-            with self._command_lock:
-                self._left_arm_command = None
-                self._right_arm_command = None
-                self._mobile_base_command = None
-            
+            # Note: ROS manager is singleton, so we don't shut it down here
+            # It will be shut down when the program exits or when explicitly called
+            self.ros_manager = None
             self._connected = False
             logger.info(f"{self.name} disconnected")
 
     def __del__(self):
-        """析构函数，确保正确断开连接"""
+        """Destructor to ensure proper disconnection."""
         self.disconnect()
     
     @property
     def mobile_base_pose(self) -> Dict[str, float]:
-        """获取移动底座的完整位姿信息（位置和方向）"""
-        if not self._mobile_base_state:
+        """Get mobile base pose information from ROS manager."""
+        if not self.is_connected:
             return {}
         
-        with self._state_lock:
-            return {
-                "position_x": self._mobile_base_state.position.get("x", 0.0),
-                "position_y": self._mobile_base_state.position.get("y", 0.0),
-                "position_z": self._mobile_base_state.position.get("z", 0.0),
-                "orientation_yaw": self._mobile_base_state.orientation.get("euler", {}).get("yaw", 0.0),
-                "orientation_roll": self._mobile_base_state.orientation.get("euler", {}).get("roll", 0.0),
-                "orientation_pitch": self._mobile_base_state.orientation.get("euler", {}).get("pitch", 0.0)
-            }
+        try:
+            # Get the latest observation
+            motor_positions, _, _ = self.ros_manager.get_synchronized_observation()
+            
+            # Extract pose information if available
+            # Note: This would need to be enhanced based on what information
+            # is actually available from the ROS manager
+            pose = {}
+            
+            # If we have access to the robot_base_deque in ROS manager,
+            # we could extract actual pose information
+            # For now, return empty or placeholder
+            if hasattr(self.ros_manager, 'robot_base_deque') and len(self.ros_manager.robot_base_deque) > 0:
+                # Extract pose from the latest odometry message
+                odom_msg = self.ros_manager.robot_base_deque[-1]
+                pose = {
+                    "position_x": odom_msg.pose.pose.position.x,
+                    "position_y": odom_msg.pose.pose.position.y,
+                    "position_z": odom_msg.pose.pose.position.z,
+                    "orientation_yaw": self._extract_yaw_from_odom(odom_msg),
+                }
+            
+            return pose
+            
+        except Exception as e:
+            logger.error(f"Error getting mobile base pose: {e}")
+            return {}
+
+    def _extract_yaw_from_odom(self, odom_msg):
+        """Extract yaw angle from odometry message."""
+        try:
+            from tf.transformations import euler_from_quaternion
+            orientation = odom_msg.pose.pose.orientation
+            quaternion = [orientation.x, orientation.y, orientation.z, orientation.w]
+            _, _, yaw = euler_from_quaternion(quaternion)
+            return yaw
+        except Exception as e:
+            logger.warning(f"Could not extract yaw from odometry: {e}")
+            return 0.0
 
     @property
     def mobile_base_velocity(self) -> Dict[str, float]:
-        """获取移动底座的完整速度信息"""
-        if not self._mobile_base_state:
+        """Get mobile base velocity information from ROS manager."""
+        if not self.is_connected:
             return {}
         
-        with self._state_lock:
-            return {
-                "linear_x": self._mobile_base_state.linear_velocity.get("x", 0.0),
-                "linear_y": self._mobile_base_state.linear_velocity.get("y", 0.0),
-                "linear_z": self._mobile_base_state.linear_velocity.get("z", 0.0),
-                "angular_x": self._mobile_base_state.angular_velocity.get("x", 0.0),
-                "angular_y": self._mobile_base_state.angular_velocity.get("y", 0.0),
-                "angular_z": self._mobile_base_state.angular_velocity.get("z", 0.0)
-            }
+        try:
+            # Get the latest observation
+            motor_positions, _, _ = self.ros_manager.get_synchronized_observation()
+            
+            # Extract velocity information
+            velocity = {}
+            
+            if 'vx' in motor_positions:
+                velocity["linear_x"] = motor_positions['vx']
+            if 'vy' in motor_positions:
+                velocity["linear_y"] = motor_positions['vy']
+            if 'vtheta' in motor_positions:
+                velocity["angular_z"] = motor_positions['vtheta']
+            
+            return velocity
+            
+        except Exception as e:
+            logger.error(f"Error getting mobile base velocity: {e}")
+            return {}
+
+    def get_joint_positions(self) -> Dict[str, float]:
+        """Get current joint positions from ROS manager."""
+        if not self.is_connected:
+            return {}
+        
+        try:
+            joint_states = self.ros_manager.get_joint_states()
+            # Format the keys to include .pos suffix
+            formatted_states = {}
+            for joint_name, position in joint_states.items():
+                formatted_states[f"{joint_name}.pos"] = position
+            return formatted_states
+        except Exception as e:
+            logger.error(f"Error getting joint positions: {e}")
+            return {}
+
+    def get_end_effector_poses(self) -> Dict[str, Any]:
+        """Get end effector poses from ROS manager."""
+        if not self.is_connected:
+            return {"left": None, "right": None}
+        
+        try:
+            endpose = self.ros_manager.get_end_effector_poses()
+            return endpose
+        except Exception as e:
+            logger.error(f"Error getting end effector poses: {e}")
+            return {"left": None, "right": None}
+
+    def reset_to_default_positions(self) -> None:
+        """Reset robot to default positions using ROS manager."""
+        if not self.is_connected:
+            logger.warning("Not connected, cannot reset to default positions")
+            return
+        
+        try:
+            # Define default positions
+            reset_position_left = [-0.00133514404296875, 0.00209808349609375, 0.01583099365234375, 
+                                  -0.032616615295410156, -0.00286102294921875, 0.00095367431640625, 0.07]
+            reset_position_right = [-0.00133514404296875, 0.00438690185546875, 0.034523963928222656, 
+                                   -0.053597450256347656, -0.00476837158203125, -0.00209808349609375, 0.07]
+            
+            # Use continuous publishing for smooth reset
+            self.ros_manager.publish_continuous_arm_commands(
+                reset_position_left, reset_position_right
+            )
+            
+            logger.info(f"{self.name} reset to default positions")
+            
+        except Exception as e:
+            logger.error(f"Error resetting to default positions: {e}")

@@ -187,5 +187,4 @@ modules/
 # modles
 pretrain_model/
 checkpoints/
-robot_description/
-examples/HIL-SERL
+google/
