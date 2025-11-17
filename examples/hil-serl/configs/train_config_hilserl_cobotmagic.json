@@ -1,0 +1,274 @@
+{
+    "output_dir": null,
+    "job_name": "default",
+    "resume": false,
+    "seed": 1000,
+    "num_workers": 4,
+    "batch_size": 256,
+    "steps": 100000,
+    "log_freq": 500,
+    "save_checkpoint": true,
+    "save_freq": 2000000,
+    "wandb": {
+        "enable": false
+    },
+    "dataset": {
+        "repo_id": "pick_tool_into_box",
+        "use_imagenet_stats": false
+    },
+    "policy": {
+        "type": "sac",
+        "n_obs_steps": 1,
+        "normalization_mapping": {
+            "VISUAL": "MEAN_STD",
+            "STATE": "MIN_MAX",
+            "ENV": "MIN_MAX",
+            "ACTION": "MIN_MAX"
+        },
+        "input_features": {
+           "observation.images.left": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    128,
+                    128
+                ]
+            },
+            "observation.state": {
+                "type": "STATE",
+                "shape": [
+                    14
+                ]
+            }
+        },
+        "output_features": {
+            "action": {
+                "type": "ACTION",
+                "shape": [
+                    3
+                ]
+            }
+        },
+        "device": "cuda",
+        "use_amp": false,
+        "dataset_stats": {
+            "observation.images.left": {
+                "mean": [
+                    0.485,
+                    0.456,
+                    0.406
+                ],
+                "std": [
+                    0.229,
+                    0.224,
+                    0.225
+                ]
+            },
+            "observation.state": {
+                "min": [
+                    -0.6674597859382629,
+                    1.5818219184875488,
+                    -1.7570817470550537,
+                    0.01400753203779459,
+                    0.571046769618988,
+                    -0.6726929545402527,
+                    0.00019999999494757503,
+                    -0.9283688068389893,
+                    -0.5950140357017517,
+                    -1.6578768491744995,
+                    -0.18263864517211914,
+                    -0.5897801518440247,
+                    -0.9702345132827759,
+                    -0.6419999003410339
+                ],
+                "max": [
+                    0.25560691952705383,
+                    2.269760847091675,
+                    -0.8303344249725342,
+                    0.14408743381500244,
+                    1.2227721214294434,
+                    0.3217720091342926,
+                    0.07940000295639038,
+                    0.7179951071739197,
+                    1.0471630096435547,
+                    0.9063898921012878,
+                    0.18630193173885345,
+                    0.7970165610313416,
+                    0.6274607181549072,
+                    0.7109999656677246
+                ]
+            },
+            "action": {
+                "min": [
+                    -0.999969482421875,
+                    -0.999969482421875,
+                    -0.999969482421875
+                ],
+                "max": [
+                    1.0,
+                    1.0,
+                    1.0
+                ]
+            }
+        },
+        "num_discrete_actions": 3,
+        "storage_device": "cuda",
+        "vision_encoder_name": "/home/xlk/work/lerobot/pretrain_model/resnet10",
+        "freeze_vision_encoder": true,
+        "image_encoder_hidden_dim": 32,
+        "shared_encoder": true,
+        "online_steps": 1000000,
+        "online_buffer_capacity": 60000,
+        "offline_buffer_capacity": 30000,
+        "online_step_before_learning": 10,
+        "policy_update_freq": 1,
+        "discount": 0.97,
+        "async_prefetch": false,
+        "temperature_init": 0.01,
+        "num_critics": 2,
+        "num_subsample_critics": null,
+        "critic_lr": 0.0003,
+        "actor_lr": 0.0003,
+        "temperature_lr": 0.0003,
+        "critic_target_update_weight": 0.005,
+        "utd_ratio": 2,
+        "state_encoder_hidden_dim": 256,
+        "latent_dim": 256,
+        "target_entropy": null,
+        "use_backup_entropy": true,
+        "grad_clip_norm": 40.0,
+        "critic_network_kwargs": {
+            "hidden_dims": [
+                256,
+                256
+            ],
+            "activate_final": true,
+            "final_activation": null
+        },
+        "actor_network_kwargs": {
+            "hidden_dims": [
+                256,
+                256
+            ],
+            "activate_final": true
+        },
+        "policy_kwargs": {
+            "use_tanh_squash": true,
+            "std_min": -5,
+            "std_max": 2,
+            "init_final": 0.05
+        },
+        "actor_learner_config": {
+            "learner_host": "127.0.0.1",
+            "learner_port": 50051,
+            "policy_parameters_push_frequency": 4
+        },
+        "concurrency": {
+            "actor": "threads",
+            "learner": "threads"
+        },
+        "repo_id": "pick_tool_into_box_policy"
+    },
+    "env": {
+        "type": "gym_manipulator",
+        "robot": {
+            "type": "agilex_cobot",
+            "use_external_commands": false,
+            "ros_config": {
+                "with_r_arm": false,
+                "with_right_camera":false,
+                "with_front_camera":false
+            }
+        },
+        "teleop": {
+            "type": "gamepad",
+            "use_gripper": true
+        },
+        "processor": {
+            "control_mode": "gamepad",
+            "observation": {
+                "display_cameras": false,
+                "add_joint_velocity_to_observation": true,
+                "add_current_to_observation": false
+            },
+            "image_preprocessing": {
+                "crop_params_dict": {},
+                "resize_size": [128, 128]
+            },
+            "gripper": {
+                "use_gripper": true,
+                "gripper_penalty": -0.02
+            },
+            "reset": {
+                "fixed_reset_joint_positions": [
+                    -0.0101, 
+                    1.752, 
+                    -1.2962, 
+                    0.0528, 
+                    1.0715, 
+                    0.0407,
+                    0.05
+                ],
+                "reset_time_s": 5,
+                "control_time_s": 30.0,
+                "terminate_on_success": true
+            },
+            "inverse_kinematics": {
+                "urdf_path": "/home/xlk/work/lerobot/examples/hil-serl/aloha_new_description/urdf",
+                "target_frame_name": "gripper_frame_link",
+                "joint_names": ["left_joint0","left_joint1", "left_joint2", "left_joint3", "left_joint4", "left_joint5", "left_joint6"],   
+                "end_effector_bounds": {
+                    "min": [
+                        0.2865, 
+                        -0.239, 
+                        0.1210
+                    ],
+                    "max": [
+                        0.4483, 
+                        0.0773, 
+                        0.2500
+                    ]
+                },
+                "end_effector_step_sizes": {
+                    "x": 0.005,
+                    "y": 0.005,
+                    "z": 0.005
+                },
+                "use_rad": true
+            },
+            "reward_classifier": {
+                "pretrained_path": "/home/xlk/work/lerobot/outputs/train/2025-11-14/15-54-39_reward-classifier/checkpoints/005000/pretrained_model",
+                "success_threshold": 0.5,
+                "success_reward": 1.0
+            },
+            "max_gripper_pos": 30
+        },
+        "name": "real_robot",
+        "fps": 30,
+
+        "task": "pick a tool into black box",
+        "features": {
+            "observation.images.left": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    128,
+                    128
+                ]
+            },
+            "observation.state": {
+                "type": "STATE",
+                "shape": [
+                    14
+                ]
+            },
+            "action": {
+                "type": "ACTION",
+                "shape": [
+                    3
+                ]
+            }
+        },
+        "features_map": {"observation.images.left": "observation.images.left", "observation.state": "observation.state","action":"action"}
+    }
+}

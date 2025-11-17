@@ -1,0 +1,20 @@
+// Max ee position [0.5628, 0.0869, 0.2956]
+// Min ee position [0.2061, -0.3929, 0.0166]
+// Max joint pos position [0.1761, 2.4998, -0.1482, 1.7327, 0.7237, 0.4725]
+// Min joint pos position [-0.83, 0.2603, -1.6431, -0.4704, -1.1079, -2.0917]
+
+// Max ee position [0.5877, 0.1368, 0.3316]
+// Min ee position [0.1898, -0.284, -0.0075]
+// Max joint pos position [0.5251, 2.5271, 0.0032, 0.6168, 0.8742, 0.263]
+// Min joint pos position [-0.9398, 0.0012, -1.5349, -0.1684, -1.1878, -0.5341]
+
+
+Max ee position [0.4483, 0.0773, 0.2400]
+Min ee position [0.2865, -0.239, 0.1248]
+Max joint pos position [0.2141, 2.2645, -0.9795, 0.1397, 1.2151, 0.2156]
+Min joint pos position [-0.6473, 1.7536, -1.866, -0.0798, 0.6679, -0.5381]
+
+reset point:
+joint pos position [-0.0101, 1.752, -1.2962, 0.0528, 1.0715, 0.0407, 0.0]
+
+

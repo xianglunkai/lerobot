@@ -445,6 +445,7 @@ class ReplayBuffer:
             capacity = len(lerobot_dataset)
 
         if capacity < len(lerobot_dataset):
+            print(f"capacity < len(lerobot_dataset) : {capacity} < {len(lerobot_dataset)}")
             raise ValueError(
                 "The capacity of the ReplayBuffer must be greater than or equal to the length of the LeRobotDataset."
             )

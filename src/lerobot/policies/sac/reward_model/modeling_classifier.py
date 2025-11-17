@@ -217,10 +217,14 @@ class Classifier(PreTrainedPolicy):
         images = [batch[key] for key in self.config.input_features if key.startswith(OBS_IMAGE)]
         labels = batch[REWARD]
 
+        
         return images, labels
 
     def predict(self, xs: list) -> ClassifierOutput:
         """Forward pass of the classifier for inference."""
+        device = next(self.parameters()).device
+        xs = [x.to(device) for x in xs]
+        
         encoder_outputs = torch.hstack(
             [self._get_encoder_output(x, img_key) for x, img_key in zip(xs, self.image_keys, strict=True)]
         )
@@ -238,7 +242,7 @@ class Classifier(PreTrainedPolicy):
         """Standard forward pass for training compatible with train.py."""
         # Extract images and labels
         images, labels = self.extract_images_and_labels(batch)
-
+        
         # Get predictions
         outputs = self.predict(images)
 
@@ -269,8 +273,8 @@ class Classifier(PreTrainedPolicy):
     def predict_reward(self, batch, threshold=0.5):
         """Eval method. Returns predicted reward with the decision threshold as argument."""
         # Check for both OBS_IMAGE and OBS_IMAGES prefixes
-        batch = self.normalize_inputs(batch)
-        batch = self.normalize_targets(batch)
+        # batch = self.normalize_inputs(batch)
+        # batch = self.normalize_targets(batch)
 
         # Extract images from batch dict
         images = [batch[key] for key in self.config.input_features if key.startswith(OBS_IMAGE)]

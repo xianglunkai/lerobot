@@ -23,6 +23,7 @@ class RobotKinematics:
         urdf_path: str,
         target_frame_name: str = "gripper_frame_link",
         joint_names: list[str] | None = None,
+        use_rad: bool = False,
     ):
         """
         Initialize placo-based kinematics solver.
@@ -43,11 +44,15 @@ class RobotKinematics:
         self.robot = placo.RobotWrapper(urdf_path)
         self.solver = placo.KinematicsSolver(self.robot)
         self.solver.mask_fbase(True)  # Fix the base
+        self.use_rad = use_rad
 
         self.target_frame_name = target_frame_name
 
         # Set joint names
-        self.joint_names = list(self.robot.joint_names()) if joint_names is None else joint_names
+        self.with_gripper_joint_names = list(self.robot.joint_names()) if joint_names is None else joint_names
+        # deafult setting: last joint is gripper
+        self.joint_names = self.with_gripper_joint_names[:-1]
+        # print(f"[RobotKinematics.joint_names] : {joint_names}")
 
         # Initialize frame task for IK
         self.tip_frame = self.solver.add_frame_task(self.target_frame_name, np.eye(4))
@@ -64,7 +69,10 @@ class RobotKinematics:
         """
 
         # Convert degrees to radians
-        joint_pos_rad = np.deg2rad(joint_pos_deg[: len(self.joint_names)])
+        if self.use_rad:
+            joint_pos_rad = joint_pos_deg[: len(self.joint_names)]
+        else:
+            joint_pos_rad = np.deg2rad(joint_pos_deg[: len(self.joint_names)])
 
         # Update joint positions in placo robot
         for i, joint_name in enumerate(self.joint_names):
@@ -97,7 +105,10 @@ class RobotKinematics:
         """
 
         # Convert current joint positions to radians for initial guess
-        current_joint_rad = np.deg2rad(current_joint_pos[: len(self.joint_names)])
+        if self.use_rad:
+            current_joint_rad = current_joint_pos[: len(self.joint_names)]
+        else:
+            current_joint_rad = np.deg2rad(current_joint_pos[: len(self.joint_names)])
 
         # Set current joint positions as initial guess
         for i, joint_name in enumerate(self.joint_names):
@@ -120,7 +131,10 @@ class RobotKinematics:
             joint_pos_rad.append(joint)
 
         # Convert back to degrees
-        joint_pos_deg = np.rad2deg(joint_pos_rad)
+        if self.use_rad:
+            joint_pos_deg = np.array(joint_pos_rad)
+        else:
+            joint_pos_deg = np.rad2deg(joint_pos_rad)
 
         # Preserve gripper position if present in current_joint_pos
         if len(current_joint_pos) > len(self.joint_names):

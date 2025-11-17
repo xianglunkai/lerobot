@@ -1,13 +1,14 @@
 {
     "dataset": {
-        "repo_id": "hf_username/dataset_name",
+        "repo_id": "pick_tool_into_box",
         "root": null
     },
     "policy": {
         "type": "reward_classifier",
-        "model_name": "helper2424/resnet10",
+        "repo_id": "reward_classifier",
+        "model_name": "/home/xlk/work/lerobot/pretrain_model/resnet10",
         "model_type": "cnn",
-        "num_cameras": 2,
+        "num_cameras": 1,
         "num_classes": 2,
         "hidden_dim": 256,
         "dropout_rate": 0.1,
@@ -15,7 +16,7 @@
         "device": "cuda",
         "use_amp": true,
         "input_features": {
-            "observation.images.side": {
+            "observation.images.left": {
                 "type": "VISUAL",
                 "shape": [
                     3,
@@ -23,12 +24,10 @@
                     128
                 ]
             },
-            "observation.images.front": {
-                "type": "VISUAL",
+            "observation.state": {
+                "type": "STATE",
                 "shape": [
-                    3,
-                    128,
-                    128
+                    14
                 ]
             }
         }
@@ -42,15 +41,14 @@
     "save_checkpoint": true,
     "seed": 2,
     "resume": false,
-    "fps": 10,
-    "number_of_steps_after_success": 10,
     "optimizer": {
         "grad_clip_norm": 10.0
     },
     "wandb": {
-        "enable": true,
+        "enable": false,
         "project": "reward-classifier",
         "disable_artifact": false
     },
-    "job_name": "reward-classifier"
+    "job_name": "reward-classifier",
+    "rename_map": {"observation.images.left": "observation.images.left", "observation.state": "observation.state"}
 }
