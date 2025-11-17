@@ -341,6 +341,9 @@ class GripperPenaltyProcessorStep(ComplementaryDataProcessorStep):
         action = self.transition.get(TransitionKey.ACTION)
 
         raw_joint_positions = complementary_data.get("raw_joint_positions")
+        
+        # print(f"complementary_data: {complementary_data}\n action: {action}")
+        
         if raw_joint_positions is None:
             return complementary_data
 
@@ -350,6 +353,7 @@ class GripperPenaltyProcessorStep(ComplementaryDataProcessorStep):
 
         # Gripper action is a PolicyAction at this stage
         gripper_action = action[-1].item()
+        print(f"gripper_action: {gripper_action}")
         gripper_action_normalized = gripper_action / self.max_gripper_pos
 
         # Normalize gripper state and action
@@ -471,6 +475,7 @@ class InterventionActionProcessorStep(ProcessorStep):
         complementary_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
         complementary_data[TELEOP_ACTION_KEY] = new_transition.get(TransitionKey.ACTION)
         new_transition[TransitionKey.COMPLEMENTARY_DATA] = complementary_data
+        # print(f"new_transition: {new_transition}")
 
         return new_transition
 
@@ -511,7 +516,7 @@ class RewardClassifierProcessorStep(ProcessorStep):
     """
 
     pretrained_path: str | None = None
-    device: str = "cpu"
+    device: str = "cuda"
     success_threshold: float = 0.5
     success_reward: float = 1.0
     terminate_on_success: bool = True
@@ -522,8 +527,8 @@ class RewardClassifierProcessorStep(ProcessorStep):
         """Initializes the reward classifier model after the dataclass is created."""
         if self.pretrained_path is not None:
             from lerobot.policies.sac.reward_model.modeling_classifier import Classifier
+            self.reward_classifier = Classifier.from_pretrained(pretrained_name_or_path=self.pretrained_path)
 
-            self.reward_classifier = Classifier.from_pretrained(self.pretrained_path)
             self.reward_classifier.to(self.device)
             self.reward_classifier.eval()
 

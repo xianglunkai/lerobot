@@ -185,8 +185,6 @@ class VideoDecoderCache:
         else:
             raise ImportError("torchcodec is required but not available.")
 
-        video_path = str(video_path)
-
         with self._lock:
             if video_path not in self._cache:
                 file_handle = fsspec.open(video_path).__enter__()

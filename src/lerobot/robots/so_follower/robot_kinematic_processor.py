@@ -217,6 +217,8 @@ class EEBoundsAndSafety(RobotActionProcessorStep):
 
         pos = np.array([x, y, z], dtype=float)
         twist = np.array([wx, wy, wz], dtype=float)
+        
+        # print(f"EEBoundsAndSafety.pos_in: {pos}")
 
         # Clip position
         pos = np.clip(pos, self.end_effector_bounds["min"], self.end_effector_bounds["max"])
@@ -227,8 +229,9 @@ class EEBoundsAndSafety(RobotActionProcessorStep):
             n = float(np.linalg.norm(dpos))
             if n > self.max_ee_step_m and n > 0:
                 pos = self._last_pos + dpos * (self.max_ee_step_m / n)
-                raise ValueError(f"EE jump {n:.3f}m > {self.max_ee_step_m}m")
+                print(f"EE jump {n:.3f}m > {self.max_ee_step_m}m")
 
+        # print(f"EEBoundsAndSafety.pos_out: {pos}")
         self._last_pos = pos
 
         action["ee.x"] = float(pos[0])
@@ -317,7 +320,6 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
                 action[f"{name}.pos"] = float(q_target[i])
             else:
                 action["gripper.pos"] = float(gripper_pos)
-
         return action
 
     def transform_features(
@@ -388,6 +390,7 @@ class GripperVelocityToJoint(RobotActionProcessorStep):
         gripper_pos = float(np.clip(q_raw[-1] + delta, self.clip_min, self.clip_max))
         action["ee.gripper_pos"] = gripper_pos
 
+        # print(f"GripperVelocityToJoint.action {action}")
         return action
 
     def transform_features(
@@ -404,13 +407,15 @@ class GripperVelocityToJoint(RobotActionProcessorStep):
 def compute_forward_kinematics_joints_to_ee(
     joints: dict[str, Any], kinematics: RobotKinematics, motor_names: list[str]
 ) -> dict[str, Any]:
+    # print(f"Computing FK for joints to ee with motor names: {motor_names}")
+    # print(f"Joints: {joints.keys()}")
     motor_joint_values = [joints[f"{n}.pos"] for n in motor_names]
 
     q = np.array(motor_joint_values, dtype=float)
     t = kinematics.forward_kinematics(q)
     pos = t[:3, 3]
     tw = Rotation.from_matrix(t[:3, :3]).as_rotvec()
-    gripper_pos = joints["gripper.pos"]
+    gripper_pos = joints["left_joint6.pos"] # todo: 
     for n in motor_names:
         joints.pop(f"{n}.pos")
     joints["ee.x"] = float(pos[0])
@@ -548,6 +553,7 @@ class InverseKinematicsRLStep(ProcessorStep):
         wy = action.pop("ee.wy")
         wz = action.pop("ee.wz")
         gripper_pos = action.pop("ee.gripper_pos")
+        # print(f"(x,y,z,wx,wy,wz,grip): {x, y, z, wx, wy, wz, gripper_pos}")
 
         if None in (x, y, z, wx, wy, wz, gripper_pos):
             raise ValueError(
@@ -586,11 +592,14 @@ class InverseKinematicsRLStep(ProcessorStep):
                 action[f"{name}.pos"] = float(q_target[i])
             else:
                 action["gripper.pos"] = float(gripper_pos)
+        # fix for agilex cobot
+        action[f"{self.motor_names[-1]}.pos"] = float(gripper_pos)
 
         new_transition[TransitionKey.ACTION] = action
         complementary_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
         complementary_data["IK_solution"] = q_target
         new_transition[TransitionKey.COMPLEMENTARY_DATA] = complementary_data
+        # print(f"InverseKinematicsRLStep.new_transition {new_transition}")
         return new_transition
 
     def transform_features(

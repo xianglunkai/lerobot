@@ -109,6 +109,8 @@ class GamepadTeleop(Teleoperator):
             gripper_command = self.gamepad.gripper_command()
             gripper_action = gripper_action_map[gripper_command]
             action_dict["gripper"] = gripper_action
+            
+        # print(f"Gamepad Action: {action_dict}")
 
         return action_dict
 

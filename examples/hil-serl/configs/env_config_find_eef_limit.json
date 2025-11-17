@@ -1,0 +1,15 @@
+{
+    "robot": {
+            "type": "agilex_cobot",
+            "use_external_commands": true
+        },
+    "teleop": {
+            "type": "agilex_cobot_teleop",
+            "use_present_position": false,
+            "use_eef_pose_action": false
+        },
+    "display_data": true,
+    "urdf_path": "/home/xlk/work/lerobot/examples/hil-serl/aloha_new_description/urdf",
+    "target_frame_name": "gripper_frame_link",
+    "joint_names": ["left_joint0","left_joint1", "left_joint2", "left_joint3", "left_joint4", "left_joint5", "left_joint6"]
+}

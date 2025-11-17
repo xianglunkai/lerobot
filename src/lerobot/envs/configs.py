@@ -195,8 +195,10 @@ class InverseKinematicsConfig:
 
     urdf_path: str | None = None
     target_frame_name: str | None = None
+    joint_names: list[str] | None = None
     end_effector_bounds: dict[str, list[float]] | None = None
     end_effector_step_sizes: dict[str, float] | None = None
+    use_rad: bool = False
 
 
 @dataclass

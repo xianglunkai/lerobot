@@ -42,6 +42,8 @@ class MapTensorToDeltaActionDictStep(ActionProcessorStep):
     def action(self, action: PolicyAction) -> RobotAction:
         if not isinstance(action, PolicyAction):
             raise ValueError("Only PolicyAction is supported for this processor")
+        
+        # print(f"MapTensorToDeltaActionDictStep.action:{action}")
 
         if action.dim() > 1:
             action = action.squeeze(0)
