@@ -158,6 +158,8 @@ class RobotClient:
             self.stub.SendPolicyInstructions(policy_setup)
 
             self.shutdown_event.clear()
+            
+            self.robot.reset_to_default_positions()
 
             return True
 
@@ -168,7 +170,7 @@ class RobotClient:
     def stop(self):
         """Stop the robot client"""
         self.shutdown_event.set()
-
+        self.robot.reset_to_default_positions()
         self.robot.disconnect()
         self.logger.debug("Robot disconnected")
 
@@ -398,6 +400,7 @@ class RobotClient:
     def _ready_to_send_observation(self):
         """Flags when the client is ready to send an observation"""
         with self.action_queue_lock:
+            print(f"_ready_to_send_observation: {self.action_queue.qsize() / self.action_chunk_size}")
             return self.action_queue.qsize() / self.action_chunk_size <= self._chunk_size_threshold
 
     def control_loop_observation(self, task: str, verbose: bool = False) -> RawObservation:
@@ -458,7 +461,7 @@ class RobotClient:
 
         _performed_action = None
         _captured_observation = None
-
+    
         while self.running:
             control_loop_start = time.perf_counter()
             """Control loop: (1) Performing actions, when available"""
@@ -497,7 +500,7 @@ def async_client(cfg: RobotClientConfig):
 
         try:
             # The main thread runs the control loop
-            client.control_loop(task=cfg.task)
+            client.control_loop(task=cfg.task,verbose=True)
 
         finally:
             client.stop()

@@ -14,7 +14,7 @@ MAX_STEPS_PER_EPISODE = 10000
 CONTROL_FREQUENCY = 30  # Hz
 
 device = torch.device("cuda")  # or "cuda" or "cpu" or "mps"
-model_id = "/home/xlk/work/lerobot/checkpoints/fold_towel/checkpoint-20k/pretrained_model"
+model_id = "/home/xlk/work/lerobot/checkpoints/fold_towel/030000/pretrained_model"
 
 
 model = PI05Policy.from_pretrained(pretrained_name_or_path=model_id)

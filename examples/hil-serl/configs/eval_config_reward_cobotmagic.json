@@ -15,16 +15,30 @@
         "processor": {
             "control_mode": "gamepad",
             "observation": {
-                "display_cameras": false,
+                "display_cameras": true,
                 "add_joint_velocity_to_observation": true,
                 "add_current_to_observation": false
             },
             "image_preprocessing": {
-                "crop_params_dict": {}         
+                "crop_params_dict": {    
+                    "observation.images.high": [
+                        353,
+                        1,
+                        127,
+                        268
+                    ],
+                    "observation.images.left": [
+                        1,
+                        2,
+                        477,
+                        638
+                    ]
+                },
+                "resize_size": [128, 128]         
             },
             "gripper": {
                 "use_gripper": true,
-                "gripper_penalty": -0.02
+                "gripper_penalty": 0
             },
             "reset": {
                 "fixed_reset_joint_positions": [
@@ -36,8 +50,8 @@
                     0.0407,
                     0.05
                 ],
-                "reset_time_s": 2.5,
-                "control_time_s": 30.0,
+                "reset_time_s": 2,
+                "control_time_s": 20.0,
                 "terminate_on_success": true
             },
             "inverse_kinematics": {
@@ -64,8 +78,8 @@
                 "use_rad": true
             },
             "reward_classifier": {
-                "pretrained_path": null,
-                "success_threshold": 0.5,
+                "pretrained_path": "/home/xlk/work/lerobot/outputs/train/2025-11-21/11-33-34_reward-classifier/checkpoints/005000/pretrained_model",
+                "success_threshold": 0.7,
                 "success_reward": 1.0
             },
             "max_gripper_pos": 30
@@ -74,13 +88,13 @@
         "fps": 30
     },
     "dataset": {
-        "repo_id": "train_rl_pick_place_task",
+        "repo_id": "eval_reward_pick_place_task_cropped_resized",
         "root": null,
         "task": "pick a pen onto black book",
-        "num_episodes_to_record": 30,
+        "num_episodes_to_record": 10,
         "replay_episode": null,
         "push_to_hub": false
     },
-    "mode": "record",
+    "mode": "None",
     "device": "cuda"
 }
