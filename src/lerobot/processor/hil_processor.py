@@ -558,6 +558,8 @@ class RewardClassifierProcessorStep(ProcessorStep):
         start_time = time.perf_counter()
         with torch.inference_mode():
             success = self.reward_classifier.predict_reward(images, threshold=self.success_threshold)
+        
+        print(f"reward_classifier.success: {success}")
 
         classifier_frequency = 1 / (time.perf_counter() - start_time)
 

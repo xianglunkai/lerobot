@@ -15,10 +15,10 @@ print("HF_LEROBOT_HOME:", os.environ.get('HF_LEROBOT_HOME'))
 print("HF_HOME:", os.environ.get('HF_HOME'))
 
 # Device to use for training
-device = "mps"  # or "cuda", or "cpu"
+device = "cuda"  # or "cuda", or "cpu"
 
-repo_id = "pick_tool_into_box"
-dataset = LeRobotDataset(repo_id, root="/data/huggingface/lerobot/pick_tool_into_box")
+repo_id = "pick_place_task_cropped_resized"
+dataset = LeRobotDataset(repo_id, root="/data/huggingface/lerobot/pick_place_task_cropped_resized")
 
 # Configure the policy to extract features from the image frames
 camera_keys = dataset.meta.camera_keys
@@ -27,16 +27,13 @@ config = RewardClassifierConfig(
     num_cameras=len(camera_keys),
     device=device,
     # backbone model to extract features from the image frames
-    model_name="microsoft/resnet-18",
+    model_name="/home/xlk/work/lerobot/pretrain_model/resnet10",
 )
 
 # Make policy, preprocessor, and optimizer
 policy = make_policy(config, ds_meta=dataset.meta)
 optimizer = config.get_optimizer_preset().build(policy.parameters())
 preprocessor, _ = make_pre_post_processors(policy_cfg=config, dataset_stats=dataset.meta.stats)
-
-
-classifier_id = "xlk/reward_classifier_hil_serl_example"
 
 # Instantiate a dataloader
 dataloader = torch.utils.data.DataLoader(dataset, batch_size=16, shuffle=True)
@@ -68,7 +65,7 @@ for epoch in range(num_epochs):
 print("Training finished!")
 
 # 在训练结束后添加
-local_save_path = "/data/huggingface/lerobot/trained_models/reward_classifier_hil_serl_example"
+local_save_path = "/home/xlk/work/lerobot/outputs/train/reward_classifier"
 
 # 保存到本地指定路径
 policy.save_pretrained(local_save_path)

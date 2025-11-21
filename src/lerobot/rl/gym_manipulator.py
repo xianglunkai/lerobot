@@ -312,7 +312,6 @@ class RobotEnv(gym.Env):
         import cv2
 
         current_observation = self._get_observation()
-        print(f"current_observation:{current_observation}")
         if current_observation is not None:
             images_dict = current_observation["pixels"]
             image_keys = [key for key in images_dict.keys()]

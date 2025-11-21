@@ -76,7 +76,7 @@ def show_field_content(df, field_name):
 
     # 值预览
     print("前10条:")
-    for i, v in enumerate(col.head(10)):
+    for i, v in enumerate(col.head(1000)):
         print(f"{i}: {v}")
 
 def main():
