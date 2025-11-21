@@ -8,12 +8,14 @@
     "steps": 100000,
     "log_freq": 500,
     "save_checkpoint": true,
-    "save_freq": 2000000,
+    "save_freq": 5000,
     "wandb": {
-        "enable": false
+        "enable": true,
+        "project": "agilex_cobot_real",
+        "mode": "offline"
     },
     "dataset": {
-        "repo_id": "pick_tool_into_box",
+        "repo_id": "trian_rl_pick_place_task_cropped_resized",
         "use_imagenet_stats": false
     },
     "policy": {
@@ -28,6 +30,14 @@
         "input_features": {
            "observation.images.left": {
                 "type": "VISUAL",
+                "shape": [
+                    3,
+                    128,
+                    128
+                ]
+            },
+            "observation.images.high": {
+                "dtype": "video",
                 "shape": [
                     3,
                     128,
@@ -54,59 +64,71 @@
         "dataset_stats": {
             "observation.images.left": {
                 "mean": [
-                    0.485,
-                    0.456,
-                    0.406
+                    0.48769237894845596,
+                    0.4922689466451578,
+                    0.4923654614788402
                 ],
                 "std": [
-                    0.229,
-                    0.224,
-                    0.225
+                    0.012580552920938442,
+                    0.010125969924752244,
+                    0.009599849442590862
+                ]
+            },
+            "observation.images.high": {
+                "mean": [
+                    0.2724081251262074,
+                    0.262899701506964,
+                    0.2533693378239741
+                ],
+                "std": [
+                    0.00919373713895212,
+                    0.008737715448086346,
+                    0.008414510546828981
                 ]
             },
             "observation.state": {
                 "min": [
-                    -0.6674597859382629,
-                    1.5818219184875488,
-                    -1.7570817470550537,
-                    0.01400753203779459,
-                    0.571046769618988,
-                    -0.6726929545402527,
-                    0.00019999999494757503,
-                    -0.9283688068389893,
-                    -0.5950140357017517,
-                    -1.6578768491744995,
-                    -0.18263864517211914,
-                    -0.5897801518440247,
-                    -0.9702345132827759,
-                    -0.6419999003410339
+                    -0.5726341605186462,
+                    1.6592209339141846,
+                    -1.9608103036880493,
+                    0.01788010075688362,
+                    0.6023762226104736,
+                    -0.5646274089813232,
+                    0.0003000000142492354,
+                    -1.0005881786346436,
+                    -0.7713746428489685,
+                    -1.4977418184280396,
+                    -0.21456117928028107,
+                    -1.0021591186523438,
+                    -1.0869356393814087,
+                    -0.6240000128746033
                 ],
                 "max": [
-                    0.25560691952705383,
-                    2.269760847091675,
-                    -0.8303344249725342,
-                    0.14408743381500244,
-                    1.2227721214294434,
-                    0.3217720091342926,
+                    0.2212073653936386,
+                    2.2627484798431396,
+                    -0.9461102485656738,
+                    0.14295357465744019,
+                    1.222074270248413,
+                    0.284110426902771,
                     0.07940000295639038,
-                    0.7179951071739197,
-                    1.0471630096435547,
-                    0.9063898921012878,
-                    0.18630193173885345,
-                    0.7970165610313416,
-                    0.6274607181549072,
-                    0.7109999656677246
+                    0.7881198525428772,
+                    0.8503960967063904,
+                    0.7713746428489685,
+                    0.24386709928512573,
+                    1.4380823373794556,
+                    0.8619078993797302,
+                    0.6480000019073486
                 ]
             },
             "action": {
                 "min": [
-                    -0.999969482421875,
-                    -0.999969482421875,
+                    -0.63134765625,
+                    -0.945068359375,
                     -0.999969482421875
                 ],
                 "max": [
-                    1.0,
-                    1.0,
+                    0.811767578125,
+                    0.819610595703125,
                     1.0
                 ]
             }
@@ -120,7 +142,7 @@
         "online_steps": 1000000,
         "online_buffer_capacity": 60000,
         "offline_buffer_capacity": 30000,
-        "online_step_before_learning": 10,
+        "online_step_before_learning": 100,
         "policy_update_freq": 1,
         "discount": 0.97,
         "async_prefetch": false,
@@ -161,13 +183,13 @@
         "actor_learner_config": {
             "learner_host": "127.0.0.1",
             "learner_port": 50051,
-            "policy_parameters_push_frequency": 4
+            "policy_parameters_push_frequency": 2
         },
         "concurrency": {
             "actor": "threads",
             "learner": "threads"
         },
-        "repo_id": "pick_tool_into_box_policy"
+        "repo_id": "test_rl_pick_place_task_cropped_resized"
     },
     "env": {
         "type": "gym_manipulator",
@@ -192,8 +214,21 @@
                 "add_current_to_observation": false
             },
             "image_preprocessing": {
-                "crop_params_dict": {},
-                "resize_size": [128, 128]
+                "crop_params_dict": {    
+                    "observation.images.high": [
+                        353,
+                        1,
+                        127,
+                        268
+                    ],
+                    "observation.images.left": [
+                        1,
+                        2,
+                        477,
+                        638
+                    ]
+                },
+                "resize_size": [128, 128]         
             },
             "gripper": {
                 "use_gripper": true,
@@ -209,8 +244,8 @@
                     0.0407,
                     0.05
                 ],
-                "reset_time_s": 5,
-                "control_time_s": 30.0,
+                "reset_time_s": 2,
+                "control_time_s": 20.0,
                 "terminate_on_success": true
             },
             "inverse_kinematics": {
@@ -230,14 +265,14 @@
                     ]
                 },
                 "end_effector_step_sizes": {
-                    "x": 0.005,
-                    "y": 0.005,
-                    "z": 0.005
+                    "x": 0.01,
+                    "y": 0.01,
+                    "z": 0.01
                 },
                 "use_rad": true
             },
             "reward_classifier": {
-                "pretrained_path": "/home/xlk/work/lerobot/outputs/train/2025-11-14/15-54-39_reward-classifier/checkpoints/005000/pretrained_model",
+                "pretrained_path": "/home/xlk/work/lerobot/outputs/train/2025-11-21/11-33-34_reward-classifier/checkpoints/005000/pretrained_model",
                 "success_threshold": 0.5,
                 "success_reward": 1.0
             },
@@ -246,9 +281,17 @@
         "name": "real_robot",
         "fps": 30,
 
-        "task": "pick a tool into black box",
+        "task": "pick a pen onto black book",
         "features": {
             "observation.images.left": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    128,
+                    128
+                ]
+            },
+            "observation.images.high": {
                 "type": "VISUAL",
                 "shape": [
                     3,
@@ -269,6 +312,6 @@
                 ]
             }
         },
-        "features_map": {"observation.images.left": "observation.images.left", "observation.state": "observation.state","action":"action"}
+        "features_map": {"observation.images.left": "observation.images.left","observation.images.high": "observation.images.high","observation.state": "observation.state","action":"action"}
     }
 }
