@@ -67,7 +67,7 @@ class CobotMagicConfig(RobotConfig):
           
         self.cameras["high"] = OpenCVCameraConfig(
                 index_or_path = 0,
-                fps=50,
+                fps=30,
                 width=640,
                 height=480,
                 color_mode=ColorMode.RGB,
@@ -75,7 +75,7 @@ class CobotMagicConfig(RobotConfig):
   
         self.cameras["left"] = OpenCVCameraConfig(
                 index_or_path = 1,
-                fps=50,
+                fps=30,
                 width=640,
                 height=480,
                 color_mode=ColorMode.RGB,
@@ -83,7 +83,7 @@ class CobotMagicConfig(RobotConfig):
        
         self.cameras["right"] = OpenCVCameraConfig(
                 index_or_path = 2,
-                fps=50,
+                fps=30,
                 width=640,
                 height=480,
                 color_mode=ColorMode.RGB,

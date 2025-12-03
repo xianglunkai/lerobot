@@ -379,7 +379,7 @@ class AgilexCobotROSManager:
         Get synchronized observation from all sensors.
         Returns motor positions, camera images, and end effector poses.
         """ 
-        while True:
+        while True and not rospy.is_shutdown():
             result = self._get_synchronized_frame()
             if result:
                 return self._process_observation_frame(*result)
@@ -469,36 +469,31 @@ class AgilexCobotROSManager:
     
     def _get_image_from_deque(self, deque_obj, frame_time):
         """Get image from deque synchronized to frame time."""
-        while len(deque_obj) > 1 and deque_obj[0].header.stamp.to_sec() < frame_time:
+        while deque_obj and deque_obj[0].header.stamp.to_sec() < frame_time:
             deque_obj.popleft()
-        msg = deque_obj[0]
+        msg = self.cv_bridge.imgmsg_to_cv2(deque_obj[0], 'passthrough')
         deque_obj.popleft()
-        return self.cv_bridge.imgmsg_to_cv2(msg, 'passthrough')
+        return msg
     
     def _get_joint_state_from_deque(self, deque_obj, frame_time):
         """Get joint state from deque synchronized to frame time."""
-        while len(deque_obj) > 1 and deque_obj[0].header.stamp.to_sec() < frame_time:
+        while deque_obj and deque_obj[0].header.stamp.to_sec() < frame_time:
             deque_obj.popleft()
-        msg = deque_obj[0]
-        deque_obj.popleft()
+        msg = deque_obj.popleft()
         return msg
     
     def _get_endpose_from_deque(self, deque_obj, frame_time):
         """Get end effector pose from deque synchronized to frame time."""
-        if len(deque_obj) == 0:
-            return None
-        while len(deque_obj) > 1 and deque_obj[0].header.stamp.to_sec() < frame_time:
+        while deque_obj and deque_obj[0].header.stamp.to_sec() < frame_time:
             deque_obj.popleft()
-        msg = deque_obj[0]
-        deque_obj.popleft()
+        msg = deque_obj.popleft()
         return msg
     
     def _get_robot_base_from_deque(self, deque_obj, frame_time):
         """Get robot base state from deque synchronized to frame time."""
-        while len(deque_obj) > 1 and deque_obj[0].header.stamp.to_sec() < frame_time:
+        while deque_obj and deque_obj[0].header.stamp.to_sec() < frame_time:
             deque_obj.popleft()
-        msg = deque_obj[0]
-        deque_obj.popleft()
+        msg = deque_obj.popleft()
         return msg
     
     def _process_observation_frame(self, img_front, img_left, img_right, img_front_depth, 

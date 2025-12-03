@@ -97,11 +97,13 @@ from lerobot.robots import (  # noqa: F401
     bi_so_follower,
     koch_follower,
     so_follower,
+    agilex_cobot,
 )
 from lerobot.robots.utils import make_robot_from_config
 from lerobot.utils.constants import OBS_IMAGES
 from lerobot.utils.hub import HubMixin
 from lerobot.utils.utils import init_logging
+from lerobot.policies.pi05.modeling_pi05 import PI05Policy
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -143,7 +145,7 @@ class RTCDemoConfig(HubMixin):
     rtc: RTCConfig = field(
         default_factory=lambda: RTCConfig(
             execution_horizon=10,
-            max_guidance_weight=1.0,
+            max_guidance_weight=10.0,
             prefix_attention_schedule=RTCAttentionSchedule.EXP,
         )
     )
@@ -164,7 +166,7 @@ class RTCDemoConfig(HubMixin):
 
     # Torch compile configuration
     use_torch_compile: bool = field(
-        default=False,
+        default=True,
         metadata={"help": "Use torch.compile for faster inference (PyTorch 2.0+)"},
     )
 
@@ -174,7 +176,7 @@ class RTCDemoConfig(HubMixin):
     )
 
     torch_compile_mode: str = field(
-        default="default",
+        default="max-autotune",
         metadata={"help": "Compilation mode (default, reduce-overhead, max-autotune)"},
     )
 
@@ -264,7 +266,7 @@ def get_actions(
                 action_index_before_inference = action_queue.get_action_index()
                 prev_actions = action_queue.get_left_over()
 
-                inference_latency = latency_tracker.max()
+                inference_latency = latency_tracker.p95()
                 inference_delay = math.ceil(inference_latency / time_per_chunk)
 
                 obs = robot.get_observation()
@@ -312,6 +314,7 @@ def get_actions(
                 new_latency = time.perf_counter() - current_time
                 new_delay = math.ceil(new_latency / time_per_chunk)
                 latency_tracker.add(new_latency)
+                print(f"inference_latency: {inference_latency}, new_latency: {new_latency}")
 
                 if cfg.action_queue_size_to_get_new_actions < cfg.rtc.execution_horizon + new_delay:
                     logger.warning(
@@ -387,7 +390,6 @@ def _apply_torch_compile(policy, cfg: RTCDemoConfig):
     Returns:
         Policy with compiled predict_action_chunk method
     """
-
     # PI models handle their own compilation
     if policy.type == "pi05" or policy.type == "pi0":
         return policy
@@ -408,6 +410,7 @@ def _apply_torch_compile(policy, cfg: RTCDemoConfig):
 
         # Compile the predict_action_chunk method
         # - CUDA graphs disabled to prevent tensor aliasing from in-place ops (x_t += dt * v_t)
+        torch.set_float32_matmul_precision("high")
         compile_kwargs = {
             "backend": cfg.torch_compile_backend,
             "mode": cfg.torch_compile_mode,
@@ -470,6 +473,7 @@ def demo_cli(cfg: RTCDemoConfig):
 
     # Turn on RTC
     policy.config.rtc_config = cfg.rtc
+    policy.type = cfg.policy.type
 
     # Init RTC processort, as by default if RTC disabled in the config
     # The processor won't be created
@@ -488,6 +492,8 @@ def demo_cli(cfg: RTCDemoConfig):
     logger.info(f"Initializing robot: {cfg.robot.type}")
     robot = make_robot_from_config(cfg.robot)
     robot.connect()
+    robot.reset_to_default_positions()
+    time.sleep(3)
     robot_wrapper = RobotWrapper(robot)
 
     # Create robot observation processor
