@@ -49,7 +49,7 @@ class AgilexCobotROSManagerConfig:
     # Joint state topic (for reading robot state)
     left_joint_states_topic: str = "/puppet/joint_left"
     right_joint_states_topic: str = "/puppet/joint_right"
-    mobile_base_state_topic: str = "/odom_raw"
+    mobile_base_state_topic: str = "/odom"
     endpose_left_topic: str = "/puppet/end_pose_left"
     endpose_right_topic: str = "/puppet/end_pose_right"
    

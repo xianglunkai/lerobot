@@ -15,7 +15,7 @@
         "mode": "offline"
     },
     "dataset": {
-        "repo_id": "trian_rl_pick_place_task_cropped_resized",
+        "repo_id": "train_rl_pick_place_task_cropped_resized",
         "use_imagenet_stats": false
     },
     "policy": {
@@ -37,7 +37,7 @@
                 ]
             },
             "observation.images.high": {
-                "dtype": "video",
+                "type": "VISUAL",
                 "shape": [
                     3,
                     128,
@@ -135,7 +135,7 @@
         },
         "num_discrete_actions": 3,
         "storage_device": "cuda",
-        "vision_encoder_name": "/home/xlk/work/lerobot/pretrain_model/resnet10",
+        "vision_encoder_name": "helper2424/resnet10",
         "freeze_vision_encoder": true,
         "image_encoder_hidden_dim": 32,
         "shared_encoder": true,
@@ -198,8 +198,7 @@
             "use_external_commands": false,
             "ros_config": {
                 "with_r_arm": false,
-                "with_right_camera":false,
-                "with_front_camera":false
+                "with_right_camera":false
             }
         },
         "teleop": {

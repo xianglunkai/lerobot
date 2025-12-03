@@ -14,9 +14,6 @@
     # --display_data=true
 
 
-
-
-
     # python3 -m lerobot.scripts.lerobot_record \
     # --robot.type=cobot_magic \
     # --robot.id=lerobot_hover_bottle_action_from_slave \
@@ -64,12 +61,12 @@
         "left": {"type": "opencv", "index_or_path": 1, "width": 640, "height": 480, "fps": 30},
         "right": {"type": "opencv", "index_or_path": 2, "width": 640, "height": 480, "fps": 30}
     }' \
-    --policy.path=/home/xlk/work/lerobot/checkpoints/fold_towel/030000/pretrained_model \
+    --policy.path=/home/xlk/work/lerobot/checkpoints/fold_towel/30k-50hz/pretrained_model \
     --dataset.repo_id=lerobot/eval_lerobot_fold_towel_$(date +%Y%m%d_%H%M%S) \
     --dataset.single_task="Carefully fold the towel and then place the folded towel on the black notebook" \
     --dataset.num_episodes=1 \
-    --dataset.episode_time_s=60 \
-    --dataset.fps=30 \
+    --dataset.episode_time_s=120 \
+    --dataset.fps=50 \
     --dataset.video=True \
     --dataset.push_to_hub=false \
     --display_data=false
