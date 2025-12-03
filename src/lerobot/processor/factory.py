@@ -23,7 +23,7 @@ from .converters import (
     transition_to_robot_action,
 )
 from .pipeline import IdentityProcessorStep, RobotProcessorPipeline
-
+from .filter_processor import LowPassFilterProcessor
 
 def make_default_teleop_action_processor() -> RobotProcessorPipeline[
     tuple[RobotAction, RobotObservation], RobotAction
@@ -40,7 +40,12 @@ def make_default_robot_action_processor() -> RobotProcessorPipeline[
     tuple[RobotAction, RobotObservation], RobotAction
 ]:
     robot_action_processor = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
-        steps=[IdentityProcessorStep()],
+        steps=[IdentityProcessorStep(),
+            LowPassFilterProcessor(
+            cutoff_freq=1.0,  # 1Hz截止频率
+            dt=0.02,  # 50ms时间步长
+            device="cuda"  # 支持GPU
+        ),],
         to_transition=robot_action_observation_to_transition,
         to_output=transition_to_robot_action,
     )

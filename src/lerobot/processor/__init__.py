@@ -91,6 +91,7 @@ from .relative_action_processor import (
 )
 from .rename_processor import RenameObservationsProcessorStep
 from .tokenizer_processor import ActionTokenizerProcessorStep, TokenizerProcessorStep
+from .filter_processor import LowPassFilterProcessor
 
 __all__ = [
     "ActionProcessorStep",
@@ -149,4 +150,5 @@ __all__ = [
     "to_relative_actions",
     "UnnormalizerProcessorStep",
     "VanillaObservationProcessorStep",
+    "LowPassFilterProcessor",
 ]
