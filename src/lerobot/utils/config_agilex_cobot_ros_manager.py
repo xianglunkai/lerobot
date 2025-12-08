@@ -77,6 +77,6 @@ class AgilexCobotROSManagerConfig:
     # observation  and actions features
     left_arm_joints: list[str] = field(default_factory=lambda: ['left_joint0', 'left_joint1', 'left_joint2', 'left_joint3', 'left_joint4', 'left_joint5', 'left_joint6'])
     right_arm_joints: list[str] = field(default_factory=lambda:['right_joint0', 'right_joint1', 'right_joint2', 'right_joint3', 'right_joint4', 'right_joint5', 'right_joint6'])
-    mobile_base_joints: list[str] = field(default_factory=lambda: ['vx', 'vy', 'vtheta'])
+    mobile_base_joints: list[str] = field(default_factory=lambda: ['vx', 'vtheta'])
     endpose_left_joints: list[str] = field(default_factory=lambda: ['x', 'y', 'z', 'roll', 'pitch', 'yaw', 'gripper'])
     endpose_right_joints: list[str] = field(default_factory=lambda: ['x', 'y', 'z', 'roll', 'pitch', 'yaw', 'gripper'])

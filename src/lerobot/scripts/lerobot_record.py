@@ -373,7 +373,7 @@ def record_loop(
         else:
             # For ROS2 robots without teleop/policy, use current observation as action
             # This allows recording the robot's current state as both observation and action
-            if robot.name in ['qnbot_w', 'cobot_magic']:
+            if robot.name in ['qnbot_w', 'cobot_magic', 'agilex_cobot']:
                 # Extract position values from observation for action
                 action = {}
                 for key, value in obs.items():
