@@ -264,6 +264,9 @@ class AgilexCobot(AgilexCobotBase):
             reset_position_left, reset_position_right
         )
         
+        if self.config.ros_config.with_mobile_base:
+            self.ros_manager.publish_mobile_base_command([0,0])
+        
         logger.info(f"{self} reset to default positions")
         
     def control_robot_with_continuous(self, left_pos_cmd=None, right_pos_cmd=None):

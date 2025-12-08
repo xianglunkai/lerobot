@@ -16,7 +16,7 @@ from lerobot.processor.factory import (
 )
 MAX_EPISODES = 1
 MAX_STEPS_PER_EPISODE = 10000
-CONTROL_FREQUENCY = 50  # Hz
+CONTROL_FREQUENCY = 30  # Hz
 
 device = torch.device("cuda")  # or "cuda" or "cpu" or "mps"
 model_id = "/home/xlk/work/lerobot/checkpoints/fold_towel/30k-50hz/pretrained_model"

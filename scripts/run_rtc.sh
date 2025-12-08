@@ -6,9 +6,9 @@ python examples/rtc/eval_with_real_robot.py \
     --policy.device=cuda \
     --robot.type=agilex_cobot \
     --rtc.enabled=true \
-    --rtc.execution_horizon=20 \
+    --rtc.execution_horizon=25 \
     --task="Carefully fold the towel and then place the folded towel on the black notebook" \
     --duration=240 \
     --fps=50 \
     --device=cuda \
-    --action_queue_size_to_get_new_actions=30
+    --action_queue_size_to_get_new_actions=45

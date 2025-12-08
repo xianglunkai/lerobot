@@ -185,7 +185,7 @@ class AgilexCobotTeleop(Teleoperator):
             # The motor_positions dictionary already contains:
             # - left_joint0, left_joint1, ..., left_joint6
             # - right_joint0, right_joint1, ..., right_joint6  
-            # - vx, vy, vtheta (if with_mobile_base)
+            # - vx, vtheta (if with_mobile_base)
             
             # Format the keys to match the expected action features
             action_dict = {}
@@ -356,6 +356,9 @@ class AgilexCobotTeleop(Teleoperator):
             self.ros_manager.publish_continuous_arm_commands(
                 reset_position_left, reset_position_right
             )
+            
+            if self.config.ros_config.with_mobile_base:
+                self.ros_manager.publish_mobile_base_command([0,0])
             
             logger.info(f"{self.name} reset to default positions")
             

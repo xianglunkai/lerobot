@@ -112,27 +112,27 @@ class AgilexCobotROSManager:
     def _init_deques(self):
         """Initialize all message deques."""
       
-        self.puppet_arm_left_deque = deque(maxlen=SUB_MSG_QUEUE_SIZE)
+        self.puppet_arm_left_deque = deque()
      
-        self.puppet_arm_right_deque = deque(maxlen=SUB_MSG_QUEUE_SIZE)
+        self.puppet_arm_right_deque = deque()
           
         if hasattr(self.config, 'cam_high_topic') :
-            self.img_front_deque = deque(maxlen=SUB_MSG_QUEUE_SIZE)
+            self.img_front_deque = deque()
         if hasattr(self.config, 'cam_left_topic'):
-            self.img_left_deque = deque(maxlen=SUB_MSG_QUEUE_SIZE)
+            self.img_left_deque = deque()
         if hasattr(self.config, 'cam_right_topic'):
-            self.img_right_deque = deque(maxlen=SUB_MSG_QUEUE_SIZE)
+            self.img_right_deque = deque()
             
         if self.config.use_depth_image:
-            self.img_left_depth_deque = deque(maxlen=SUB_MSG_QUEUE_SIZE)
-            self.img_right_depth_deque = deque(maxlen=SUB_MSG_QUEUE_SIZE)
-            self.img_front_depth_deque = deque(maxlen=SUB_MSG_QUEUE_SIZE)
+            self.img_left_depth_deque = deque()
+            self.img_right_depth_deque = deque()
+            self.img_front_depth_deque = deque()
             
         if self.config.with_mobile_base:
-            self.robot_base_deque = deque(maxlen=SUB_MSG_QUEUE_SIZE)
+            self.robot_base_deque = deque()
             
-        self.endpose_left_deque = deque(maxlen=SUB_MSG_QUEUE_SIZE)
-        self.endpose_right_deque = deque(maxlen=SUB_MSG_QUEUE_SIZE)
+        self.endpose_left_deque = deque()
+        self.endpose_right_deque = deque()
     
     def _init_subscribers(self):
         """Initialize all ROS subscribers."""
@@ -239,12 +239,16 @@ class AgilexCobotROSManager:
     # Callback methods
     def left_joint_state_callback(self, msg: JointState):
         """Callback for left arm joint state messages."""
+        if len(self.puppet_arm_left_deque) >= SUB_MSG_QUEUE_SIZE:
+            self.puppet_arm_left_deque.popleft()
         self.puppet_arm_left_deque.append(msg)
         self.joint_state_timestamp["left_joint"] = time.time()
         self._process_slave_joint_states(msg, "left_")
     
     def right_joint_state_callback(self, msg: JointState):
         """Callback for right arm joint state messages."""
+        if len(self.puppet_arm_right_deque) >= SUB_MSG_QUEUE_SIZE:
+            self.puppet_arm_right_deque.popleft()
         self.puppet_arm_right_deque.append(msg)
         self.joint_state_timestamp["right_joint"] = time.time()
         self._process_slave_joint_states(msg, "right_")
@@ -287,37 +291,50 @@ class AgilexCobotROSManager:
     
     def img_high_img_callback(self, msg):
         """Callback for front camera images."""
+        if len(self.img_front_deque) >= SUB_MSG_QUEUE_SIZE:
+            self.img_front_deque.popleft()
         self.img_front_deque.append(msg)
         self.camera_images_timestamp["high"] = time.time()
     
     def img_left_img_callback(self, msg):
         """Callback for left camera images."""
+        if len(self.img_left_deque) >= SUB_MSG_QUEUE_SIZE:
+            self.img_left_deque.popleft()
         self.img_left_deque.append(msg)
         self.camera_images_timestamp["left"] = time.time()
     
     def img_right_img_callback(self, msg):
         """Callback for right camera images."""
+        if len(self.img_right_deque) >= SUB_MSG_QUEUE_SIZE:
+            self.img_right_deque.popleft()
         self.img_right_deque.append(msg)
         self.camera_images_timestamp["right"] = time.time()
     
     def img_left_depth_callback(self, msg):
         """Callback for left depth images."""
+        if len(self.img_left_depth_deque) >= SUB_MSG_QUEUE_SIZE:
+            self.img_left_depth_deque.popleft()
         self.img_left_depth_deque.append(msg)
     
     def img_right_depth_callback(self, msg):
         """Callback for right depth images."""
+        if len(self.img_right_depth_deque) >= SUB_MSG_QUEUE_SIZE:
+            self.img_right_depth_deque.popleft()
         self.img_right_depth_deque.append(msg)
     
     def img_front_depth_callback(self, msg):
         """Callback for front depth images."""
+        if len(self.img_front_depth_deque) >= SUB_MSG_QUEUE_SIZE:
+            self.img_front_depth_deque.popleft()
         self.img_front_depth_deque.append(msg)
     
     def robot_base_callback(self, msg: Odometry):
         """Callback for mobile base state."""
+        if len(self.robot_base_deque) >= SUB_MSG_QUEUE_SIZE:
+            self.robot_base_deque.popleft()
         self.robot_base_deque.append(msg)
         with self.mobile_base_state_lock:
             self.mobile_base_positions['vx'] = msg.twist.twist.linear.x
-            self.mobile_base_positions['vy'] = msg.twist.twist.linear.y
             self.mobile_base_positions['vtheta'] = msg.twist.twist.angular.z
     
     def get_robot_base_state(self) -> Dict[str, float]:
@@ -327,6 +344,8 @@ class AgilexCobotROSManager:
     
     def endpose_left_callback(self, msg):
         """Callback for left end effector pose."""
+        if len(self.endpose_left_deque) >= SUB_MSG_QUEUE_SIZE:
+            self.endpose_left_deque.popleft()
         self.endpose_left_deque.append(msg)
         with self.endpose_state_lock:
             pos = msg.pose.position
@@ -337,6 +356,8 @@ class AgilexCobotROSManager:
     
     def endpose_right_callback(self, msg):
         """Callback for right end effector pose."""
+        if len(self.endpose_right_deque) >= SUB_MSG_QUEUE_SIZE:
+            self.endpose_right_deque.popleft()
         self.endpose_right_deque.append(msg)
         with self.endpose_state_lock:
             pos = msg.pose.position
@@ -381,9 +402,12 @@ class AgilexCobotROSManager:
         """ 
         while True and not rospy.is_shutdown():
             result = self._get_synchronized_frame()
-            if result:
-                return self._process_observation_frame(*result)
-            time.sleep(0.01)
+            if not result:
+                # print("get_synchronized_observation FAILED!")
+                time.sleep(0.01)
+                continue
+            # print("get_synchronized_observation SUCCED!")
+            return self._process_observation_frame(*result)
     
     def _get_synchronized_frame(self):
         """Get synchronized frame from all sensors."""
@@ -394,20 +418,20 @@ class AgilexCobotROSManager:
         ]
         
         if any(len(q) == 0 for q in required_queues):
-            return None
+            return False
             
         if self.config.use_depth_image:
             depth_queues = [self.img_left_depth_deque, self.img_right_depth_deque, self.img_front_depth_deque]
             if any(len(q) == 0 for q in depth_queues):
-                return None
+                return False
                 
         if self.config.with_mobile_base and len(self.robot_base_deque) == 0:
-            return None
+            return False
             
         # Find the minimum timestamp across all sensors
         frame_time = self._find_synchronized_frame_time()
-        if frame_time is None:
-            return None
+        if frame_time is False:
+            return False
             
         # Extract synchronized data
         return self._extract_synchronized_data(frame_time)
@@ -432,8 +456,29 @@ class AgilexCobotROSManager:
         if self.config.with_mobile_base:
             timestamps.append(self.robot_base_deque[-1].header.stamp.to_sec())
             
-        return min(timestamps)
-    
+        frame_time =  min(timestamps)
+        
+        if len(self.img_left_deque) == 0 or self.img_left_deque[-1].header.stamp.to_sec() < frame_time:
+            return False
+        if len(self.img_right_deque) == 0 or self.img_right_deque[-1].header.stamp.to_sec() < frame_time:
+            return False
+        if len(self.img_front_deque) == 0 or self.img_front_deque[-1].header.stamp.to_sec() < frame_time:
+            return False
+        if len(self.puppet_arm_left_deque) == 0 or self.puppet_arm_left_deque[-1].header.stamp.to_sec() < frame_time:
+            return False
+        if len(self.puppet_arm_right_deque) == 0 or self.puppet_arm_right_deque[-1].header.stamp.to_sec() < frame_time:
+            return False
+  
+        if self.config.use_depth_image and (len(self.img_left_depth_deque) == 0 or self.img_left_depth_deque[-1].header.stamp.to_sec() < frame_time):
+            return False
+        if self.config.use_depth_image and (len(self.img_right_depth_deque) == 0 or self.img_right_depth_deque[-1].header.stamp.to_sec() < frame_time):
+            return False
+        if self.config.use_depth_image and (len(self.img_front_depth_deque) == 0 or self.img_front_depth_deque[-1].header.stamp.to_sec() < frame_time):
+            return False
+        if self.config.with_mobile_base and (len(self.robot_base_deque) == 0 or self.robot_base_deque[-1].header.stamp.to_sec() < frame_time):
+            return False
+
+        return frame_time
     def _extract_synchronized_data(self, frame_time):
         """Extract synchronized data for given frame time."""
         # Get images
@@ -518,7 +563,6 @@ class AgilexCobotROSManager:
         # Process mobile base
         if self.config.with_mobile_base and robot_base:
             motor_position["vx"] = robot_base.twist.twist.linear.x
-            motor_position["vy"] = robot_base.twist.twist.linear.y
             motor_position["vtheta"] = robot_base.twist.twist.angular.z
         
         # Process camera images
@@ -574,11 +618,11 @@ class AgilexCobotROSManager:
         """Publish command to mobile base."""
         vel_msg = Twist()
         vel_msg.linear.x = vel[0]
-        vel_msg.linear.y = vel[1]
+        vel_msg.linear.y = 0
         vel_msg.linear.z = 0
         vel_msg.angular.x = 0
         vel_msg.angular.y = 0
-        vel_msg.angular.z = vel[2]
+        vel_msg.angular.z = vel[1]
         self.robot_base_publisher.publish(vel_msg)
     
     def publish_continuous_arm_commands(self, left_target, right_target):
