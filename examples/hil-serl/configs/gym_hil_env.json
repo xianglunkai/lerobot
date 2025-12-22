@@ -24,7 +24,7 @@
   "dataset": {
     "repo_id": "gym_hil/sim_dataset",
     "task": "pick_cube",
-    "num_episodes_to_record": 10,
+    "num_episodes_to_record": 30,
     "push_to_hub": false
   
   },

@@ -272,7 +272,7 @@
             },
             "reward_classifier": {
                 "pretrained_path": "/home/xlk/work/lerobot/outputs/train/2025-11-21/11-33-34_reward-classifier/checkpoints/005000/pretrained_model",
-                "success_threshold": 0.5,
+                "success_threshold": 0.7,
                 "success_reward": 1.0
             },
             "max_gripper_pos": 30
