@@ -56,20 +56,6 @@ action_features = hw_to_dataset_features(robot.action_features, "action")
 obs_features = hw_to_dataset_features(robot.observation_features, "observation")
 dataset_features = {**action_features, **obs_features}
 
-reset_position_left= [-0.00133514404296875, 0.00209808349609375, 0.01583099365234375, -0.032616615295410156, -0.00286102294921875, 0.00095367431640625, 0.05]
-reset_position_right = [-0.00133514404296875, 0.00438690185546875, 0.034523963928222656, -0.053597450256347656, -0.00476837158203125, -0.00209808349609375, 0.05]
-
-# create reset action accroding to the robot's action features
-reset_action = {}
-print(f"robot.action_features : {robot.action_features}")
-
-for i, key in enumerate(robot.action_features):
-    # print(f"i: {i}, key:{key}")
-    if "left" in key:
-        reset_action[key] = reset_position_left[i]
-    elif "right" in key:
-        reset_action[key] = reset_position_right[i-7]
-
 for _ in range(MAX_EPISODES):
     robot.reset_to_default_positions()
     time.sleep(3)
