@@ -371,7 +371,7 @@ def record_loop(
             act = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
             act_processed_teleop = teleop_action_processor((act, obs))
         else:
-            # For ROS2 robots without teleop/policy, use current observation as action
+            # For ROS robots without teleop/policy, use current observation as action
             # This allows recording the robot's current state as both observation and action
             if robot.name in ['qnbot_w', 'cobot_magic', 'agilex_cobot']:
                 # Extract position values from observation for action
@@ -400,7 +400,7 @@ def record_loop(
         # Action can eventually be clipped using `max_relative_target`,
         # so action actually sent is saved in the dataset.
         # For ROS2 robots in observation-only mode, don't send commands
-        if robot.name in ['qnbot_w', 'cobot_magic'] and teleop is None and policy is None:
+        if robot.name in ['qnbot_w', 'cobot_magic', 'agilex_cobot'] and teleop is None and policy is None:
             # In observation-only mode, just record the current state as action
             _sent_action = action
             logging.debug("Recording observation as action without sending commands")
@@ -423,6 +423,7 @@ def record_loop(
         precise_sleep(max(1 / fps - dt_s, 0.0))
 
         timestamp = time.perf_counter() - start_episode_t
+        print(f"vla inference takes time {dt_s*1000:.2f} ms")   
 
 
 @parser.wrap()
@@ -517,6 +518,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             recorded_episodes = 0
             while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
                 log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
+                if policy is not None:
+                    robot.reset_to_default_positions()
                 record_loop(
                     robot=robot,
                     events=events,
@@ -575,6 +578,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             dataset.finalize()
 
         if robot.is_connected:
+            if policy is not None:
+                robot.reset_to_default_positions()
             robot.disconnect()
         if teleop and teleop.is_connected:
             teleop.disconnect()

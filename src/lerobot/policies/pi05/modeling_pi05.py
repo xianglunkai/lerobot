@@ -925,6 +925,12 @@ class PI05Policy(PreTrainedPolicy):
         self.model.to(config.device)
 
         self.reset()
+        # External (temporary) smoothing parameters that can be set on the policy
+        # instead of passing via kwargs to `predict_action_chunk`.
+        # smoothing_method: None|'ema'|'intra_chunk'
+        # smoothing_s: float smoothing strength
+        self.smoothing_method = "intra_chunk"
+        self.smoothing_s = 0.01
 
     @classmethod
     def from_pretrained(
@@ -1232,6 +1238,40 @@ class PI05Policy(PreTrainedPolicy):
         original_action_dim = self.config.output_features[ACTION].shape[0]
         actions = actions[:, :, :original_action_dim]
 
+        # Optional smoothing: support 'ema' (fast, IIR) and 'gauss' (Gaussian conv)
+        smoothing_method = kwargs.get("smoothing_method") if kwargs is not None else None
+        if smoothing_method is None:
+            smoothing_method = getattr(self, "smoothing_method", None)
+        smoothing_s = kwargs.get("smoothing_s") if (kwargs is not None and kwargs.get("smoothing_s") is not None) else getattr(self, "smoothing_s", 0.0)
+        smoothing_s = float(smoothing_s)
+
+        if smoothing_method is not None:
+            method = str(smoothing_method).lower()
+            # Work on torch Tensor on same device to avoid host transfer.
+            device = actions.device
+            dtype = actions.dtype
+
+            if method == "ema":
+                # EMA: alpha = 1/(1 + s); s=0 -> alpha=1 (no smoothing)
+                alpha = 1.0 / (1.0 + float(smoothing_s))
+                if alpha < 1.0:
+                    B, T, A = actions.shape
+                    # use float32 for stability when inputs are low-precision
+                    compute_dtype = torch.float32 if dtype in (torch.float16, torch.bfloat16) else dtype
+                    out = torch.empty_like(actions, dtype=compute_dtype, device=device)
+                    out[:, 0, :] = actions[:, 0, :].to(compute_dtype)
+                    one_minus = 1.0 - alpha
+                    for t in range(1, T):
+                        out[:, t, :] = alpha * actions[:, t, :].to(compute_dtype) + one_minus * out[:, t - 1, :]
+                    actions = out.to(dtype)
+
+            elif method == "intra_chunk":
+                # VLA-RAIL intra-chunk trajectory smoothing using cubic polynomial fitting
+                # This implements the algorithm described in the VLA-RAIL paper
+                actions = intra_chunk_smoothing_vla_rail(actions, polynomial_order=3, preserve_boundaries=True)
+
+            # else: unknown method -> leave actions unchanged
+
         return actions
 
     def forward(self, batch: dict[str, Tensor], reduction: str = "mean") -> tuple[Tensor, dict]:
@@ -1281,3 +1321,99 @@ class PI05Policy(PreTrainedPolicy):
             "target_modules": target_modules,
             "modules_to_save": [],
         }
+def intra_chunk_smoothing_vla_rail(
+    actions: torch.Tensor,
+    polynomial_order: int = 3,
+    preserve_boundaries: bool = True,
+    return_coefficients: bool = False
+) -> torch.Tensor:
+    """
+    VLA-RAIL intra-chunk trajectory smoothing using polynomial fitting.
+    
+    Args:
+        actions: Action tensor of shape (B, T, A), where
+            B = batch size,
+            T = chunk size (time steps),
+            A = action dimension
+        polynomial_order: Order of polynomial for fitting (default=3 for cubic)
+        preserve_boundaries: If True, keep the first and last points unchanged
+        return_coefficients: If True, return both smoothed actions and polynomial coefficients
+    
+    Returns:
+        Smoothed action tensor of shape (B, T, A)
+        If return_coefficients is True, also returns coefficients of shape (B, A, polynomial_order+1)
+    """
+    B, T, A = actions.shape
+    
+    # Ensure we have enough points for polynomial fitting
+    if T < polynomial_order + 1:
+        # Not enough points for the specified polynomial order
+        if return_coefficients:
+            return actions, None
+        return actions
+    
+    # Use float32 for stability if input is low-precision
+    compute_dtype = torch.float32 if actions.dtype in (torch.float16, torch.bfloat16) else actions.dtype
+    actions_fp32 = actions.to(compute_dtype)
+    
+    # Create time indices (0, 1, 2, ..., T-1)
+    # Shape: (T, 1) for broadcasting
+    t = torch.arange(T, dtype=compute_dtype, device=actions.device).unsqueeze(1)  # (T, 1)
+    
+    # Build Vandermonde matrix for polynomial basis [1, t, t^2, t^3, ...]
+    # Shape: (T, polynomial_order+1)
+    powers = torch.arange(polynomial_order + 1, dtype=compute_dtype, device=actions.device)
+    V = t ** powers  # (T, polynomial_order+1)
+    
+    # Compute Moore-Penrose pseudoinverse: (V^T V)^(-1) V^T
+    # More stable than directly computing pseudoinverse for large T
+    VtV = V.T @ V  # (polynomial_order+1, polynomial_order+1)
+    
+    # Add small regularization for numerical stability
+    reg = torch.eye(polynomial_order + 1, device=actions.device, dtype=compute_dtype) * 1e-6
+    VtV_reg = VtV + reg
+    
+    # Compute pseudoinverse
+    try:
+        VtV_inv = torch.linalg.inv(VtV_reg)
+        V_pinv = VtV_inv @ V.T  # (polynomial_order+1, T)
+    except torch.linalg.LinAlgError:
+        # Fallback to SVD if matrix is singular
+        U, S, Vh = torch.linalg.svd(V, full_matrices=False)
+        S_inv = torch.diag(1.0 / (S + 1e-6))  # Add regularization
+        V_pinv = Vh.T @ S_inv @ U.T  # (polynomial_order+1, T)
+    
+    # Reshape actions for batch processing
+    # Convert from (B, T, A) to (B*A, T)
+    actions_reshaped = actions_fp32.permute(0, 2, 1).reshape(-1, T)  # (B*A, T)
+    
+    # Compute polynomial coefficients for each action dimension
+    # coefficients = V_pinv @ actions_reshaped^T, but we need to transpose
+    coefficients = (V_pinv @ actions_reshaped.T).T  # (B*A, polynomial_order+1)
+    
+    # Reshape coefficients to (B, A, polynomial_order+1)
+    coefficients_reshaped = coefficients.reshape(B, A, -1)
+    
+    # Evaluate polynomial at original time points
+    # smoothed = V @ coefficients^T
+    # We need to reshape coefficients to (B, polynomial_order+1, A) for matrix multiplication
+    coefficients_reshaped_T = coefficients_reshaped.permute(0, 2, 1)  # (B, polynomial_order+1, A)
+    
+    # V is (T, polynomial_order+1), we need to add batch dimension
+    # Using torch.einsum for clarity: 'tp, bpa -> bta'
+    smoothed = torch.einsum('tp, bpa -> bta', V, coefficients_reshaped_T)
+    
+    # 修复这里的维度问题：preserve_boundaries部分
+    if preserve_boundaries:
+        # 注意：我们需要确保维度匹配
+        # actions_fp32[:, 0, :] 形状: (B, A)
+        # smoothed[:, 0, :] 形状: (B, A)
+        smoothed[:, 0, :] = actions_fp32[:, 0, :]
+        smoothed[:, -1, :] = actions_fp32[:, -1, :]
+    
+    # Convert back to original dtype
+    smoothed = smoothed.to(actions.dtype)
+    
+    if return_coefficients:
+        return smoothed, coefficients_reshaped
+    return smoothed

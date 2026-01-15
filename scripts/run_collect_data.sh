@@ -64,17 +64,33 @@ export HF_HOME=/data/huggingface
 #     --dataset.reset_time_s=60 \
 
 
+# python3 -m lerobot.scripts.lerobot_record \
+#     --robot.type=agilex_cobot \
+#     --robot.id=lerobot_navigation \
+#     --robot.use_external_commands=true \
+#     --robot.ros_config.with_mobile_base=true \
+#     --dataset.repo_id=lerobot/lerobot_navigation$(date +%Y%m%d_%H%M%S) \
+#     --dataset.single_task="" \
+#     --dataset.num_episodes=50 \
+#     --dataset.fps=30 \
+#     --dataset.video=True \
+#     --dataset.push_to_hub=false \
+#     --display_data=true \
+#     --dataset.episode_time_s=60 \
+#     --dataset.reset_time_s=60 \
+
+
 python3 -m lerobot.scripts.lerobot_record \
     --robot.type=agilex_cobot \
-    --robot.id=lerobot_navigation \
+    --robot.id=fold_cloth \
     --robot.use_external_commands=true \
-    --robot.ros_config.with_mobile_base=true \
-    --dataset.repo_id=lerobot/lerobot_navigation$(date +%Y%m%d_%H%M%S) \
-    --dataset.single_task="" \
-    --dataset.num_episodes=50 \
+    --robot.ros_config.with_mobile_base=false \
+    --dataset.repo_id=lerobot/lerobot_fold_cloth_action_from_slave_$(date +%Y%m%d_%H%M%S) \
+    --dataset.single_task="Please fold the clothes on the desktop!" \
+    --dataset.num_episodes=30 \
     --dataset.fps=30 \
     --dataset.video=True \
     --dataset.push_to_hub=false \
     --display_data=true \
-    --dataset.episode_time_s=60 \
-    --dataset.reset_time_s=60 \
+    --dataset.episode_time_s=180 \
+    --dataset.reset_time_s=15 \
