@@ -144,22 +144,22 @@ class RTCDemoConfig(HubMixin):
     # RTC configuration
     rtc: RTCConfig = field(
         default_factory=lambda: RTCConfig(
-            execution_horizon=10,
+            execution_horizon=15,
             max_guidance_weight=10.0,
             prefix_attention_schedule=RTCAttentionSchedule.EXP,
         )
     )
 
     # Demo parameters
-    duration: float = 30.0  # Duration to run the demo (seconds)
-    fps: float = 10.0  # Action execution frequency (Hz)
+    duration: float = 60.0  # Duration to run the demo (seconds)
+    fps: float = 30.0  # Action execution frequency (Hz)
 
     # Compute device
     device: str | None = None  # Device to run on (cuda, cpu, auto)
 
     # Get new actions horizon. The amount of executed steps after which will be requested new actions.
     # It should be higher than inference delay + execution horizon.
-    action_queue_size_to_get_new_actions: int = 30
+    action_queue_size_to_get_new_actions: int = 25
 
     # Task to execute
     task: str = field(default="", metadata={"help": "Task to execute"})
@@ -256,6 +256,8 @@ def get_actions(
         logger.info("[GET_ACTIONS] Preprocessor/postprocessor loaded successfully with embedded stats")
 
         get_actions_threshold = cfg.action_queue_size_to_get_new_actions
+        
+        inference_first_time = True
 
         if not cfg.rtc.enabled:
             get_actions_threshold = 0
@@ -266,7 +268,7 @@ def get_actions(
                 action_index_before_inference = action_queue.get_action_index()
                 prev_actions = action_queue.get_left_over()
 
-                inference_latency = latency_tracker.p95()
+                inference_latency = latency_tracker.max()
                 inference_delay = math.ceil(inference_latency / time_per_chunk)
 
                 obs = robot.get_observation()
@@ -304,6 +306,10 @@ def get_actions(
                     prev_chunk_left_over=prev_actions,
                 )
 
+                if inference_first_time:
+                    inference_first_time = False
+                    continue
+
                 # Store original actions (before postprocessing) for RTC
                 original_actions = actions.squeeze(0).clone()
 
@@ -314,8 +320,7 @@ def get_actions(
                 new_latency = time.perf_counter() - current_time
                 new_delay = math.ceil(new_latency / time_per_chunk)
                 latency_tracker.add(new_latency)
-                print(f"inference_latency: {inference_latency}, new_latency: {new_latency}")
-
+                
                 if cfg.action_queue_size_to_get_new_actions < cfg.rtc.execution_horizon + new_delay:
                     logger.warning(
                         "[GET_ACTIONS] cfg.action_queue_size_to_get_new_actions Too small, It should be higher than inference delay + execution horizon."
