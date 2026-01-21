@@ -1,790 +1,897 @@
-"""Utilities to convert a LeRobot dataset from codebase version v3.0 back to v2.0.
-The script mirrors :mod:`lerobot.datasets.v21.convert_dataset_v21_to_v30` but applies the reverse
-transformations so an existing dataset created with the new consolidated file
-layout can be ported back to the legacy per-episode structure.
-Usage examples
---------------
-Convert a dataset that already exists locally::
-    python src/lerobot/datasets/v30/convert_dataset_v30_to_v21.py \
-        --repo-id=lerobot/pusht \
-        --root=/path/to/datasets
+#!/usr/bin/env python
+
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""
+This script will help you convert any LeRobot dataset already pushed to the hub from codebase version 2.1 to
+3.0. It will:
+
+- Generate per-episodes stats and writes them in `episodes_stats.jsonl`
+- Check consistency between these new stats and the old ones.
+- Remove the deprecated `stats.json`.
+- Update codebase_version in `info.json`.
+- Push this new version to the hub on the 'main' branch and tags it with "v3.0".
+
+Usage:
+
+Convert a dataset from the hub:
+```bash
+python src/lerobot/datasets/v30/convert_dataset_v21_to_v30.py \
+    --repo-id=lerobot/pusht
+```
+
+Convert a local dataset (works in place):
+```bash
+python src/lerobot/datasets/v30/convert_dataset_v21_to_v30.py \
+    --repo-id=lerobot/pusht \
+    --root=/path/to/local/dataset/directory
+    --push-to-hub=false
+```
+
 """
 
-from __future__ import annotations
-
 import argparse
-import json
 import logging
-import math
 import shutil
-import subprocess
-import sys
-from collections import defaultdict
+import tempfile
+from io import BytesIO
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
-import cv2  # type: ignore
 import jsonlines
-import numpy as np
-import pyarrow.parquet as pq
+import pandas as pd
 import pyarrow as pa
+import pyarrow.parquet as pq
 import tqdm
-from huggingface_hub import snapshot_download
+from datasets import Dataset, Features, Image
+from huggingface_hub import HfApi, snapshot_download
+from requests import HTTPError
 
-try:
-    import decord  # type: ignore
-    HAVE_DECORD = True
-except Exception:
-    HAVE_DECORD = False
-
-if __package__ is None or __package__ == "":
-    sys.path.append(str(Path(__file__).resolve().parents[3]))
+from lerobot.datasets.compute_stats import aggregate_stats
+from lerobot.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
 from lerobot.datasets.utils import (
     DEFAULT_CHUNK_SIZE,
+    DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_DATA_PATH,
+    DEFAULT_VIDEO_FILE_SIZE_IN_MB,
     DEFAULT_VIDEO_PATH,
-    EPISODES_DIR,
     LEGACY_EPISODES_PATH,
     LEGACY_EPISODES_STATS_PATH,
     LEGACY_TASKS_PATH,
+    cast_stats_to_numpy,
+    flatten_dict,
+    get_file_size_in_mb,
+    get_parquet_file_size_in_mb,
+    get_parquet_num_frames,
     load_info,
-    load_tasks,
-    serialize_dict,
-    unflatten_dict,
+    update_chunk_file_indices,
+    write_episodes,
     write_info,
+    write_stats,
+    write_tasks,
+)
+from PIL import Image as PILImage
+
+from lerobot.datasets.video_utils import (
+    concatenate_video_files,
+    encode_video_frames,
+    get_video_duration_in_s,
 )
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.utils import init_logging
 
-V20 = "v2.0"
+V21 = "v2.1"
 V30 = "v3.0"
 
-# Mapping from v3.0 video keys to (v2.0 column name, short video dir)
-V30_TO_V20_VIDEO_MAPPING = {
-    "observation.images.high": ("observation.images.cam_high", "cam_high"),
-    "observation.images.left": ("observation.images.cam_left_wrist", "cam_left_wrist"),
-    "observation.images.right": ("observation.images.cam_right_wrist", "cam_right_wrist"),
-}
+"""
+-------------------------
+OLD
+data/chunk-000/episode_000000.parquet
 
-LEGACY_DATA_PATH_TEMPLATE = "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet"
-LEGACY_VIDEO_PATH_TEMPLATE = "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4"
-MIN_VIDEO_DURATION = 1e-6
+NEW
+data/chunk-000/file_000.parquet
+-------------------------
+OLD
+videos/chunk-000/CAMERA/episode_000000.mp4
 
-def _to_serializable(value: Any) -> Any:
-    """Convert numpy/pyarrow values into standard Python types for JSON dumps."""
+NEW
+videos/CAMERA/chunk-000/file_000.mp4
+-------------------------
+OLD
+episodes.jsonl
+{"episode_index": 1, "tasks": ["Put the blue block in the green bowl"], "length": 266}
 
-    if isinstance(value, np.ndarray):
-        return value.tolist()
-    if isinstance(value, np.generic):
-        return value.item()
-    if isinstance(value, (list, tuple)):
-        return [_to_serializable(item) for item in value]
-    if isinstance(value, dict):
-        return {key: _to_serializable(val) for key, val in value.items()}
-    return value
+NEW
+meta/episodes/chunk-000/episodes_000.parquet
+episode_index | video_chunk_index | video_file_index | data_chunk_index | data_file_index | tasks | length
+-------------------------
+OLD
+tasks.jsonl
+{"task_index": 1, "task": "Put the blue block in the green bowl"}
+
+NEW
+meta/tasks/chunk-000/file_000.parquet
+task_index | task
+-------------------------
+OLD
+episodes_stats.jsonl
+
+NEW
+meta/episodes_stats/chunk-000/file_000.parquet
+episode_index | mean | std | min | max
+-------------------------
+UPDATE
+meta/info.json
+-------------------------
+"""
 
 
-def _normalize_task_value(task_value: Any) -> str | None:
-    serializable = _to_serializable(task_value)
-    if serializable is None:
-        return None
-    if isinstance(serializable, str):
-        return serializable
-    return json.dumps(serializable, ensure_ascii=False)
+def load_jsonlines(fpath: Path) -> list[Any]:
+    with jsonlines.open(fpath, "r") as reader:
+        return list(reader)
+
+
+def legacy_load_episodes(local_dir: Path) -> dict:
+    episodes = load_jsonlines(local_dir / LEGACY_EPISODES_PATH)
+    return {item["episode_index"]: item for item in sorted(episodes, key=lambda x: x["episode_index"])}
+
+
+def legacy_load_episodes_stats(local_dir: Path) -> dict:
+    episodes_stats = load_jsonlines(local_dir / LEGACY_EPISODES_STATS_PATH)
+    return {
+        item["episode_index"]: cast_stats_to_numpy(item["stats"])
+        for item in sorted(episodes_stats, key=lambda x: x["episode_index"])
+    }
+
+
+def legacy_load_tasks(local_dir: Path) -> tuple[dict, dict]:
+    tasks = load_jsonlines(local_dir / LEGACY_TASKS_PATH)
+    tasks = {item["task_index"]: item["task"] for item in sorted(tasks, key=lambda x: x["task_index"])}
+    task_to_task_index = {task: task_index for task_index, task in tasks.items()}
+    return tasks, task_to_task_index
 
 
 def validate_local_dataset_version(local_path: Path) -> None:
+    """Validate that the local dataset has the expected v2.1 version."""
     info = load_info(local_path)
     dataset_version = info.get("codebase_version", "unknown")
-    if dataset_version != V30:
+    if dataset_version != V21:
         raise ValueError(
-            f"Local dataset has codebase version '{dataset_version}', expected '{V30}'. "
-            f"This script converts datasets from v3.0 back to v2.0."
+            f"Local dataset has codebase version '{dataset_version}', expected '{V21}'. "
+            f"This script is specifically for converting v2.1 datasets to v3.0."
         )
 
 
-def load_episode_records(root: Path) -> list[dict[str, Any]]:
-    """Load the consolidated metadata rows stored in ``meta/episodes``."""
-
-    episodes_dir = root / EPISODES_DIR
-    pq_paths = sorted(episodes_dir.glob("chunk-*/file-*.parquet"))
-    if not pq_paths:
-        raise FileNotFoundError(f"No episode parquet files found in {episodes_dir}.")
-
-    records: list[dict[str, Any]] = []
-    for pq_path in pq_paths:
-        table = pq.read_table(pq_path)
-        records.extend(table.to_pylist())
-
-    records.sort(key=lambda rec: int(rec["episode_index"]))
-    return records
+def convert_tasks(root, new_root):
+    logging.info(f"Converting tasks from {root} to {new_root}")
+    tasks, _ = legacy_load_tasks(root)
+    task_indices = tasks.keys()
+    task_strings = tasks.values()
+    df_tasks = pd.DataFrame({"task_index": task_indices}, index=task_strings)
+    write_tasks(df_tasks, new_root)
 
 
-def convert_tasks(root: Path, new_root: Path) -> None:
-    logging.info("Converting tasks parquet to legacy JSONL")
-    tasks = load_tasks(root)
-    tasks = tasks.sort_values("task_index")
+def concat_data_files(paths_to_cat, new_root, chunk_idx, file_idx, image_keys, *, drop_columns: list[str] | None = None):
+    path = new_root / DEFAULT_DATA_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
+    path.parent.mkdir(parents=True, exist_ok=True)
 
-    out_path = new_root / LEGACY_TASKS_PATH
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    # Stream-write to avoid loading all episodes into memory when producing a single large file.
+    # Each input parquet is one episode parquet in v2.1.
+    out_schema: pa.Schema | None = None
+    features: Features | None = None
+    if len(image_keys) > 0:
+        # Build a schema that correctly declares image columns as `datasets.Image`.
+        # Start from the first table schema for non-image fields.
+        first_table = pq.read_table(paths_to_cat[0])
+        if drop_columns:
+            cols_to_drop = [c for c in drop_columns if c in first_table.column_names]
+            if cols_to_drop:
+                first_table = first_table.drop(cols_to_drop)
+        base_schema = first_table.schema
+        features = Features.from_arrow_schema(base_schema)
+        for key in image_keys:
+            if key in features:
+                features[key] = Image()
+        out_schema = features.arrow_schema
+    
+    writer: pq.ParquetWriter | None = None
+    try:
+        for src_path in paths_to_cat:
+            table = pq.read_table(src_path)
+            if drop_columns:
+                cols_to_drop = [c for c in drop_columns if c in table.column_names]
+                if cols_to_drop:
+                    table = table.drop(cols_to_drop)
 
-    with jsonlines.open(out_path, mode="w") as writer:
-        for task, row in tasks.iterrows():
-            task_value = _normalize_task_value(task)
-            if task_value is None:
-                continue
-            writer.write({
-                "task_index": int(row["task_index"]),
-                "task": task_value,
-            })
+            if out_schema is not None:
+                table = table.cast(out_schema)
+            elif writer is None:
+                out_schema = table.schema
 
-
-def convert_info(
-    root: Path,
-    new_root: Path,
-    episode_records: list[dict[str, Any]],
-    video_keys: list[str],  # v2 column names
-) -> None:
-    info = load_info(root)
-    logging.info("Converting info.json metadata to v2.0 schema")
-    total_episodes = info.get("total_episodes") or len(episode_records)
-    chunks_size = info.get("chunks_size", DEFAULT_CHUNK_SIZE)
-    info["codebase_version"] = V20
-    info["data_path"] = LEGACY_DATA_PATH_TEMPLATE
-    if info.get("video_path") is not None and len(video_keys) > 0:
-        info["video_path"] = LEGACY_VIDEO_PATH_TEMPLATE
-    else:
-        info["video_path"] = None
-    info.pop("data_files_size_in_mb", None)
-    info.pop("video_files_size_in_mb", None)
-
-    # 重命名 features 键：v3 -> v2
-    new_features: dict[str, Any] = {}
-    for key, ft in info["features"].items():
-        if key in V30_TO_V20_VIDEO_MAPPING:
-            v2_key = V30_TO_V20_VIDEO_MAPPING[key][0]
-        else:
-            v2_key = key
-        if ft.get("dtype") != "video":
-            ft.pop("fps", None)
-        if isinstance(ft.get("dtype"), str) and ft["dtype"].lower() == "list":
-            item_dtype = ft.pop("item_dtype", None) or ft.pop("value_dtype", None) or "float32"
-            ft["dtype"] = "video" if v2_key in video_keys else item_dtype
-        new_features[v2_key] = ft
-    info["features"] = new_features
-
-    info["total_chunks"] = math.ceil(total_episodes / chunks_size) if total_episodes > 0 else 0
-    info["total_videos"] = total_episodes * len(video_keys)
-    write_info(info, new_root)
-
-
-def _group_episodes_by_data_file(
-    episode_records: Iterable[dict[str, Any]],
-) -> dict[tuple[int, int], list[dict[str, Any]]]:
-    grouped: dict[tuple[int, int], list[dict[str, Any]]] = defaultdict(list)
-    for record in episode_records:
-        key = (
-            int(record["data/chunk_index"]),
-            int(record["data/file_index"]),
-        )
-        grouped[key].append(record)
-    return grouped
-
-
-def _decode_video_frames(video_path: Path, num_rows: int) -> tuple[list[bytes | None], list[str]]:
-    """Decode video into PNG bytes (RGB) for embedding into struct<bytes,path>.
-    Fallback: return all None if解码失败。"""
-    if not video_path.exists():
-        return [None] * num_rows, [f"frame_{i:06d}.png" for i in range(num_rows)]
-    frames: list[bytes | None] = []
-    # 优先 decord
-    if HAVE_DECORD:
-        try:
-            vr = decord.VideoReader(str(video_path))
-            length = len(vr)
-            for i in range(min(length, num_rows)):
-                img = vr[i].asnumpy()  # RGB
-                bgr = img[..., ::-1]
-                ok, buf = cv2.imencode(".png", bgr)
-                frames.append(buf.tobytes() if ok else None)
-        except Exception:
-            frames = []
-    # 其次 OpenCV
-    if not frames:
-        cap = cv2.VideoCapture(str(video_path))
-        if cap.isOpened():
-            idx = 0
-            while idx < num_rows:
-                ret, frame = cap.read()
-                if not ret:
-                    break
-                ok, buf = cv2.imencode(".png", frame)
-                frames.append(buf.tobytes() if ok else None)
-                idx += 1
-            cap.release()
-    if not frames:
-        return [None] * num_rows, [f"frame_{i:06d}.png" for i in range(num_rows)]
-    if len(frames) < num_rows:
-        last = frames[-1]
-        frames.extend([last] * (num_rows - len(frames)))
-    elif len(frames) > num_rows:
-        frames = frames[:num_rows]
-    paths = [f"frame_{i:06d}.png" for i in range(num_rows)]
-    return frames, paths
-
-
-def _extract_camera_name(video_feature_name: str) -> str:
-    # Extract short name from v2.0 style names like observation.images.cam_high -> cam_high
-    if video_feature_name.startswith("observation.images.cam_"):
-        return video_feature_name.split(".", 2)[-1]  # e.g., cam_high
-    return video_feature_name
+            if writer is None:
+                writer = pq.ParquetWriter(path, out_schema)
+            writer.write_table(table)
+    finally:
+        if writer is not None:
+            writer.close()
 
 
 def convert_data(
     root: Path,
     new_root: Path,
-    episode_records: list[dict[str, Any]],
-    video_keys: list[str],  # v2 column names
-    task_lookup: dict[int, str],
-    embed_images: bool,
-) -> None:
-    logging.info("Converting consolidated parquet files back to per-episode files")
-    grouped = _group_episodes_by_data_file(episode_records)
+    data_file_size_in_mb: int,
+    *,
+    drop_columns: list[str] | None = None,
+):
+    data_dir = root / "data"
+    ep_paths = sorted(data_dir.glob("*/*.parquet"))
 
-    for (chunk_idx, file_idx), records in tqdm.tqdm(grouped.items(), desc="convert data files"):
-        source_path = root / DEFAULT_DATA_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
-        if not source_path.exists():
-            raise FileNotFoundError(f"Expected source parquet file not found: {source_path}")
+    image_keys = get_image_keys(root)
+    if drop_columns:
+        image_keys = [k for k in image_keys if k not in set(drop_columns)]
 
-        table = pq.read_table(source_path)
-        records = sorted(records, key=lambda rec: int(rec["dataset_from_index"]))
-        file_offset = int(records[0]["dataset_from_index"])
+    ep_idx = 0
+    chunk_idx = 0
+    file_idx = 0
+    size_in_mb = 0
+    num_frames = 0
+    paths_to_cat = []
+    episodes_metadata = []
 
-        for record in records:
-            episode_index = int(record["episode_index"])
-            start = int(record["dataset_from_index"]) - file_offset
-            stop = int(record["dataset_to_index"]) - file_offset
-            length = stop - start
-            if length <= 0:
-                raise ValueError(f"Invalid episode length: episode_index={episode_index}, length={length}")
+    logging.info(f"Converting data files from {len(ep_paths)} episodes")
 
-            episode_table = table.slice(start, length)
+    for ep_path in tqdm.tqdm(ep_paths, desc="convert data files"):
+        ep_size_in_mb = get_parquet_file_size_in_mb(ep_path)
+        ep_num_frames = get_parquet_num_frames(ep_path)
+        ep_metadata = {
+            "episode_index": ep_idx,
+            "data/chunk_index": chunk_idx,
+            "data/file_index": file_idx,
+            "dataset_from_index": num_frames,
+            "dataset_to_index": num_frames + ep_num_frames,
+        }
+        size_in_mb += ep_size_in_mb
+        num_frames += ep_num_frames
+        episodes_metadata.append(ep_metadata)
+        ep_idx += 1
 
-            # 如果缺失 velocity / effort 列，补零
-            state_col_name = "observation.state"
-            if state_col_name in episode_table.column_names:
-                try:
-                    first_state = episode_table.column(state_col_name)[0].as_py()
-                    dim = len(first_state)
-                    list_type = pa.list_(pa.float32(), list_size=dim)
-                except Exception:
-                    list_type = pa.list_(pa.float32())
-                    dim = None
-                if "observation.velocity" not in episode_table.column_names:
-                    zeros = [[0.0] * dim if dim is not None else [] for _ in range(episode_table.num_rows)]
-                    episode_table = episode_table.append_column("observation.velocity", pa.array(zeros, type=list_type))
-                if "observation.effort" not in episode_table.column_names:
-                    zeros = [[0.0] * dim if dim is not None else [] for _ in range(episode_table.num_rows)]
-                    episode_table = episode_table.append_column("observation.effort", pa.array(zeros, type=list_type))
+        if size_in_mb < data_file_size_in_mb:
+            paths_to_cat.append(ep_path)
+            continue
 
-            dest_chunk = episode_index // DEFAULT_CHUNK_SIZE
-            dest_path = new_root / LEGACY_DATA_PATH_TEMPLATE.format(
-                episode_chunk=dest_chunk,
-                episode_index=episode_index,
+        if paths_to_cat:
+            concat_data_files(
+                paths_to_cat,
+                new_root,
+                chunk_idx,
+                file_idx,
+                image_keys,
+                drop_columns=drop_columns,
             )
-            dest_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # 添加图像列：使用 v2.0 列名
-            if video_keys:
-                for v2_col_name in video_keys:
-                    if v2_col_name in episode_table.column_names:
-                        continue
-                    cam_dir = _extract_camera_name(v2_col_name)  # cam_high 等
-                    video_rel_path = LEGACY_VIDEO_PATH_TEMPLATE.format(
-                        episode_chunk=dest_chunk,
-                        video_key=cam_dir,
-                        episode_index=episode_index,
-                    )
-                    num_rows = episode_table.num_rows
-                    full_video_path = new_root / video_rel_path
-                    if embed_images:
-                        bytes_list, paths_list = _decode_video_frames(full_video_path, num_rows)
-                        bytes_array = pa.array(bytes_list, type=pa.binary())
-                        path_array = pa.array(paths_list, type=pa.string())
-                    else:
-                        bytes_array = pa.array([None] * num_rows, type=pa.binary())
-                        path_array = pa.array([video_rel_path] * num_rows, type=pa.string())
-                    struct_array = pa.StructArray.from_arrays([bytes_array, path_array], ["bytes", "path"])
-                    episode_table = episode_table.append_column(v2_col_name, struct_array)
+        # Reset for the next file
+        size_in_mb = ep_size_in_mb
+        paths_to_cat = [ep_path]
 
-            # 任务列
-            if "task" not in episode_table.column_names:
-                task_value = record.get("task")
-                if task_value is None:
-                    task_idx = record.get("task_index")
-                    try:
-                        task_value = task_lookup[int(task_idx)] if task_idx is not None else None
-                    except (KeyError, TypeError, ValueError):
-                        task_value = None
-                task_value = _normalize_task_value(task_value)
-                if task_value is not None:
-                    task_array = pa.array([task_value] * episode_table.num_rows, type=pa.string())
-                    episode_table = episode_table.append_column("task", task_array)
+        chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, DEFAULT_CHUNK_SIZE)
 
-            expected_prefix_order = [
-                "observation.state",
-                "action",
-                "observation.velocity",
-                "observation.effort",
-                "observation.images.cam_high",
-                "observation.images.cam_left_wrist",
-                "observation.images.cam_right_wrist",
-                "timestamp",
-                "frame_index",
-                "episode_index",
-                "index",
-                "task",
-                "task_index",
-            ]
-            existing_cols = episode_table.column_names
-            ordered = [c for c in expected_prefix_order if c in existing_cols]
-            remaining = [c for c in existing_cols if c not in ordered]
-            final_order = ordered + remaining
-            if final_order != existing_cols:
-                try:
-                    episode_table = episode_table.select(final_order)
-                except Exception as exc:
-                    logging.warning("Reorder failed episode=%s path=%s error=%s", episode_index, dest_path, exc)
-
-            episode_table = _sanitize_table_metadata(episode_table)
-            pq.write_table(episode_table, dest_path)
-
-
-def _group_episodes_by_video_file(
-    episode_records: Iterable[dict[str, Any]],
-    video_key: str,
-) -> dict[tuple[int, int], list[dict[str, Any]]]:
-    grouped: dict[tuple[int, int], list[dict[str, Any]]] = defaultdict(list)
-    chunk_column = f"videos/{video_key}/chunk_index"
-    file_column = f"videos/{video_key}/file_index"
-
-    for record in episode_records:
-        if chunk_column not in record or file_column not in record:
-            continue
-        chunk_idx = record.get(chunk_column)
-        file_idx = record.get(file_column)
-        if chunk_idx is None or file_idx is None:
-            continue
-        grouped[(int(chunk_idx), int(file_idx))].append(record)
-    return grouped
-
-
-def _validate_video_paths(src: Path, dst: Path) -> None:
-    """Validate source and destination paths to prevent security issues."""
-
-    # Convert to Path objects if they aren't already
-    src = Path(src)
-    dst = Path(dst)
-
-    # Resolve paths to handle symlinks and normalize them
-    try:
-        src_resolved = src.resolve()
-        dst_resolved = dst.resolve()
-    except OSError as exc:
-        raise ValueError(f"Invalid path provided: {exc}") from exc
-
-    # Check that source file exists and is a regular file
-    if not src_resolved.exists():
-        raise FileNotFoundError(f"Source video file does not exist: {src_resolved}")
-
-    if not src_resolved.is_file():
-        raise ValueError(f"Source path is not a regular file: {src_resolved}")
-
-    # Validate file extensions for video files
-    valid_video_extensions = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v"}
-    if src_resolved.suffix.lower() not in valid_video_extensions:
-        raise ValueError(f"Source file does not have a valid video extension: {src_resolved}")
-
-    if dst_resolved.suffix.lower() not in valid_video_extensions:
-        raise ValueError(f"Destination file does not have a valid video extension: {dst_resolved}")
-
-    # Check for path traversal attempts in the original paths
-    src_str = str(src)
-    dst_str = str(dst)
-
-    # Ensure paths don't contain null bytes or other control characters
-    for path_str, name in [(src_str, "source"), (dst_str, "destination")]:
-        if "\0" in path_str:
-            raise ValueError(f"Path contains null bytes: {name} path")
-        if any(ord(c) < 32 and c not in ["\t", "\n", "\r"] for c in path_str):
-            raise ValueError(f"Path contains invalid control characters: {name} path")
-
-    # Additional check: ensure resolved paths don't point to system directories
-    system_dirs = {"/etc", "/sys", "/proc", "/dev", "/boot", "/root"}
-    for resolved_path, name in [(src_resolved, "source"), (dst_resolved, "destination")]:
-        path_str = str(resolved_path)
-        for sys_dir in system_dirs:
-            if path_str.startswith(sys_dir + "/") or path_str == sys_dir:
-                raise ValueError(f"Path points to system directory: {name} path {resolved_path}")
-
-    # Ensure the destination directory can be created safely
-    try:
-        dst_parent = dst_resolved.parent
-        if not dst_parent.exists():
-            # Check if we can create the parent directory structure
-            dst_parent.resolve()
-    except OSError as exc:
-        raise ValueError(f"Cannot create destination directory: {exc}") from exc
-
-
-def _extract_video_segment(
-    src: Path,
-    dst: Path,
-    start: float,
-    end: float,
-) -> None:
-    # Validate paths to prevent security issues
-    _validate_video_paths(src, dst)
-
-    # Validate numeric parameters to prevent injection
-    if not (0 <= start <= 86400):  # 24 hours max
-        raise ValueError(f"Invalid start time: {start}")
-    if not (0 <= end <= 86400):  # 24 hours max
-        raise ValueError(f"Invalid end time: {end}")
-    if start >= end:
-        raise ValueError(f"Start time {start} must be less than end time {end}")
-
-    duration = max(end - start, MIN_VIDEO_DURATION)
-
-    # Validate duration is reasonable
-    if duration > 3600:  # 1 hour max
-        raise ValueError(f"Video segment duration too long: {duration} seconds")
-
-    dst.parent.mkdir(parents=True, exist_ok=True)
-
-    # Build command with validated parameters
-    # Change from copy to re-encode to H.264 to handle AV1 and other codecs reliably
-    cmd = [
-        "ffmpeg",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-ss",
-        f"{start:.6f}",
-        "-i",
-        str(src),
-        "-t",
-        f"{duration:.6f}",
-        "-c:v",
-        "libx264",
-        "-crf",
-        "18",
-        "-preset",
-        "medium",
-        "-an",  # Remove audio if present
-        "-avoid_negative_ts",
-        "1",
-        "-y",
-        str(dst),
-    ]
-
-    try:
-        # Use more secure subprocess call with explicit timeout
-        result = subprocess.run(
-            cmd, 
-            check=True, 
-            timeout=600,  # Increased timeout for re-encoding
-            capture_output=True, 
-            text=True
+    # Write remaining data if any
+    if paths_to_cat:
+        concat_data_files(
+            paths_to_cat,
+            new_root,
+            chunk_idx,
+            file_idx,
+            image_keys,
+            drop_columns=drop_columns,
         )
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError(f"ffmpeg timed out while processing video '{src}' -> '{dst}'") from exc
-    except FileNotFoundError as exc:
-        raise RuntimeError("ffmpeg executable not found; it is required for video conversion") from exc
-    except subprocess.CalledProcessError as exc:
-        error_msg = f"ffmpeg failed while splitting video '{src}' into '{dst}'"
-        if exc.stderr:
-            error_msg += f". Error: {exc.stderr.strip()}"
-        raise RuntimeError(error_msg) from exc
+
+    return episodes_metadata
 
 
-def convert_videos(root: Path, new_root: Path, episode_records: list[dict[str, Any]], video_keys_v3: list[str]) -> None:
-    if len(video_keys_v3) == 0:
-        logging.info("No video features detected; skipping video conversion")
-        return
-    logging.info("Converting concatenated MP4 files back to per-episode videos")
-    for v3_key in video_keys_v3:
-        if v3_key in V30_TO_V20_VIDEO_MAPPING:
-            v2_col, dest_dir = V30_TO_V20_VIDEO_MAPPING[v3_key]
-        else:
-            dest_dir = _extract_camera_name(v3_key)
-        # 分组使用 v3 元数据键
-        grouped = _group_episodes_by_video_file(episode_records, v3_key)
-        if len(grouped) == 0:
-            logging.info("No video metadata found for key '%s'; skipping", v3_key)
-            continue
-        for (chunk_idx, file_idx), records in tqdm.tqdm(grouped.items(), desc=f"convert videos ({v3_key})"):
-            src_path = root / DEFAULT_VIDEO_PATH.format(video_key=v3_key, chunk_index=chunk_idx, file_index=file_idx)
-            if not src_path.exists():
-                raise FileNotFoundError(f"Expected MP4 file not found: {src_path}")
-            records = sorted(records, key=lambda rec: float(rec[f"videos/{v3_key}/from_timestamp"]))
-            for record in records:
-                episode_index = int(record["episode_index"])
-                start = float(record[f"videos/{v3_key}/from_timestamp"])
-                end = float(record[f"videos/{v3_key}/to_timestamp"])
-                dest_chunk = episode_index // DEFAULT_CHUNK_SIZE
-                dest_path = new_root / LEGACY_VIDEO_PATH_TEMPLATE.format(
-                    episode_chunk=dest_chunk,
-                    video_key=dest_dir,  # 目标目录用 v2 短名
-                    episode_index=episode_index,
+def _decode_image_cell(cell: Any, *, dataset_root: Path | None = None) -> PILImage.Image:
+    """Decode a LeRobot/HF-datasets image cell into a PIL Image.
+
+    v2.1 parquet image columns are usually serialized like {"bytes": ..., "path": ...}.
+    """
+    if isinstance(cell, PILImage.Image):
+        return cell.convert("RGB")
+
+    if isinstance(cell, dict):
+        raw_bytes = cell.get("bytes")
+        raw_path = cell.get("path")
+        if raw_bytes:
+            return PILImage.open(BytesIO(raw_bytes)).convert("RGB")
+        if raw_path:
+            p = Path(raw_path)
+            if not p.is_absolute() and dataset_root is not None:
+                p = dataset_root / p
+            return PILImage.open(p).convert("RGB")
+
+    if isinstance(cell, (bytes, bytearray)):
+        return PILImage.open(BytesIO(cell)).convert("RGB")
+
+    raise TypeError(f"Unsupported image cell type: {type(cell)}")
+
+
+def convert_images_to_videos(
+    root: Path,
+    new_root: Path,
+    video_file_size_in_mb: int,
+    *,
+    image_keys: list[str],
+    fps: int,
+    vcodec: str = "libsvtav1",
+    pix_fmt: str = "yuv420p",
+    g: int | None = 2,
+    crf: int | None = 30,
+):
+    """Convert embedded image columns (v2.1) into mp4 video files (v3.0).
+
+    This is optional and only used when the source dataset has no per-episode mp4 files.
+    """
+    if not image_keys:
+        return None
+
+    data_dir = root / "data"
+    ep_paths = sorted(data_dir.glob("*/*.parquet"))
+    num_episodes = len(ep_paths)
+
+    episodes_video_metadata: list[dict[str, Any]] = [{"episode_index": i} for i in range(num_episodes)]
+
+    # One accumulator per camera key
+    cam_state: dict[str, dict[str, Any]] = {
+        k: {
+            "chunk_idx": 0,
+            "file_idx": 0,
+            "size_in_mb": 0.0,
+            "duration_in_s": 0.0,
+            "paths_to_cat": [],
+        }
+        for k in image_keys
+    }
+
+    tmp_root = Path(tempfile.mkdtemp(prefix="lerobot_v21_to_v30_imgs2vid_"))
+    try:
+        for ep_idx, ep_path in tqdm.tqdm(list(enumerate(ep_paths)), desc="encode images to videos"):
+            # Read only required image columns for this episode.
+            df = pd.read_parquet(ep_path, columns=image_keys)
+
+            for img_key in image_keys:
+                state = cam_state[img_key]
+
+                # Save PNG frames for this episode/camera.
+                frames_dir = tmp_root / "frames" / img_key / f"episode_{ep_idx:06d}"
+                if frames_dir.exists():
+                    shutil.rmtree(frames_dir)
+                frames_dir.mkdir(parents=True, exist_ok=True)
+
+                series = df[img_key]
+                for frame_i, cell in enumerate(series):
+                    img = _decode_image_cell(cell, dataset_root=root)
+                    img.save(frames_dir / f"frame-{frame_i:06d}.png")
+
+                # Encode temporary mp4 for this episode/camera.
+                tmp_video_path = tmp_root / "episodes" / img_key / f"episode_{ep_idx:06d}.mp4"
+                tmp_video_path.parent.mkdir(parents=True, exist_ok=True)
+                encode_video_frames(
+                    imgs_dir=frames_dir,
+                    video_path=tmp_video_path,
+                    fps=int(fps),
+                    vcodec=vcodec,
+                    pix_fmt=pix_fmt,
+                    g=g,
+                    crf=crf,
+                    overwrite=True,
                 )
-                _extract_video_segment(src_path, dest_path, start=start, end=end)
+
+                # Clean PNGs ASAP to reduce disk usage.
+                shutil.rmtree(frames_dir, ignore_errors=True)
+
+                ep_size_in_mb = get_file_size_in_mb(tmp_video_path)
+                ep_duration_in_s = get_video_duration_in_s(tmp_video_path)
+
+                # Flush if adding this episode would exceed the limit.
+                if state["size_in_mb"] + ep_size_in_mb >= video_file_size_in_mb and state["paths_to_cat"]:
+                    out_path = new_root / DEFAULT_VIDEO_PATH.format(
+                        video_key=img_key, chunk_index=state["chunk_idx"], file_index=state["file_idx"]
+                    )
+                    concatenate_video_files(state["paths_to_cat"], out_path)
+                    for p in state["paths_to_cat"]:
+                        try:
+                            Path(p).unlink()
+                        except FileNotFoundError:
+                            pass
+
+                    state["chunk_idx"], state["file_idx"] = update_chunk_file_indices(
+                        state["chunk_idx"], state["file_idx"], DEFAULT_CHUNK_SIZE
+                    )
+                    state["size_in_mb"] = 0.0
+                    state["duration_in_s"] = 0.0
+                    state["paths_to_cat"] = []
+
+                # Record per-episode metadata within the current destination file.
+                episodes_video_metadata[ep_idx][f"videos/{img_key}/chunk_index"] = state["chunk_idx"]
+                episodes_video_metadata[ep_idx][f"videos/{img_key}/file_index"] = state["file_idx"]
+                episodes_video_metadata[ep_idx][f"videos/{img_key}/from_timestamp"] = state["duration_in_s"]
+                episodes_video_metadata[ep_idx][f"videos/{img_key}/to_timestamp"] = (
+                    state["duration_in_s"] + ep_duration_in_s
+                )
+
+                # Add this episode mp4 to the current concat batch.
+                state["paths_to_cat"].append(tmp_video_path)
+                state["size_in_mb"] += ep_size_in_mb
+                state["duration_in_s"] += ep_duration_in_s
+
+        # Final flush per camera
+        for img_key in image_keys:
+            state = cam_state[img_key]
+            if not state["paths_to_cat"]:
+                continue
+            out_path = new_root / DEFAULT_VIDEO_PATH.format(
+                video_key=img_key, chunk_index=state["chunk_idx"], file_index=state["file_idx"]
+            )
+            concatenate_video_files(state["paths_to_cat"], out_path)
+            for p in state["paths_to_cat"]:
+                try:
+                    Path(p).unlink()
+                except FileNotFoundError:
+                    pass
+
+    finally:
+        shutil.rmtree(tmp_root, ignore_errors=True)
+
+    return episodes_video_metadata
 
 
-def convert_episodes_metadata(new_root: Path, episode_records: list[dict[str, Any]]) -> None:
-    logging.info("Reconstructing legacy episodes and episodes_stats JSONL files")
+def get_video_keys(root):
+    info = load_info(root)
+    features = info["features"]
+    video_keys = [key for key, ft in features.items() if ft["dtype"] == "video"]
+    return video_keys
 
-    episodes_path = new_root / LEGACY_EPISODES_PATH
-    stats_path = new_root / LEGACY_EPISODES_STATS_PATH
-    episodes_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with jsonlines.open(episodes_path, mode="w") as episodes_writer, jsonlines.open(
-        stats_path, mode="w"
-    ) as stats_writer:
-        for record in sorted(episode_records, key=lambda rec: int(rec["episode_index"])):
-            legacy_episode = {
-                key: value
-                for key, value in record.items()
-                if not key.startswith("data/")
-                and not key.startswith("videos/")
-                and not key.startswith("stats/")
-                and not key.startswith("meta/")
-                and key not in {"dataset_from_index", "dataset_to_index"}
-            }
+def get_image_keys(root):
+    info = load_info(root)
+    features = info["features"]
+    image_keys = [key for key, ft in features.items() if ft["dtype"] == "image"]
+    return image_keys
 
-            serializable_episode = {key: _to_serializable(value) for key, value in legacy_episode.items()}
-            task_value = serializable_episode.get("task")
-            normalized_task = _normalize_task_value(task_value) if task_value is not None else None
-            if normalized_task is None:
-                serializable_episode.pop("task", None)
-            else:
-                serializable_episode["task"] = normalized_task
-            episodes_writer.write(serializable_episode)
 
-            stats_flat = {key: record[key] for key in record if key.startswith("stats/")}
-            stats_nested = unflatten_dict(stats_flat).get("stats", {})
-            stats_serialized = serialize_dict(stats_nested)
-            stats_writer.write(
-                {
-                    "episode_index": int(record["episode_index"]),
-                    "stats": stats_serialized,
-                }
+def convert_videos(root: Path, new_root: Path, video_file_size_in_mb: int):
+    logging.info(f"Converting videos from {root} to {new_root}")
+
+    video_keys = get_video_keys(root)
+    if len(video_keys) == 0:
+        return None
+
+    video_keys = sorted(video_keys)
+
+    eps_metadata_per_cam = []
+    for camera in video_keys:
+        eps_metadata = convert_videos_of_camera(root, new_root, camera, video_file_size_in_mb)
+        eps_metadata_per_cam.append(eps_metadata)
+
+    num_eps_per_cam = [len(eps_cam_map) for eps_cam_map in eps_metadata_per_cam]
+    if len(set(num_eps_per_cam)) != 1:
+        raise ValueError(f"All cams dont have same number of episodes ({num_eps_per_cam}).")
+
+    episods_metadata = []
+    num_cameras = len(video_keys)
+    num_episodes = num_eps_per_cam[0]
+    for ep_idx in tqdm.tqdm(range(num_episodes), desc="convert videos"):
+        # Sanity check
+        ep_ids = [eps_metadata_per_cam[cam_idx][ep_idx]["episode_index"] for cam_idx in range(num_cameras)]
+        ep_ids += [ep_idx]
+        if len(set(ep_ids)) != 1:
+            raise ValueError(f"All episode indices need to match ({ep_ids}).")
+
+        ep_dict = {}
+        for cam_idx in range(num_cameras):
+            ep_dict.update(eps_metadata_per_cam[cam_idx][ep_idx])
+        episods_metadata.append(ep_dict)
+
+    return episods_metadata
+
+
+def convert_videos_of_camera(root: Path, new_root: Path, video_key: str, video_file_size_in_mb: int):
+    # Access old paths to mp4
+    videos_dir = root / "videos"
+    ep_paths = sorted(videos_dir.glob(f"*/{video_key}/*.mp4"))
+
+    ep_idx = 0
+    chunk_idx = 0
+    file_idx = 0
+    size_in_mb = 0
+    duration_in_s = 0.0
+    paths_to_cat = []
+    episodes_metadata = []
+
+    for ep_path in tqdm.tqdm(ep_paths, desc=f"convert videos of {video_key}"):
+        ep_size_in_mb = get_file_size_in_mb(ep_path)
+        ep_duration_in_s = get_video_duration_in_s(ep_path)
+
+        # Check if adding this episode would exceed the limit
+        if size_in_mb + ep_size_in_mb >= video_file_size_in_mb and len(paths_to_cat) > 0:
+            # Size limit would be exceeded, save current accumulation WITHOUT this episode
+            concatenate_video_files(
+                paths_to_cat,
+                new_root
+                / DEFAULT_VIDEO_PATH.format(video_key=video_key, chunk_index=chunk_idx, file_index=file_idx),
             )
 
+            # Update episodes metadata for the file we just saved
+            for i, _ in enumerate(paths_to_cat):
+                past_ep_idx = ep_idx - len(paths_to_cat) + i
+                episodes_metadata[past_ep_idx][f"videos/{video_key}/chunk_index"] = chunk_idx
+                episodes_metadata[past_ep_idx][f"videos/{video_key}/file_index"] = file_idx
 
-def copy_global_stats(root: Path, new_root: Path) -> None:
-    source_stats = root / "meta" / "stats.json"
-    if source_stats.exists():
-        target_stats = new_root / "meta" / "stats.json"
-        target_stats.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source_stats, target_stats)
+            # Move to next file and start fresh with current episode
+            chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, DEFAULT_CHUNK_SIZE)
+            size_in_mb = 0
+            duration_in_s = 0.0
+            paths_to_cat = []
+
+        # Add current episode metadata
+        ep_metadata = {
+            "episode_index": ep_idx,
+            f"videos/{video_key}/chunk_index": chunk_idx,  # Will be updated when file is saved
+            f"videos/{video_key}/file_index": file_idx,  # Will be updated when file is saved
+            f"videos/{video_key}/from_timestamp": duration_in_s,
+            f"videos/{video_key}/to_timestamp": duration_in_s + ep_duration_in_s,
+        }
+        episodes_metadata.append(ep_metadata)
+
+        # Add current episode to accumulation
+        paths_to_cat.append(ep_path)
+        size_in_mb += ep_size_in_mb
+        duration_in_s += ep_duration_in_s
+        ep_idx += 1
+
+    # Write remaining videos if any
+    if paths_to_cat:
+        concatenate_video_files(
+            paths_to_cat,
+            new_root
+            / DEFAULT_VIDEO_PATH.format(video_key=video_key, chunk_index=chunk_idx, file_index=file_idx),
+        )
+
+        # Update episodes metadata for the final file
+        for i, _ in enumerate(paths_to_cat):
+            past_ep_idx = ep_idx - len(paths_to_cat) + i
+            episodes_metadata[past_ep_idx][f"videos/{video_key}/chunk_index"] = chunk_idx
+            episodes_metadata[past_ep_idx][f"videos/{video_key}/file_index"] = file_idx
+
+    return episodes_metadata
 
 
-def copy_ancillary_directories(root: Path, new_root: Path) -> None:
-    for subdir in ["images"]:
-        source = root / subdir
-        if source.exists():
-            shutil.copytree(source, new_root / subdir, dirs_exist_ok=True)
+def generate_episode_metadata_dict(
+    episodes_legacy_metadata, episodes_metadata, episodes_stats, episodes_videos=None
+):
+    num_episodes = len(episodes_metadata)
+    episodes_legacy_metadata_vals = list(episodes_legacy_metadata.values())
+    episodes_stats_vals = list(episodes_stats.values())
+    episodes_stats_keys = list(episodes_stats.keys())
+
+    for i in range(num_episodes):
+        ep_legacy_metadata = episodes_legacy_metadata_vals[i]
+        ep_metadata = episodes_metadata[i]
+        ep_stats = episodes_stats_vals[i]
+
+        ep_ids_set = {
+            ep_legacy_metadata["episode_index"],
+            ep_metadata["episode_index"],
+            episodes_stats_keys[i],
+        }
+
+        if episodes_videos is None:
+            ep_video = {}
+        else:
+            ep_video = episodes_videos[i]
+            ep_ids_set.add(ep_video["episode_index"])
+
+        if len(ep_ids_set) != 1:
+            raise ValueError(f"Number of episodes is not the same ({ep_ids_set}).")
+
+        ep_dict = {**ep_metadata, **ep_video, **ep_legacy_metadata, **flatten_dict({"stats": ep_stats})}
+        ep_dict["meta/episodes/chunk_index"] = 0
+        ep_dict["meta/episodes/file_index"] = 0
+        yield ep_dict
 
 
-def _build_task_lookup(root: Path) -> dict[int, str]:
-    lookup: dict[int, str] = {}
-    try:
-        tasks_df = load_tasks(root)
-    except FileNotFoundError:
-        return lookup
-    if tasks_df is None or len(tasks_df) == 0:
-        return lookup
-    for task_value, row in tasks_df.iterrows():
-        task_idx = row.get("task_index")
-        try:
-            task_idx = int(task_idx)
-        except (TypeError, ValueError):
+def convert_episodes_metadata(root, new_root, episodes_metadata, episodes_video_metadata=None):
+    logging.info(f"Converting episodes metadata from {root} to {new_root}")
+
+    episodes_legacy_metadata = legacy_load_episodes(root)
+    episodes_stats = legacy_load_episodes_stats(root)
+
+    num_eps_set = {len(episodes_legacy_metadata), len(episodes_metadata)}
+    if episodes_video_metadata is not None:
+        num_eps_set.add(len(episodes_video_metadata))
+
+    if len(num_eps_set) != 1:
+        raise ValueError(f"Number of episodes is not the same ({num_eps_set}).")
+
+    ds_episodes = Dataset.from_generator(
+        lambda: generate_episode_metadata_dict(
+            episodes_legacy_metadata, episodes_metadata, episodes_stats, episodes_video_metadata
+        )
+    )
+    write_episodes(ds_episodes, new_root)
+
+    stats = aggregate_stats(list(episodes_stats.values()))
+    write_stats(stats, new_root)
+
+
+def convert_info(
+    root,
+    new_root,
+    data_file_size_in_mb,
+    video_file_size_in_mb,
+    *,
+    image_keys_as_video: list[str] | None = None,
+    vcodec: str = "libsvtav1",
+    pix_fmt: str = "yuv420p",
+):
+    info = load_info(root)
+    info["codebase_version"] = V30
+    del info["total_chunks"]
+    del info["total_videos"]
+    info["data_files_size_in_mb"] = data_file_size_in_mb
+    info["video_files_size_in_mb"] = video_file_size_in_mb
+    info["data_path"] = DEFAULT_DATA_PATH
+    if image_keys_as_video:
+        # We will generate mp4s, so ensure v3.0 video_path is set.
+        info["video_path"] = DEFAULT_VIDEO_PATH
+    else:
+        info["video_path"] = DEFAULT_VIDEO_PATH if info["video_path"] is not None else None
+    info["fps"] = int(info["fps"])
+    logging.info(f"Converting info from {root} to {new_root}")
+
+    # Optional: turn selected image keys into video keys (so the resulting v3.0 looks like the mp4-based datasets).
+    if image_keys_as_video:
+        codec_name = "av1" if vcodec == "libsvtav1" else vcodec
+        for key in image_keys_as_video:
+            ft = info["features"].get(key)
+            if ft is None:
+                continue
+            if ft.get("dtype") != "image":
+                continue
+            shape = ft.get("shape")
+            if isinstance(shape, list) and len(shape) == 3:
+                # v2.1 image shape is commonly [C, H, W]; v3.0 video shape is [H, W, C]
+                c, h, w = shape
+                ft["shape"] = [h, w, c]
+                ft["names"] = ["height", "width", "channels"]
+                ft["info"] = {
+                    "video.height": h,
+                    "video.width": w,
+                    "video.codec": codec_name,
+                    "video.pix_fmt": pix_fmt,
+                    "video.is_depth_map": False,
+                    "video.fps": info["fps"],
+                    "video.channels": c,
+                    "has_audio": False,
+                }
+            ft.pop("fps", None)
+            ft["dtype"] = "video"
+
+    for key in info["features"]:
+        if info["features"][key]["dtype"] == "video":
+            # already has fps in video_info
             continue
-        task_name = _normalize_task_value(task_value)
-        if task_name is None:
-            continue
-        lookup[task_idx] = task_name
-    return lookup
-
-
-def _sanitize_table_metadata(table: pa.Table) -> pa.Table:
-    metadata = table.schema.metadata
-    if not metadata or b"huggingface" not in metadata:
-        return table
-    try:
-        hf_metadata = json.loads(metadata[b"huggingface"].decode("utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return table
-    changed = False
-    def _replace(node: Any) -> None:
-        nonlocal changed
-        if isinstance(node, dict):
-            node_type = node.get("_type")
-            if node_type == "List":
-                node["_type"] = "Sequence"
-                changed = True
-            dtype = node.get("dtype")
-            if isinstance(dtype, str) and dtype.lower() == "list":
-                node["dtype"] = "Sequence"
-                changed = True
-            for value in node.values():
-                if isinstance(value, (dict, list)):
-                    _replace(value)
-        elif isinstance(node, list):
-            for item in node:
-                _replace(item)
-    if "features" in hf_metadata:
-        _replace(hf_metadata["features"])
-    info_features = hf_metadata.get("info", {}).get("features")
-    if info_features:
-        _replace(info_features)
-    if not changed:
-        return table
-    new_metadata = dict(metadata)
-    new_metadata[b"huggingface"] = json.dumps(hf_metadata, separators=(",", ":")).encode("utf-8")
-    return table.replace_schema_metadata(new_metadata)
+        info["features"][key]["fps"] = info["fps"]
+    write_info(info, new_root)
 
 
 def convert_dataset(
     repo_id: str,
+    branch: str | None = None,
+    data_file_size_in_mb: int | None = None,
+    video_file_size_in_mb: int | None = None,
     root: str | Path | None = None,
+    push_to_hub: bool = True,
     force_conversion: bool = False,
-    offline: bool = False,
-    embed_images: bool = True,
-) -> None:
-    """Convert a v3.0 dataset (consolidated layout) back to v2.0 legacy layout.
+    images_to_videos: bool = False,
+    vcodec: str = "libsvtav1",
+    pix_fmt: str = "yuv420p",
+    g: int | None = 2,
+    crf: int | None = 30,
+):
+    if data_file_size_in_mb is None:
+        data_file_size_in_mb = DEFAULT_DATA_FILE_SIZE_IN_MB
+    if video_file_size_in_mb is None:
+        video_file_size_in_mb = DEFAULT_VIDEO_FILE_SIZE_IN_MB
 
-    Parameters
-    ----------
-    repo_id: str
-        Hugging Face dataset repo id (e.g. ``lerobot/pusht``). Used only for logging when offline.
-    root: path | None
-        If None, defaults to ``$HF_LEROBOT_HOME/repo_id``. If provided it can either point
-        directly to the dataset directory (containing ``info.json``) OR to a parent directory
-        under which a subfolder named after ``repo_id`` exists / will be created. We detect this
-        automatically to avoid doubling the repo name.
-    force_conversion: bool
-        If true and dataset directory exists, remove it and (re)download unless ``offline``.
-    offline: bool
-        If true, never attempt any network calls. The dataset must already exist locally.
-    """
+    # First check if the dataset already has a v3.0 version
+    if root is None and not force_conversion:
+        try:
+            print("Trying to download v3.0 version of the dataset from the hub...")
+            snapshot_download(repo_id, repo_type="dataset", revision=V30, local_dir=HF_LEROBOT_HOME / repo_id)
+            return
+        except Exception:
+            print("Dataset does not have an uploaded v3.0 version. Continuing with conversion.")
 
-    # Resolve base root directory
-    if root is None:
-        candidate = HF_LEROBOT_HOME / repo_id
-    else:
-        root = Path(root)
-        # If the provided root already contains info.json, treat it as dataset root.
-        if (root / "info.json").is_file():
-            candidate = root
-        # If a subdirectory with the repo name exists and has info.json treat that as root.
-        elif (root / repo_id / "info.json").is_file():
-            candidate = root / repo_id
-        else:
-            # If neither exists we assume we should place dataset under root/repo_id
-            candidate = root / repo_id
-    root = candidate
-
-    if root.exists() and force_conversion:
-        logging.info("--force-conversion enabled: removing existing snapshot at %s", root)
-        shutil.rmtree(root)
-
+    # Set root based on whether local dataset path is provided
+    use_local_dataset = False
+    root = HF_LEROBOT_HOME / repo_id if root is None else Path(root) / repo_id
     if root.exists():
         validate_local_dataset_version(root)
-        logging.info("Using existing local dataset at %s", root)
-    else:
-        if offline:
-            raise FileNotFoundError(
-                f"Dataset directory {root} does not exist in offline mode. Please place an existing "
-                "v3.0 dataset there before running the converter with --offline."
-            )
-        logging.info("Downloading dataset snapshot from the Hub (offline=False)")
-        snapshot_download(repo_id, repo_type="dataset", local_dir=root)
+        use_local_dataset = True
+        print(f"Using local dataset at {root}")
 
-    task_lookup = _build_task_lookup(root)
-    episode_records = load_episode_records(root)
-    for record in episode_records:
-        task_idx = record.get("task_index")
-        try:
-            record["task"] = task_lookup[int(task_idx)]
-        except (KeyError, TypeError, ValueError):
-            continue
-    video_keys_v3 = [
-        key
-        for key, ft in load_info(root)["features"].items()
-        if ft.get("dtype") == "video"
-    ]
-    video_keys_v2 = [
-        V30_TO_V20_VIDEO_MAPPING[k][0] if k in V30_TO_V20_VIDEO_MAPPING else k
-        for k in video_keys_v3
-    ]
-    backup_root = root.parent / f"{root.name}_{V30}"
-    new_root = root.parent / f"{root.name}_{V20}"
+    old_root = root.parent / f"{root.name}_old"
+    new_root = root.parent / f"{root.name}_v30"
 
-    if backup_root.is_dir():
-        shutil.rmtree(backup_root)
+    # Handle old_root cleanup if both old_root and root exist
+    if old_root.is_dir() and root.is_dir():
+        shutil.rmtree(str(root))
+        shutil.move(str(old_root), str(root))
+
     if new_root.is_dir():
         shutil.rmtree(new_root)
 
-    new_root.mkdir(parents=True, exist_ok=True)
+    if not use_local_dataset:
+        snapshot_download(
+            repo_id,
+            repo_type="dataset",
+            revision=V21,
+            local_dir=root,
+        )
 
-    # 顺序调整：先拆分视频，再写数据文件（需要已存在的 per-episode mp4）
-    convert_info(root, new_root, episode_records, video_keys_v2)
-    copy_global_stats(root, new_root)
+    image_keys = get_image_keys(root)
+    if images_to_videos:
+        logging.info(
+            "images_to_videos enabled: converting embedded image columns to mp4 and dropping them from data parquet: "
+            + ", ".join(image_keys)
+        )
+
+    convert_info(
+        root,
+        new_root,
+        data_file_size_in_mb,
+        video_file_size_in_mb,
+        image_keys_as_video=image_keys if images_to_videos else None,
+        vcodec=vcodec,
+        pix_fmt=pix_fmt,
+    )
     convert_tasks(root, new_root)
-    convert_videos(root, new_root, episode_records, video_keys_v3)
-    convert_data(root, new_root, episode_records, video_keys_v2, task_lookup, embed_images)
-    convert_episodes_metadata(new_root, episode_records)
-    copy_ancillary_directories(root, new_root)
 
-    shutil.move(str(root), str(backup_root))
+    episodes_metadata = convert_data(
+        root,
+        new_root,
+        data_file_size_in_mb,
+        drop_columns=image_keys if images_to_videos else None,
+    )
+
+    if images_to_videos:
+        episodes_videos_metadata = convert_images_to_videos(
+            root,
+            new_root,
+            video_file_size_in_mb,
+            image_keys=image_keys,
+            fps=int(load_info(root)["fps"]),
+            vcodec=vcodec,
+            pix_fmt=pix_fmt,
+            g=g,
+            crf=crf,
+        )
+    else:
+        episodes_videos_metadata = convert_videos(root, new_root, video_file_size_in_mb)
+
+    convert_episodes_metadata(root, new_root, episodes_metadata, episodes_videos_metadata)
+
+    shutil.move(str(root), str(old_root))
     shutil.move(str(new_root), str(root))
 
+    if push_to_hub:
+        hub_api = HfApi()
+        try:
+            hub_api.delete_tag(repo_id, tag=CODEBASE_VERSION, repo_type="dataset")
+        except HTTPError as e:
+            print(f"tag={CODEBASE_VERSION} probably doesn't exist. Skipping exception ({e})")
+            pass
+        hub_api.delete_files(
+            delete_patterns=["data/chunk*/episode_*", "meta/*.jsonl", "videos/chunk*"],
+            repo_id=repo_id,
+            revision=branch,
+            repo_type="dataset",
+        )
+        hub_api.create_tag(repo_id, tag=CODEBASE_VERSION, revision=branch, repo_type="dataset")
 
-def parse_args() -> argparse.Namespace:
+        LeRobotDataset(repo_id).push_to_hub()
+
+
+if __name__ == "__main__":
+    init_logging()
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--repo-id",
         type=str,
         required=True,
-        help="Repository identifier on Hugging Face (e.g. `lerobot/pusht`).",
+        help="Repository identifier on Hugging Face: a community or a user name `/` the name of the dataset "
+        "(e.g. `lerobot/pusht`, `cadene/aloha_sim_insertion_human`).",
+    )
+    parser.add_argument(
+        "--branch",
+        type=str,
+        default=None,
+        help="Repo branch to push your dataset. Defaults to the main branch.",
+    )
+    parser.add_argument(
+        "--data-file-size-in-mb",
+        type=int,
+        default=999999,
+        help="File size in MB. Defaults to 100 for data and 500 for videos.",
+    )
+    parser.add_argument(
+        "--video-file-size-in-mb",
+        type=int,
+        default=500000,
+        help="File size in MB. Defaults to 100 for data and 500 for videos.",
     )
     parser.add_argument(
         "--root",
         type=str,
         default=None,
-        help="Local directory under which the dataset should be stored.",
+        help="Local directory to use for downloading/writing the dataset.",
+    )
+    parser.add_argument(
+        "--push-to-hub",
+        type=lambda input: input.lower() == "true",
+        default=True,
+        help="Push the converted dataset to the hub.",
     )
     parser.add_argument(
         "--force-conversion",
         action="store_true",
-        help="Ignore any existing local snapshot and re-download it from the Hub.",
+        help="Force conversion even if the dataset already has a v3.0 version.",
+    )
+
+    parser.add_argument(
+        "--images-to-videos",
+        action="store_true",
+        help=(
+            "If the source dataset stores camera frames as embedded image columns in parquet (dtype=image), "
+            "re-encode them into v3.0 mp4 video files (dtype=video) so the output matches mp4-based v3.0 datasets."
+        ),
     )
     parser.add_argument(
-        "--offline",
-        action="store_true",
-        help="Run strictly offline: do not attempt to download; dataset must already exist locally.",
+        "--vcodec",
+        type=str,
+        default="libsvtav1",
+        help="Video codec to use when --images-to-videos is enabled. One of: h264, hevc, libsvtav1.",
     )
     parser.add_argument(
-        "--embed-images",
-        action="store_true",
-        help="在每个 observation.images.* 列中嵌入 PNG bytes（可能较慢）。",
+        "--pix-fmt",
+        type=str,
+        default="yuv420p",
+        help="Pixel format to use when --images-to-videos is enabled (e.g. yuv420p).",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--g",
+        type=int,
+        default=2,
+        help="GOP size (keyframe interval) when --images-to-videos is enabled.",
+    )
+    parser.add_argument(
+        "--crf",
+        type=int,
+        default=30,
+        help="CRF quality when --images-to-videos is enabled.",
+    )
 
-
-if __name__ == "__main__":
-    init_logging()
-    args = parse_args()
+    args = parser.parse_args()
     convert_dataset(**vars(args))

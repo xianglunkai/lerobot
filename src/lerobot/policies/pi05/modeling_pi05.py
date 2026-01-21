@@ -930,7 +930,7 @@ class PI05Policy(PreTrainedPolicy):
         # smoothing_method: None|'ema'|'intra_chunk'
         # smoothing_s: float smoothing strength
         self.smoothing_method = "intra_chunk"
-        self.smoothing_s = 0.01
+        self.smoothing_s = 1.0
 
     @classmethod
     def from_pretrained(

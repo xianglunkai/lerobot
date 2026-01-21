@@ -44,7 +44,8 @@ def make_default_robot_action_processor() -> RobotProcessorPipeline[
             cutoff_freq=1.0,  # 1Hz截止频率
             dt=0.02,  # 50ms时间步长
             device="cuda"  # 支持GPU
-        ),],
+        ),
+        ],
         to_transition=robot_action_observation_to_transition,
         to_output=transition_to_robot_action,
     )

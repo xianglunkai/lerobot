@@ -178,9 +178,6 @@ outputs/
 *.xml
 *.part
 
-# data
-datasets/
-
 # modules
 modules/
 
