@@ -71,6 +71,7 @@ import sys
 import time
 import traceback
 from dataclasses import dataclass, field
+from queue import Queue
 from threading import Event, Lock, Thread
 
 import torch
@@ -188,6 +189,22 @@ class RTCDemoConfig(HubMixin):
         },
     )
 
+    # Visualization configuration
+    enable_visualization: bool = field(
+        default=False,
+        metadata={"help": "Enable real-time action visualization plot"},
+    )
+
+    viz_history_size: int = field(
+        default=200,
+        metadata={"help": "Number of action steps to display in visualization"},
+    )
+
+    viz_update_interval: float = field(
+        default=0.1,
+        metadata={"help": "Visualization update interval in seconds"},
+    )
+
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
         policy_path = parser.get_path_arg("policy")
@@ -210,6 +227,127 @@ class RTCDemoConfig(HubMixin):
 
 def is_image_key(k: str) -> bool:
     return k.startswith(OBS_IMAGES)
+
+
+def visualize_actions(
+    action_queue_data: Queue,
+    action_features: list[str],
+    shutdown_event: Event,
+    cfg: RTCDemoConfig,
+):
+    """Thread function to visualize executed action sequences in real-time.
+
+    Args:
+        action_queue_data: Queue containing executed actions (thread-safe)
+        action_features: List of action feature names
+        shutdown_event: Event to signal shutdown
+        cfg: Demo configuration
+    """
+    try:
+        logger.info("[VIZ] Starting visualization thread")
+
+        # Try to import matplotlib, disable if not available
+        try:
+            import matplotlib.pyplot as plt
+            from matplotlib.animation import FuncAnimation
+        except ImportError:
+            logger.warning("[VIZ] matplotlib not available, visualization disabled")
+            return
+
+        # Setup figure and subplots
+        num_actions = len(action_features)
+        fig, axes = plt.subplots(num_actions, 1, figsize=(10, 2 * num_actions), sharex=True)
+        if num_actions == 1:
+            axes = [axes]
+        fig.suptitle("Executed Actions (Sent to Robot)", fontsize=14)
+
+        # Create line objects for each action
+        lines = []
+        y_min, y_max = 0, 1
+        for i, ax in enumerate(axes):
+            line, = ax.plot([], [], linewidth=2, color='blue', label='Executed')
+            lines.append(line)
+            ax.set_ylabel(action_features[i], fontsize=10)
+            ax.grid(True, alpha=0.3)
+            ax.set_ylim(y_min, y_max)
+
+        axes[-1].set_xlabel("Time Steps", fontsize=10)
+        plt.tight_layout()
+
+        def update_plot(frame):
+            """Update function for animation."""
+            if shutdown_event.is_set():
+                return lines
+
+            try:
+                # Get executed actions from queue (thread-safe)
+                history = []
+                while not action_queue_data.empty():
+                    history.append(action_queue_data.get_nowait())
+
+                if not history:
+                    return lines
+
+                # history is list of tuples: (timestamp, action_tensor)
+                # Extract actions
+                timestamps = [h[0] for h in history]
+                actions = [h[1].cpu().numpy() for h in history]
+
+                # Limit to history size
+                if len(timestamps) > cfg.viz_history_size:
+                    timestamps = timestamps[-cfg.viz_history_size:]
+                    actions = actions[-cfg.viz_history_size:]
+
+                # Convert to array: [num_steps, num_actions]
+                actions_array = torch.tensor(actions)
+
+                # Update lines for each action
+                x_data = list(range(len(timestamps)))
+                for i, line in enumerate(lines):
+                    if i < actions_array.shape[1]:
+                        line.set_data(x_data, actions_array[:, i].tolist())
+
+                # Dynamically adjust y-axis
+                if len(actions_array) > 0:
+                    all_values = actions_array.flatten().tolist()
+                    if all_values:
+                        y_min_new, y_max_new = min(all_values), max(all_values)
+                        margin = (y_max_new - y_min_new) * 0.1 if y_max_new != y_min_new else 0.1
+                        for ax in axes:
+                            ax.set_ylim(y_min_new - margin, y_max_new + margin)
+
+                # Adjust x-axis
+                if len(x_data) > 0:
+                    for ax in axes:
+                        ax.set_xlim(0, max(cfg.viz_history_size, len(x_data)))
+
+            except Exception as e:
+                logger.warning(f"[VIZ] Error updating plot: {e}")
+
+            return lines
+
+        # Create animation
+        anim = FuncAnimation(
+            fig,
+            update_plot,
+            interval=int(cfg.viz_update_interval * 1000),
+            blit=True,
+            cache_frame_data=False,
+        )
+
+        logger.info("[VIZ] Visualization window opened")
+
+        # Keep thread alive while showing plot
+        while not shutdown_event.is_set():
+            plt.pause(0.1)
+
+        logger.info("[VIZ] Visualization thread shutting down")
+        plt.close(fig)
+
+    except Exception as e:
+        logger.error(f"[VIZ] Fatal exception in visualization thread: {e}")
+        logger.error(traceback.format_exc())
+        # Don't exit, allow other threads to continue
 
 
 def get_actions(
@@ -257,7 +395,7 @@ def get_actions(
 
         get_actions_threshold = cfg.action_queue_size_to_get_new_actions
         
-        inference_first_time = True
+        inference_warmup_steps = 0
 
         if not cfg.rtc.enabled:
             get_actions_threshold = 0
@@ -306,8 +444,8 @@ def get_actions(
                     prev_chunk_left_over=prev_actions,
                 )
 
-                if inference_first_time:
-                    inference_first_time = False
+                if inference_warmup_steps < 3:
+                    inference_warmup_steps += 1
                     continue
 
                 # Store original actions (before postprocessing) for RTC
@@ -344,6 +482,7 @@ def actor_control(
     robot: RobotWrapper,
     robot_action_processor,
     action_queue: ActionQueue,
+    viz_queue: Queue | None,
     shutdown_event: Event,
     cfg: RTCDemoConfig,
 ):
@@ -352,6 +491,7 @@ def actor_control(
     Args:
         robot: The robot instance
         action_queue: Queue to get actions from
+        viz_queue: Queue to send executed actions for visualization (thread-safe)
         shutdown_event: Event to signal shutdown
         cfg: Demo configuration
     """
@@ -372,6 +512,16 @@ def actor_control(
                 action_dict = {key: action[i].item() for i, key in enumerate(robot.action_features())}
                 action_processed = robot_action_processor((action_dict, None))
                 robot.send_action(action_processed)
+
+                # Store executed action for visualization
+                if viz_queue is not None:
+                    viz_queue.put_nowait((time.time(), action.clone()))
+                    # Trim queue to prevent memory growth
+                    while viz_queue.qsize() > cfg.viz_history_size:
+                        try:
+                            viz_queue.get_nowait()
+                        except:
+                            break
 
                 action_count += 1
 
@@ -454,6 +604,7 @@ def demo_cli(cfg: RTCDemoConfig):
     robot = None
     get_actions_thread = None
     actor_thread = None
+    viz_thread = None
 
     policy_class = get_policy_class(cfg.policy.type)
 
@@ -521,12 +672,27 @@ def demo_cli(cfg: RTCDemoConfig):
     # Start action executor thread
     actor_thread = Thread(
         target=actor_control,
-        args=(robot_wrapper, robot_action_processor, action_queue, shutdown_event, cfg),
+        args=(robot_wrapper, robot_action_processor, action_queue, viz_queue, shutdown_event, cfg),
         daemon=True,
         name="Actor",
     )
     actor_thread.start()
     logger.info("Started actor thread")
+
+    # Start visualization thread if enabled
+    viz_queue = None
+    if cfg.enable_visualization:
+        # Create thread-safe queue for visualization data
+        viz_queue = Queue(maxsize=cfg.viz_history_size * 2)
+
+        viz_thread = Thread(
+            target=visualize_actions,
+            args=(viz_queue, robot.action_features(), shutdown_event, cfg),
+            daemon=True,
+            name="Visualization",
+        )
+        viz_thread.start()
+        logger.info("Started visualization thread")
 
     logger.info("Started stop by duration thread")
 
@@ -558,8 +724,14 @@ def demo_cli(cfg: RTCDemoConfig):
         logger.info("Waiting for action executor thread to finish...")
         actor_thread.join()
 
+    # Wait for visualization thread if enabled
+    if viz_thread and viz_thread.is_alive():
+        logger.info("Waiting for visualization thread to finish...")
+        viz_thread.join(timeout=1.0)
+
     # Cleanup robot
     if robot:
+        robot.reset_to_default_positions()
         robot.disconnect()
         logger.info("Robot disconnected")
 
