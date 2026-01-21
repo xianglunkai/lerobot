@@ -15,7 +15,7 @@ python3 -m lerobot.scripts.lerobot_record \
     --dataset.repo_id=lerobot/eval_lerobot_fold_towel_$(date +%Y%m%d_%H%M%S) \
     --dataset.single_task="Carefully fold the towel and then place the folded towel on the black notebook" \
     --dataset.num_episodes=1 \
-    --dataset.episode_time_s=40 \
+    --dataset.episode_time_s=60 \
     --dataset.fps=30 \
     --dataset.video=True \
     --dataset.push_to_hub=false \
