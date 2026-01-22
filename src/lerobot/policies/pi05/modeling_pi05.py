@@ -929,9 +929,8 @@ class PI05Policy(PreTrainedPolicy):
         # instead of passing via kwargs to `predict_action_chunk`.
         # smoothing_method: None|'ema'|'intra_chunk'
         # smoothing_s: float smoothing strength
-        self.smoothing_method = "intra_chunk"
+        self.smoothing_method = None
         self.smoothing_s = 1.0
-
     @classmethod
     def from_pretrained(
         cls: builtins.type[T],

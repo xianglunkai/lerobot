@@ -41,8 +41,8 @@ def make_default_robot_action_processor() -> RobotProcessorPipeline[
     robot_action_processor = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
         steps=[IdentityProcessorStep(),
             LowPassFilterProcessor(
-            cutoff_freq=1.0,  # 1Hz截止频率
-            dt=0.02,  # 50ms时间步长
+            cutoff_freq=3.0,  # 1Hz截止频率
+            dt=0.0333,  # 30ms时间步长
             device="cuda"  # 支持GPU
         ),
         ],
