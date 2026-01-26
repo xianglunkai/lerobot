@@ -322,7 +322,7 @@ class HzTracker:
         
 def visualize_actions(
     action_queue_data: Queue,
-    action_features: list[str],
+    robot: RobotWrapper,
     shutdown_event: Event,
     cfg: RTCDemoConfig,
 ):
@@ -346,6 +346,7 @@ def visualize_actions(
             return
 
         # Setup figure and subplots
+        action_features = robot.action_features()
         num_actions = len(action_features)
         fig, axes = plt.subplots(num_actions, 1, figsize=(10, 2 * num_actions), sharex=True)
         if num_actions == 1:
@@ -772,6 +773,21 @@ def demo_cli(cfg: RTCDemoConfig):
     get_actions_thread.start()
     logger.info("Started get actions thread")
 
+    # Start visualization thread if enabled
+    viz_queue = None
+    if cfg.enable_visualization:
+        # Create thread-safe queue for visualization data
+        viz_queue = Queue(maxsize=cfg.viz_history_size * 2)
+
+        viz_thread = Thread(
+            target=visualize_actions,
+            args=(viz_queue, robot_wrapper, shutdown_event, cfg),
+            daemon=True,
+            name="Visualization",
+        )
+        viz_thread.start()
+        logger.info("Started visualization thread")
+
     # Start action executor thread
     actor_thread = Thread(
         target=actor_control,
@@ -781,21 +797,6 @@ def demo_cli(cfg: RTCDemoConfig):
     )
     actor_thread.start()
     logger.info("Started actor thread")
-
-    # Start visualization thread if enabled
-    viz_queue = None
-    if cfg.enable_visualization:
-        # Create thread-safe queue for visualization data
-        viz_queue = Queue(maxsize=cfg.viz_history_size * 2)
-
-        viz_thread = Thread(
-            target=visualize_actions,
-            args=(viz_queue, robot.action_features(), shutdown_event, cfg),
-            daemon=True,
-            name="Visualization",
-        )
-        viz_thread.start()
-        logger.info("Started visualization thread")
 
     logger.info("Started stop by duration thread")
 
