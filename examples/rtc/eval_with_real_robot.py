@@ -87,6 +87,7 @@ from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 from lerobot.policies.rtc.action_queue import ActionQueue
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.policies.rtc.latency_tracker import LatencyTracker
+from lerobot.policies.rtc.action_interpolator import ActionInterpolator
 from lerobot.processor.factory import (
     make_default_robot_action_processor,
     make_default_robot_observation_processor,
@@ -150,6 +151,8 @@ class RTCDemoConfig(HubMixin):
             prefix_attention_schedule=RTCAttentionSchedule.EXP,
         )
     )
+    
+    interpolation_multiplier: int = 2  # Control rate multiplier (1=off, 2=2x, 3=3x)
 
     # Demo parameters
     duration: float = 60.0  # Duration to run the demo (seconds)
@@ -160,7 +163,7 @@ class RTCDemoConfig(HubMixin):
 
     # Get new actions horizon. The amount of executed steps after which will be requested new actions.
     # It should be higher than inference delay + execution horizon.
-    action_queue_size_to_get_new_actions: int = 25
+    action_queue_size_to_get_new_actions: int = 30
 
     # Task to execute
     task: str = field(default="", metadata={"help": "Task to execute"})
@@ -506,20 +509,24 @@ def actor_control(
         logger.info("[ACTOR] Starting actor thread")
 
         action_count = 0
-        action_interval = 1.0 / cfg.fps
-
+        interpolator = ActionInterpolator(multiplier=cfg.interpolation_multiplier)
+        action_interval = interpolator.get_control_interval(cfg.fps)
+    
         while not shutdown_event.is_set():
             start_time = time.perf_counter()
 
-            # Try to get an action from the queue with timeout
-            action = action_queue.get()
-
+            if interpolator.needs_new_action():
+                new_action = action_queue.get()
+                if new_action is not None:
+                    interpolator.add(new_action.cpu())
+                
+            action = interpolator.get()
             if action is not None:
-                action = action.cpu()
                 action_dict = {key: action[i].item() for i, key in enumerate(robot.action_features())}
                 action_processed = robot_action_processor((action_dict, None))
                 robot.send_action(action_processed)
-
+                action_count += 1
+               
                 # Store executed action for visualization
                 if viz_queue is not None:
                     viz_queue.put_nowait((time.time(), action.clone()))
