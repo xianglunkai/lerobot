@@ -127,6 +127,7 @@ from lerobot.robots import (  # noqa: F401
     unitree_g1,
     qnbot_w,
     cobot_magic,
+    agilex_cobot,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
