@@ -56,7 +56,10 @@ from lerobot.datasets.utils import build_dataset_frame, combine_feature_dicts, h
 from lerobot.datasets.video_utils import VideoEncodingManager
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.rtc import ActionInterpolator, ActionQueue, LatencyTracker, RTCConfig
+from lerobot.policies.rtc.action_queue import ActionQueue
+from lerobot.policies.rtc.configuration_rtc import RTCConfig
+from lerobot.policies.rtc.latency_tracker import LatencyTracker
+from lerobot.policies.rtc.action_interpolator import ActionInterpolator
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.processor.rename_processor import rename_stats
 from lerobot.robots import Robot, RobotConfig, make_robot_from_config
