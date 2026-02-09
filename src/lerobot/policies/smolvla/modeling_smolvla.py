@@ -405,7 +405,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         if actions_is_pad is not None:
             in_episode_bound = ~actions_is_pad
             losses = losses * in_episode_bound.unsqueeze(-1)
-            loss_dict["losses_after_in_ep_bound"] = losses.clone()
+            loss_dict["losses_after_in_ep_bound"] = losses.clone().mean().item()
             postfix_mask = in_episode_bound if postfix_mask is None else (postfix_mask & in_episode_bound)
 
         # Remove padding
