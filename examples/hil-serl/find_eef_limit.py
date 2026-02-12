@@ -18,7 +18,7 @@ from lerobot.teleoperators import (  # noqa: F401
 )
 
 from lerobot.configs import parser
-from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.import_utils import register_third_party_devices
 
 @dataclass
@@ -84,7 +84,7 @@ def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
 
         # Skip initial warmup period
         if (time.perf_counter() - start_episode_t) < 5:
-            busy_wait(0.01)
+            precise_sleep(0.01)
             continue
 
         # Update min/max values
@@ -100,7 +100,7 @@ def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
             print(f"Min joint pos position {np.round(min_pos, 4).tolist()}")
             break
 
-        busy_wait(0.01)
+        precise_sleep(0.01)
 
 
 def main():
