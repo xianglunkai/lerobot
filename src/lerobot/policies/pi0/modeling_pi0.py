@@ -50,6 +50,7 @@ from lerobot.policies.rtc.training_time import (
     masked_mean,
     sample_rtc_delay,
 )
+from lerobot.processor.delta_action_processor import to_absolute_actions, to_delta_actions
 from lerobot.utils.constants import (
     ACTION,
     OBS_LANGUAGE_ATTENTION_MASK,
@@ -1302,6 +1303,9 @@ class PI0Policy(PreTrainedPolicy):
         original_action_dim = self.config.output_features[ACTION].shape[0]
         actions = actions[:, :, :original_action_dim]
 
+        if self.config.use_delta_actions:
+            actions = to_absolute_actions(actions, state, [True] * actions.shape[-1])
+
         return actions
 
     def forward(self, batch: dict[str, Tensor], reduction: str = "mean") -> tuple[Tensor, dict]:
@@ -1318,6 +1322,9 @@ class PI0Policy(PreTrainedPolicy):
         lang_tokens, lang_masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
         state = self.prepare_state(batch)
         actions = self.prepare_action(batch)
+
+        if self.config.use_delta_actions:
+            actions = to_delta_actions(actions, state, [True] * actions.shape[-1])
 
         # Compute loss
         postfix_mask = None
