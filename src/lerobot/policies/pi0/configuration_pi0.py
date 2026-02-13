@@ -59,6 +59,10 @@ class PI0Config(PreTrainedConfig):
 
     # Real-Time Chunking (RTC) configuration
     # Real-Time Chunking (RTC) configurations
+    # Delta actions: converts absolute actions to delta (relative to state)
+    use_delta_actions: bool = False
+
+    # Real-Time Chunking (RTC) configuration
     rtc_config: RTCConfig | None = None
     rtc_training_config: RTCTrainingConfig | None = None
 

@@ -26,6 +26,7 @@ from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     AddBatchDimensionProcessorStep,
+    DeltaActionsProcessorStep,
     DeviceProcessorStep,
     NormalizerProcessorStep,
     PolicyAction,
@@ -145,6 +146,7 @@ def make_pi05_pre_post_processors(
             norm_map=config.normalization_mapping,
             stats=dataset_stats,
         ),
+        DeltaActionsProcessorStep(enabled=config.use_delta_actions),
         Pi05PrepareStateTokenizerProcessorStep(max_state_dim=config.max_state_dim),
         TokenizerProcessorStep(
             tokenizer_name="google/paligemma-3b-pt-224",
