@@ -11,5 +11,5 @@ python examples/rtc/eval_dataset.py \
         --rtc.debug_maxlen=1000 \
         --inference_delay=10 \
         --device=cuda \
-        --rtc.sigma_d=1.0 \
+        --rtc.sigma_d=0.2 \
         --rtc.full_trajectory_alignment=False \
