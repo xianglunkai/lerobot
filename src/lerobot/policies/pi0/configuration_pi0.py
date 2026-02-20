@@ -50,12 +50,18 @@ class PI0Config(PreTrainedConfig):
     min_period: float = 4e-3
     max_period: float = 4.0
 
-    # Real-Time Chunking (RTC) configurations
+  
     # Delta actions: converts absolute actions to delta (relative to state)
+    # Delta actions: converts absolute actions to delta (relative to state).
     use_delta_actions: bool = False
+    # Joint names to exclude from delta conversion (kept as absolute).
+    delta_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
+    # Populated at runtime by make_policy from dataset metadata.
+    action_feature_names: list[str] | None = None
 
     # Real-Time Chunking (RTC) configuration
     rtc_config: RTCConfig | None = None
+    # Real-Time Chunking (RTC) configurations
     rtc_training_config: RTCTrainingConfig | None = None
 
     image_resolution: tuple[int, int] = (
