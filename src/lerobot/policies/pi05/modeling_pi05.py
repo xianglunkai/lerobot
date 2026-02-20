@@ -61,7 +61,6 @@ from lerobot.utils.constants import (
     ACTION,
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
-    OBS_STATE,
     OPENPI_ATTENTION_MASK_VALUE,
 )
 
@@ -1250,14 +1249,6 @@ class PI05Policy(PreTrainedPolicy):
         actions = pad_vector(batch[ACTION], self.config.max_action_dim)
         return actions
 
-    def _build_delta_mask(self, action_dim: int) -> list[bool]:
-        """Build a boolean mask for delta action conversion."""
-        names = self.config.action_feature_names
-        if names is None:
-            return [True] * action_dim
-        exclude = set(self.config.delta_exclude_joints)
-        return [n not in exclude for n in names]
-
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select a single action given environment observations."""
@@ -1291,10 +1282,6 @@ class PI05Policy(PreTrainedPolicy):
         original_action_dim = self.config.output_features[ACTION].shape[0]
         actions = actions[:, :, :original_action_dim]
 
-        if self.config.use_delta_actions:
-            state = pad_vector(batch[OBS_STATE], self.config.max_state_dim)
-            actions = to_absolute_actions(actions, state, self._build_delta_mask(actions.shape[-1]))
-
         return actions
 
     def forward(self, batch: dict[str, Tensor], reduction: str = "mean") -> tuple[Tensor, dict]:
@@ -1311,10 +1298,6 @@ class PI05Policy(PreTrainedPolicy):
         tokens, masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
 
         actions = self.prepare_action(batch)
-
-        if self.config.use_delta_actions:
-            state = pad_vector(batch[OBS_STATE], self.config.max_state_dim)
-            actions = to_delta_actions(actions, state, self._build_delta_mask(actions.shape[-1]))
 
         # Compute loss (no separate state needed for PI05)
         postfix_mask = None

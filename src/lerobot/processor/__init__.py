@@ -31,6 +31,7 @@ from .converters import (
 )
 from .delta_action_processor import MapDeltaActionToRobotActionStep, MapTensorToDeltaActionDictStep
 from .delta_action_processor import (
+    AbsoluteActionsProcessorStep,
     DeltaActionsProcessorStep,
     MapDeltaActionToRobotActionStep,
     MapTensorToDeltaActionDictStep,
@@ -145,11 +146,7 @@ __all__ = [
     "TransitionKey",
     "TruncatedProcessorStep",
     "to_absolute_actions",
-<<<<<<< HEAD
     "to_relative_actions",
-=======
-    "to_delta_actions",
->>>>>>> 582f3433 (Add option for pi family models to train with relative actions (relative to state))
     "UnnormalizerProcessorStep",
     "VanillaObservationProcessorStep",
 ]

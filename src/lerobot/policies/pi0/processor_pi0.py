@@ -153,7 +153,6 @@ def make_pi0_pre_post_processors(
             norm_map=config.normalization_mapping,
             stats=dataset_stats,
         ),
-        DeltaActionsProcessorStep(enabled=config.use_delta_actions),
     ]
 
     output_steps: list[ProcessorStep] = [
