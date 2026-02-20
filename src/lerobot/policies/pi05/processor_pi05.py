@@ -146,9 +146,10 @@ def make_pi05_pre_post_processors(
             norm_map=config.normalization_mapping,
             stats=dataset_stats,
         ),
+        DeltaActionsProcessorStep(enabled=config.use_delta_actions, mask=config.mask_action_deltas),
         Pi05PrepareStateTokenizerProcessorStep(max_state_dim=config.max_state_dim),
         TokenizerProcessorStep(
-            tokenizer_name="/home/xlk/work/lerobot/pretrain_model/paligemma-3b-pt-224",
+            tokenizer_name="google/paligemma-3b-pt-224",
             max_length=config.tokenizer_max_length,
             padding_side="right",
             padding="max_length",

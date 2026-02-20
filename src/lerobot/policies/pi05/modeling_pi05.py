@@ -61,6 +61,7 @@ from lerobot.utils.constants import (
     ACTION,
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
+    OBS_STATE,
     OPENPI_ATTENTION_MASK_VALUE,
 )
 
@@ -1288,6 +1289,9 @@ class PI05Policy(PreTrainedPolicy):
         original_action_dim = self.config.output_features[ACTION].shape[0]
         actions = actions[:, :, :original_action_dim]
 
+        if self.config.use_delta_actions:
+            state = pad_vector(batch[OBS_STATE], self.config.max_state_dim)
+            actions = to_absolute_actions(actions, state, self.config.mask_action_deltas)
         # Optional smoothing: support 'ema' (fast, IIR) and 'gauss' (Gaussian conv)
         smoothing_method = kwargs.get("smoothing_method") if kwargs is not None else None
         if smoothing_method is None:
@@ -1338,6 +1342,10 @@ class PI05Policy(PreTrainedPolicy):
         tokens, masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
 
         actions = self.prepare_action(batch)
+
+        if self.config.use_delta_actions:
+            state = pad_vector(batch[OBS_STATE], self.config.max_state_dim)
+            actions = to_delta_actions(actions, state, self.config.mask_action_deltas)
 
         # Compute loss (no separate state needed for PI05)
         postfix_mask = None

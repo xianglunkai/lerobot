@@ -22,6 +22,7 @@ from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 from lerobot.policies.rtc.configuration_rtc import RTCConfig, RTCTrainingConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
+from collections.abc import Sequence
 
 DEFAULT_IMAGE_SIZE = 224
 

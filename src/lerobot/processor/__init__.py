@@ -151,4 +151,6 @@ __all__ = [
     "UnnormalizerProcessorStep",
     "VanillaObservationProcessorStep",
     "LowPassFilterProcessor",
+    "to_absolute_actions",
+    "to_delta_actions",
 ]
