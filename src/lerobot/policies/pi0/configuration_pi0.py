@@ -58,12 +58,8 @@ class PI0Config(PreTrainedConfig):
     action_feature_names: list[str] | None = None
 
     # Real-Time Chunking (RTC) configuration
-    # Real-Time Chunking (RTC) configurations
-    # Delta actions: converts absolute actions to delta (relative to state)
-    use_delta_actions: bool = False
-
-    # Real-Time Chunking (RTC) configuration
     rtc_config: RTCConfig | None = None
+    # Real-Time Chunking (RTC) configurations
     rtc_training_config: RTCTrainingConfig | None = None
 
     image_resolution: tuple[int, int] = (

@@ -22,14 +22,9 @@ import torch
 from torch import Tensor
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
-from lerobot.types import PolicyAction, RobotAction
-
-from .pipeline import ActionProcessorStep, ProcessorStepRegistry, RobotActionProcessorStep
-from lerobot.utils.constants import OBS_STATE
-
-from .core import EnvTransition, PolicyAction, RobotAction, TransitionKey
 from .pipeline import ActionProcessorStep, ProcessorStep, ProcessorStepRegistry, RobotActionProcessorStep
 
+from lerobot.utils.constants import OBS_STATE
 
 def to_delta_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) -> Tensor:
     """Convert absolute actions to delta: delta = action - state (for masked dims).

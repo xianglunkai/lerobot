@@ -50,7 +50,8 @@ from lerobot.datasets.io_utils import (
     write_stats,
     write_tasks,
 )
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
+
 from lerobot.datasets.utils import (
     DATA_DIR,
     DEFAULT_CHUNK_SIZE,
