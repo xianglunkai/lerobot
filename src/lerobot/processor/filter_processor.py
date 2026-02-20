@@ -4,7 +4,49 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
+import numpy as np
 import torch
+try:
+    from filterpy.kalman import KalmanFilter as _ExternalKalman
+    KalmanFilter = _ExternalKalman
+except Exception:
+    class KalmanFilter:
+        """Lightweight fallback Kalman filter implementation.
+
+        This minimal implementation provides `predict()` and `update(z)` and
+        stores common matrices/attributes used by the processor (`x`, `P`,
+        `F`, `H`, `Q`, `R`). It's intentionally small — use `filterpy` when
+        available for advanced features and numerical robustness.
+        """
+        def __init__(self, dim_x: int, dim_z: int):
+            self.dim_x = dim_x
+            self.dim_z = dim_z
+            self.F = np.eye(dim_x)
+            self.H = np.zeros((dim_z, dim_x))
+            self.Q = np.eye(dim_x)
+            self.R = np.eye(dim_z)
+            self.P = np.eye(dim_x)
+            self.x = np.zeros((dim_x, 1))
+
+        def predict(self) -> None:
+            # x_k = F x_{k-1}
+            self.x = self.F @ self.x
+            # P_k = F P_{k-1} F^T + Q
+            self.P = self.F @ self.P @ self.F.T + self.Q
+
+        def update(self, z) -> None:
+            z = np.array(z).reshape(self.dim_z, 1)
+            # y = z - H x
+            y = z - (self.H @ self.x)
+            # S = H P H^T + R
+            S = self.H @ self.P @ self.H.T + self.R
+            # K = P H^T S^{-1}
+            K = self.P @ self.H.T @ np.linalg.inv(S)
+            # x = x + K y
+            self.x = self.x + (K @ y)
+            # P = (I - K H) P
+            I = np.eye(self.dim_x)
+            self.P = (I - K @ self.H) @ self.P
 from torch import Tensor
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
@@ -322,6 +364,207 @@ class LowPassFilterProcessor(_LowPassFilterMixin, ProcessorStep):
 
         Returns:
             The same feature definitions (filtering doesn't change feature shapes/types).
+        """
+        return features
+
+
+@dataclass
+@ProcessorStepRegistry.register(name="kalman_filter_processor")
+class KalmanFilterProcessor(ProcessorStep):
+    """
+    A processor step that applies a Kalman filter for state estimation.
+
+    This processor estimates joint angles, velocities, and accelerations
+    while accounting for noise in the system.
+    """
+
+    state_dim: int = 3  # [angle, velocity, acceleration]
+    measurement_dim: int = 1  # Only angle is measured directly
+    # process_noise: variance of the (continuous) acceleration/jerk noise
+    process_noise: float = 1e-5
+    # measurement_noise: variance of the angle measurement
+    measurement_noise: float = 1e-2
+    dt: float = 0.02  # Time step in seconds
+    # Optional per-joint noise overrides
+    per_joint_process_noise: dict[str, float] | None = None
+    per_joint_measurement_noise: dict[str, float] | None = None
+    # Enable simple adaptive R update using innovation squared moving average
+    adaptive_R: bool = False
+    adaptive_R_alpha: float = 0.1
+
+    _kf: dict[str, KalmanFilter] = field(default_factory=dict, init=False, repr=False)
+
+    def __post_init__(self):
+        """Initialize Kalman filters for each joint."""
+        # Ensure _kf is a dictionary mapping joint names to KalmanFilter instances
+        self._kf = {}
+
+    def _initialize_kalman_filter(self, joint: str | None = None) -> KalmanFilter:
+        """Create and initialize a Kalman filter for a single joint.
+
+        If `joint` is provided, per-joint noise overrides will be applied.
+        """
+        kf = KalmanFilter(dim_x=self.state_dim, dim_z=self.measurement_dim)
+
+        # State transition matrix (F)
+        kf.F = np.array([
+            [1, self.dt, 0.5 * self.dt**2],
+            [0, 1, self.dt],
+            [0, 0, 1]
+        ])
+
+        # Measurement function (H)
+        kf.H = np.array([[1, 0, 0]])
+
+        # Process noise covariance (Q)
+        q_val = self.process_noise if (self.per_joint_process_noise is None or joint is None) else self.per_joint_process_noise.get(joint, self.process_noise)
+        kf.Q = self._initialize_process_noise(q_val)
+
+        # Measurement noise covariance (R)
+        r_val = self.measurement_noise if (self.per_joint_measurement_noise is None or joint is None) else self.per_joint_measurement_noise.get(joint, self.measurement_noise)
+        kf.R = self._initialize_measurement_noise(r_val)
+
+        # Initial state covariance (P) -- set reasonable defaults
+        kf.P = np.diag([max(self.measurement_noise, 1e-6), 1.0, 1.0])
+
+        # Initial state (x)
+        kf.x = np.zeros((self.state_dim, 1))
+
+        return kf
+
+    def _initialize_process_noise(self, q: float) -> np.ndarray:
+        """Dynamically initialize the process noise covariance matrix (Q).
+
+        `q` is the variance of the acceleration white noise.
+        """
+        q = float(q)
+        dt = float(self.dt)
+        q11 = (dt ** 4) / 4.0
+        q12 = (dt ** 3) / 2.0
+        q13 = (dt ** 2) / 2.0
+        q22 = dt ** 2
+        q23 = dt
+        q33 = 1.0
+
+        Q = q * np.array([
+            [q11, q12, q13],
+            [q12, q22, q23],
+            [q13, q23, q33],
+        ], dtype=np.float64)
+        return Q
+
+    def _initialize_measurement_noise(self, r: float) -> np.ndarray:
+        """Dynamically initialize the measurement noise covariance matrix (R).
+
+        `r` is the measurement variance for the angle.
+        """
+        return np.array([[float(r)]], dtype=np.float64)
+
+    def reset(self, joint_names: list[str], initial_states: dict[str, np.ndarray] | None = None):
+        """Reset Kalman filters for all joints."""
+        self._kf.clear()
+        for joint in joint_names:
+            self._kf[joint] = self._initialize_kalman_filter()
+            initial_state = initial_states.get(joint) if initial_states else None
+            self._kf[joint].x = initial_state if initial_state is not None else np.zeros((self.state_dim, 1))
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """
+        Apply Kalman filters to estimate the state for multiple joints.
+
+        Args:
+            transition: The input environment transition.
+
+        Returns:
+            A new transition with estimated states for all joints.
+        """
+        new_transition = transition.copy()
+
+        # Extract the measurements (e.g., joint angles).
+        # Support both enum-keyed and string-keyed transitions.
+        measurements = new_transition.get(TransitionKey.OBSERVATION)
+        if measurements is None:
+            measurements = new_transition.get(TransitionKey.OBSERVATION.value)
+        if measurements is None:
+            raise ValueError("Measurements are missing in the transition.")
+
+        # Ensure measurements are a dictionary of joint names to values
+        if not isinstance(measurements, dict):
+            raise ValueError("Measurements should be a dictionary of joint names to values.")
+
+        estimated_states = {}
+        for joint, measurement in measurements.items():
+            # Ensure measurement is a numpy array
+            measurement_np = np.array(measurement, dtype=np.float32).reshape(-1, 1)
+
+            # Initialize per-joint filter and align its initial state with first measurement
+            if joint not in self._kf:
+                kf = self._initialize_kalman_filter(joint)
+                # Align angle state to the first measurement to avoid bad initial prediction
+                angle_init = float(measurement_np[0, 0])
+                kf.x = np.array([[angle_init], [0.0], [0.0]], dtype=np.float32)
+                # Set initial covariance: low uncertainty on measured angle, larger on vel/acc
+                # Use the filter's R (measurement variance) to initialize angle variance
+                angle_var = float(kf.R[0, 0]) if hasattr(kf, "R") else float(max(self.measurement_noise, 1e-5))
+                vel_var = 1.0
+                acc_var = 1.0
+                kf.P = np.diag([angle_var, vel_var, acc_var]) * 10.0
+                self._kf[joint] = kf
+
+            # Kalman filter predict and update steps
+            self._kf[joint].predict()
+            # compute innovation and optionally update R adaptively after update
+            # call update and capture innovation if supported by external filter; our lightweight
+            # fallback does not return innovation, so compute predicted measurement and residual here.
+            # predicted measurement: H x
+            pred_z = (self._kf[joint].H @ self._kf[joint].x).reshape(-1, 1)
+            residual = measurement_np - pred_z
+            self._kf[joint].update(measurement_np)
+
+            # Adaptive R: simple exponential moving average of innovation^2 + HpH^T
+            if self.adaptive_R:
+                innov_sq = float((residual ** 2).mean())
+                HpHT = float(self._kf[joint].H @ self._kf[joint].P @ self._kf[joint].H.T)
+                measured_innov_var = innov_sq + HpHT
+                old_R = float(self._kf[joint].R[0, 0])
+                new_R = (1.0 - self.adaptive_R_alpha) * old_R + self.adaptive_R_alpha * measured_innov_var
+                self._kf[joint].R = np.array([[new_R]], dtype=np.float64)
+
+            # Store the estimated state
+            estimated_state = self._kf[joint].x.flatten()
+            estimated_states[joint] = {
+                "angle": float(estimated_state[0]),
+                "velocity": float(estimated_state[1]),
+                "acceleration": float(estimated_state[2])
+            }
+
+        # Update the transition with the estimated states
+        # `TransitionKey` does not define a STATE key; store under COMPLEMENTARY_DATA
+        comp_key = TransitionKey.COMPLEMENTARY_DATA.value
+        comp = deepcopy(new_transition.get(comp_key) or {})
+        comp["kalman_states"] = estimated_states
+        new_transition[comp_key] = comp
+
+        return new_transition
+
+    def get_config(self) -> dict[str, Any]:
+        """Return the configuration of the Kalman filter."""
+        return {
+            "state_dim": self.state_dim,
+            "measurement_dim": self.measurement_dim,
+            "process_noise": self.process_noise,
+            "measurement_noise": self.measurement_noise,
+            "dt": self.dt
+        }
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """
+        Minimal implementation to satisfy the abstract `ProcessorStep` interface.
+
+        For the Kalman filter processor we don't change feature shapes/types,
+        so return the input features unchanged.
         """
         return features
 

@@ -902,6 +902,7 @@ class VLAFlowMatching(nn.Module):
                     time=time,
                     original_denoise_step_partial=denoise_step_partial_call,
                     execution_horizon=execution_horizon,
+                    num_flow_matching_steps=num_steps,
                 )
             else:
                 time_tensor = torch.tensor(time, dtype=torch.float32, device=device).expand(bsize)
