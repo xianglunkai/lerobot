@@ -177,3 +177,10 @@ outputs/
 *.urdf
 *.xml
 *.part
+
+checkpoints/
+papers/
+pretrain_model/
+rtc_debug_output/
+scripts/
+google/
