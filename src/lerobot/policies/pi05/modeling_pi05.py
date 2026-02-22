@@ -601,7 +601,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             torch.set_float32_matmul_precision("high")
             self.sample_actions = torch.compile(self.sample_actions, mode=config.compile_mode)
             # Also compile the main forward pass used during training
-            self.forward = torch.compile(self.forward, mode=config.compile_mode)
+            # self.forward = torch.compile(self.forward, mode=config.compile_mode)
 
     def gradient_checkpointing_enable(self):
         """Enable gradient checkpointing for memory optimization."""
@@ -901,6 +901,49 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             if self.rtc_processor is not None and self.rtc_processor.is_debug_enabled():
                 self.rtc_processor.track(time=time, x_t=x_t, v_t=v_t)
 
+
+        # Optional smoothing: support 'ema', 'intra_chunk', and 'mpc' methods
+        smoothing_method = kwargs.get("smoothing_method")
+
+        if smoothing_method is not None:
+            method = str(smoothing_method).lower()
+            # Work on torch Tensor on same device to avoid host transfer.
+            device = x_t.device
+            dtype = x_t.dtype
+
+            if method == "ema":
+                # EMA: alpha = 1/(1 + s); s=0 -> alpha=1 (no smoothing)
+                alpha = 1.0 / (1.0 + 0.5)
+                if alpha < 1.0:
+                    B, T, A = x_t.shape
+                    # use float32 for stability when inputs are low-precision
+                    compute_dtype = torch.float32 if dtype in (torch.float16, torch.bfloat16) else dtype
+                    out = torch.empty_like(x_t, dtype=compute_dtype, device=device)
+                    out[:, 0, :] = x_t[:, 0, :].to(compute_dtype)
+                    one_minus = 1.0 - alpha
+                    for t in range(1, T):
+                        out[:, t, :] = alpha * x_t[:, t, :].to(compute_dtype) + one_minus * out[:, t - 1, :]
+                    actions = out.to(dtype)
+
+            elif method == "intra_chunk":
+                # VLA-RAIL intra-chunk trajectory smoothing using cubic polynomial fitting
+                # This implements the algorithm described in the VLA-RAIL paper
+                x_t = intra_chunk_smoothing_vla_rail(x_t, polynomial_order=5, preserve_boundaries=False)
+            elif method == "mpc":
+                x_t = optimize_actions_qp_with_constraints(
+                    x_t,
+                    dt=0.02,  # Assuming 50Hz control frequency, adjust as needed
+                    w_data=1.0,
+                    w_acc=1.0,
+                    w_jerk=1.0,
+                    vel_limits=None,
+                    acc_limits=None,
+                    fix_ends=False,
+                    verbose=False,
+                )
+
+            # else: unknown method -> leave actions unchanged
+
         return x_t
 
     def denoise_step(
@@ -973,12 +1016,7 @@ class PI05Policy(PreTrainedPolicy):
         self.model.to(config.device)
 
         self.reset()
-        # External (temporary) smoothing parameters that can be set on the policy
-        # instead of passing via kwargs to `predict_action_chunk`.
-        # smoothing_method: None|'ema'|'intra_chunk'
-        # smoothing_s: float smoothing strength
-        self.smoothing_method = None
-        self.smoothing_s = 1.0
+      
     @classmethod
     def from_pretrained(
         cls: builtins.type[T],
@@ -1292,41 +1330,33 @@ class PI05Policy(PreTrainedPolicy):
         if self.config.use_delta_actions:
             state = pad_vector(batch[OBS_STATE], self.config.max_state_dim)
             actions = to_absolute_actions(actions, state, self.config.mask_action_deltas)
-        # Optional smoothing: support 'ema' (fast, IIR) and 'gauss' (Gaussian conv)
-        smoothing_method = kwargs.get("smoothing_method") if kwargs is not None else None
-        if smoothing_method is None:
-            smoothing_method = getattr(self, "smoothing_method", None)
-        smoothing_s = kwargs.get("smoothing_s") if (kwargs is not None and kwargs.get("smoothing_s") is not None) else getattr(self, "smoothing_s", 0.0)
-        smoothing_s = float(smoothing_s)
-
-        if smoothing_method is not None:
-            method = str(smoothing_method).lower()
-            # Work on torch Tensor on same device to avoid host transfer.
-            device = actions.device
-            dtype = actions.dtype
-
-            if method == "ema":
-                # EMA: alpha = 1/(1 + s); s=0 -> alpha=1 (no smoothing)
-                alpha = 1.0 / (1.0 + float(smoothing_s))
-                if alpha < 1.0:
-                    B, T, A = actions.shape
-                    # use float32 for stability when inputs are low-precision
-                    compute_dtype = torch.float32 if dtype in (torch.float16, torch.bfloat16) else dtype
-                    out = torch.empty_like(actions, dtype=compute_dtype, device=device)
-                    out[:, 0, :] = actions[:, 0, :].to(compute_dtype)
-                    one_minus = 1.0 - alpha
-                    for t in range(1, T):
-                        out[:, t, :] = alpha * actions[:, t, :].to(compute_dtype) + one_minus * out[:, t - 1, :]
-                    actions = out.to(dtype)
-
-            elif method == "intra_chunk":
-                # VLA-RAIL intra-chunk trajectory smoothing using cubic polynomial fitting
-                # This implements the algorithm described in the VLA-RAIL paper
-                actions = intra_chunk_smoothing_vla_rail(actions, polynomial_order=3, preserve_boundaries=True)
-
-            # else: unknown method -> leave actions unchanged
-
+      
         return actions
+
+
+    @torch.no_grad()
+    def predict_action_chunk_test(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> tuple[Tensor, Tensor]:
+        """Predict a chunk of actions given environment observations."""
+        self.eval()
+
+        # Prepare inputs
+        images, img_masks = self._preprocess_images(batch)
+        tokens, masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
+
+        # Sample actions using the model (pass through RTC kwargs, no separate state needed for PI05)
+        org_actions = self.model.sample_actions(images, img_masks, tokens, masks, **kwargs)
+
+        # Unpad actions to actual action dimension
+        original_action_dim = self.config.output_features[ACTION].shape[0]
+        org_actions = org_actions[:, :, :original_action_dim]
+
+        if self.config.use_delta_actions:
+            state = pad_vector(batch[OBS_STATE], self.config.max_state_dim)
+            actions = to_absolute_actions(org_actions, state, self.config.mask_action_deltas)
+        else:
+            actions = org_actions.clone()
+   
+        return actions, org_actions
 
     def forward(self, batch: dict[str, Tensor], reduction: str = "mean") -> tuple[Tensor, dict]:
         """Run the batch through the model and compute the loss for training.
@@ -1485,3 +1515,161 @@ def intra_chunk_smoothing_vla_rail(
     if return_coefficients:
         return smoothed, coefficients_reshaped
     return smoothed
+
+
+def optimize_actions_qp_with_constraints(
+    actions: torch.Tensor,
+    dt: float = 1.0,
+    vel_limits: tuple[float, float] | None = None,
+    acc_limits: tuple[float, float] | None = None,
+    w_data: float = 1.0,
+    w_acc: float = 1.0,
+    w_jerk: float = 0.0,
+    fix_ends: bool = True,
+    eps: float = 1e-6,
+    verbose: bool = False,
+):
+    """Solve QP with smoothing, optional fixed endpoints, and optional velocity/acceleration constraints.
+
+    Minimizes: 0.5 * w_data * ||x - a||^2 + 0.5 * w_acc * ||D2 x||^2 + 0.5 * w_jerk * ||D3 x||^2
+    subject to:
+        - if vel_limits is not None: vmin <= (x[i+1] - x[i])/dt <= vmax
+        - if acc_limits is not None: amin <= (x[i+2] - 2x[i+1] + x[i])/dt^2 <= amax
+        - if fix_ends: x[0] = a[0], x[-1] = a[-1]
+    """
+    try:
+        import osqp
+        from scipy import sparse
+        import numpy as np
+    except ImportError as e:
+        raise ImportError("osqp and scipy are required") from e
+
+    device = actions.device
+    dtype = actions.dtype
+    B, T, A_dim = actions.shape
+
+    if verbose:
+        print(f"QP with constraints: w_data={w_data}, w_acc={w_acc}, w_jerk={w_jerk}, fix_ends={fix_ends}")
+        if vel_limits:
+            print(f"  velocity limits: {vel_limits[0]:.3f} to {vel_limits[1]:.3f} (per sec)")
+        if acc_limits:
+            print(f"  acceleration limits: {acc_limits[0]:.3f} to {acc_limits[1]:.3f} (per sec^2)")
+
+    # Build difference matrices
+    I = sparse.eye(T, format='csc')
+    if T >= 3:
+        D2 = sparse.diags([1, -2, 1], [0, 1, 2], shape=(T-2, T), format='csc')
+    else:
+        D2 = sparse.csc_matrix((0, T), dtype=float)
+    if T >= 4:
+        D3 = sparse.diags([1, -3, 3, -1], [0, 1, 2, 3], shape=(T-3, T), format='csc')
+    else:
+        D3 = sparse.csc_matrix((0, T), dtype=float)
+
+    # Hessian
+    P = w_data * I
+    if w_acc != 0 and T >= 3:
+        P = P + w_acc * (D2.T @ D2)
+    if w_jerk != 0 and T >= 4:
+        P = P + w_jerk * (D3.T @ D3)
+    P = P + eps * I  # ensure positive definite
+    P = P.astype(np.float64)
+
+    out = torch.empty_like(actions, dtype=dtype)
+    N = B * A_dim
+    a_flat = actions.permute(0, 2, 1).contiguous().view(N, T).cpu().numpy()
+
+    # Precompute raw difference matrices (without dt scaling) for constraints
+    A_vel_raw = None
+    if vel_limits is not None and T >= 2:
+        A_vel_raw = sparse.diags([-1, 1], [0, 1], shape=(T-1, T), format='csc')
+    A_acc_raw = None
+    if acc_limits is not None and T >= 3:
+        A_acc_raw = sparse.diags([1, -2, 1], [0, 1, 2], shape=(T-2, T), format='csc')
+
+    for n in range(N):
+        an = a_flat[n].astype(np.float64)
+        if verbose:
+            print(f"\n=== Trajectory {n}/{N} ===")
+            print(f"  Original range: [{an.min():.4f}, {an.max():.4f}]")
+            print(f"  First/last: {an[0]:.4f}, {an[-1]:.4f}")
+
+        q = (-w_data * an).astype(np.float64)
+
+        # Build constraint matrix A and bounds l,u
+        A_list = []
+        l_list = []
+        u_list = []
+
+        if fix_ends:
+            A_eq = sparse.vstack([
+                sparse.eye(1, T, format='csc'),
+                sparse.eye(1, T, format='csc', k=T-1)
+            ])
+            A_list.append(A_eq)
+            l_list.extend([an[0], an[-1]])
+            u_list.extend([an[0], an[-1]])
+
+        if A_vel_raw is not None:
+            vmin, vmax = vel_limits
+            # (x[i+1]-x[i])/dt ∈ [vmin, vmax] → (x[i+1]-x[i]) ∈ [vmin*dt, vmax*dt]
+            A_vel_scaled = A_vel_raw / dt
+            A_list.append(A_vel_scaled)
+            l_list.extend([vmin * dt] * (T-1))
+            u_list.extend([vmax * dt] * (T-1))
+
+        if A_acc_raw is not None:
+            amin, amax = acc_limits
+            # (x[i+2]-2x[i+1]+x[i])/dt^2 ∈ [amin, amax] → raw second diff ∈ [amin*dt^2, amax*dt^2]
+            A_acc_scaled = A_acc_raw / (dt**2)
+            A_list.append(A_acc_scaled)
+            l_list.extend([amin * (dt**2)] * (T-2))
+            u_list.extend([amax * (dt**2)] * (T-2))
+
+        if len(A_list) > 1:
+            A_constraint = sparse.vstack(A_list).tocsc()
+        else:
+            A_constraint = A_list[0] if A_list else sparse.csc_matrix((0, T), dtype=np.float64)
+        l = np.array(l_list, dtype=np.float64) if l_list else np.array([], dtype=np.float64)
+        u = np.array(u_list, dtype=np.float64) if u_list else np.array([], dtype=np.float64)
+
+        if verbose and A_constraint.shape[0] > 0:
+            print(f"  Constraint matrix shape: {A_constraint.shape}")
+            print(f"  First few l: {l[:4]}, first few u: {u[:4]}")
+
+        # Solve
+        prob = osqp.OSQP()
+        prob.setup(P=P, q=q, A=A_constraint, l=l, u=u, verbose=False,
+                   polish=False, eps_abs=1e-4, eps_rel=1e-4, max_iter=100)
+        res = prob.solve()
+
+        status = res.info.status
+        if verbose:
+            print(f"  OSQP status: {status}")
+
+        if status in ('solved', 'solved_inaccurate', 'solved_relaxed') and res.x is not None:
+            xn = res.x
+            if verbose:
+                print(f"  Solution range: [{xn.min():.4f}, {xn.max():.4f}]")
+                print(f"  First few values: {xn[:8]}")
+
+                # Compute smoothness metrics
+                dx = np.diff(xn)
+                d2x = np.diff(dx)
+                dx_orig = np.diff(an)
+                d2x_orig = np.diff(dx_orig)
+
+                print(f"  Mean |dx| (smoothed): {np.mean(np.abs(dx)):.4f}, original: {np.mean(np.abs(dx_orig)):.4f}")
+                print(f"  Mean |d2x| (smoothed): {np.mean(np.abs(d2x)):.4f}, original: {np.mean(np.abs(d2x_orig)):.4f}")
+                print(f"  Max |dx| (smoothed): {np.max(np.abs(dx)):.4f}, original: {np.max(np.abs(dx_orig)):.4f}")
+        else:
+            if verbose:
+                print("  OSQP failed, falling back to original.")
+            xn = an
+
+        # Write to output
+        b = n // A_dim
+        a = n % A_dim
+        out[b, :, a] = torch.from_numpy(xn).to(dtype)
+
+    return out.to(device)
