@@ -59,7 +59,7 @@ def main():
     ema_actions = ema_smooth(actions_noisy, s=2.0)
 
     # intra-chunk polynomial smoother baseline
-    poly_actions = intra_chunk_smoothing_vla_rail(actions_noisy, polynomial_order=3, preserve_boundaries=True)
+    poly_actions = intra_chunk_smoothing_vla_rail(actions_noisy, polynomial_order=5, preserve_boundaries=True)
 
     # QP optimizer settings
     dt = 0.02
