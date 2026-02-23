@@ -92,6 +92,7 @@ from .relative_action_processor import (
 from .rename_processor import RenameObservationsProcessorStep
 from .tokenizer_processor import ActionTokenizerProcessorStep, TokenizerProcessorStep
 from .filter_processor import LowPassFilterProcessor
+from .qp_action_processor import QPActionSmoothingProcessor
 
 __all__ = [
     "ActionProcessorStep",
@@ -151,6 +152,7 @@ __all__ = [
     "UnnormalizerProcessorStep",
     "VanillaObservationProcessorStep",
     "LowPassFilterProcessor",
+    "QPActionSmoothingProcessor",
     "to_absolute_actions",
     "to_delta_actions",
 ]
