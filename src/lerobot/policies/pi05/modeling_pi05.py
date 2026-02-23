@@ -896,8 +896,9 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                 self.rtc_processor.track(time=time, x_t=x_t, v_t=v_t)
 
 
-        # Optional smoothing: support 'ema', 'intra_chunk', and 'mpc' methods
+        # Optional smoothing:'poly5', and 'mpc' methods
         smoothing_method = kwargs.get("smoothing_method")
+        fps = kwargs.get("fps")
 
         if smoothing_method is not None:
             method = str(smoothing_method).lower()
@@ -905,28 +906,14 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             device = x_t.device
             dtype = x_t.dtype
 
-            if method == "ema":
-                # EMA: alpha = 1/(1 + s); s=0 -> alpha=1 (no smoothing)
-                alpha = 1.0 / (1.0 + 0.5)
-                if alpha < 1.0:
-                    B, T, A = x_t.shape
-                    # use float32 for stability when inputs are low-precision
-                    compute_dtype = torch.float32 if dtype in (torch.float16, torch.bfloat16) else dtype
-                    out = torch.empty_like(x_t, dtype=compute_dtype, device=device)
-                    out[:, 0, :] = x_t[:, 0, :].to(compute_dtype)
-                    one_minus = 1.0 - alpha
-                    for t in range(1, T):
-                        out[:, t, :] = alpha * x_t[:, t, :].to(compute_dtype) + one_minus * out[:, t - 1, :]
-                    actions = out.to(dtype)
-
-            elif method == "intra_chunk":
+            if method == "poly5":
                 # VLA-RAIL intra-chunk trajectory smoothing using cubic polynomial fitting
                 # This implements the algorithm described in the VLA-RAIL paper
                 x_t = intra_chunk_smoothing_vla_rail(x_t, polynomial_order=5, preserve_boundaries=False)
             elif method == "mpc":
                 x_t = optimize_actions_qp_with_constraints(
                     x_t,
-                    dt=0.02,  # Assuming 50Hz control frequency, adjust as needed
+                    dt=1.0/ float(fps),
                     w_data=1.0,
                     w_acc=1.0,
                     w_jerk=1.0,
