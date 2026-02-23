@@ -503,7 +503,8 @@ class RTCEvaluator:
         logging.info(f"Using correlated sampling: second sample shifted by {shift} from first sample")
 
         # Get random first index
-        first_idx = random.randint(0, len(self.dataset) - 1)
+        # first_idx = random.randint(0, len(self.dataset) - 1)
+        first_idx = int(len(self.dataset) / 2)
 
         # Calculate second index with shift, ensuring it's within bounds
         second_idx = first_idx + shift
@@ -542,6 +543,7 @@ class RTCEvaluator:
         logging.info("=" * 80)
         logging.info("Step 1: Generating previous chunk with policy_prev_chunk")
         logging.info("=" * 80)
+        smoothing_method = None
 
         # Initialize policy 1
         policy_prev_chunk_policy = self._init_policy(
@@ -550,9 +552,21 @@ class RTCEvaluator:
             rtc_debug=False,
         )
         with torch.no_grad():
-            prev_chunk_left_over = policy_prev_chunk_policy.predict_action_chunk(
+            # prev_chunk_left_over = policy_prev_chunk_policy.predict_action_chunk(
+            #     preprocessed_first_sample,
+            # )[:, shift:, :].squeeze(0)
+            prev_chunk_left_over ,prev_chunk_left_over_org= policy_prev_chunk_policy.predict_action_chunk_test(
                 preprocessed_first_sample,
-            )[:, shift : shift + 25, :].squeeze(0)
+                smoothing_method=smoothing_method,
+                fps=50,
+            )
+        
+            prev_chunk_left_over_org = prev_chunk_left_over_org[:, shift:, :].squeeze(0)
+
+            # resume orignal actions
+            prev_chunk_left_over = self.postprocessor(prev_chunk_left_over)
+            prev_chunk_left_over = prev_chunk_left_over[:, shift:, :].squeeze(0)
+
         logging.info(f"  Generated prev_chunk shape: {prev_chunk_left_over.shape}")
 
         # Destroy policy_prev_chunk to free memory for large models
@@ -580,10 +594,16 @@ class RTCEvaluator:
         noise_clone = noise.clone()
         policy_no_rtc_policy.rtc_processor.reset_tracker()
         with torch.no_grad():
-            no_rtc_actions = policy_no_rtc_policy.predict_action_chunk(
+            no_rtc_actions, _ = policy_no_rtc_policy.predict_action_chunk_test(
                 preprocessed_second_sample,
-                noise=noise,
+                noise=noise_clone,
+                smoothing_method=smoothing_method,
+                fps=50,
             )
+            # resume orignal actions
+            no_rtc_actions = self.postprocessor(no_rtc_actions)
+            
+
         no_rtc_tracked_steps = policy_no_rtc_policy.rtc_processor.tracker.get_all_steps()
         logging.info(f"  Tracked {len(no_rtc_tracked_steps)} steps without RTC")
         logging.info(f"  Generated no_rtc_actions shape: {no_rtc_actions.shape}")
@@ -608,13 +628,18 @@ class RTCEvaluator:
         )
         policy_rtc_policy.rtc_processor.reset_tracker()
         with torch.no_grad():
-            rtc_actions = policy_rtc_policy.predict_action_chunk(
+            rtc_actions, _ = policy_rtc_policy.predict_action_chunk_test(
                 preprocessed_second_sample,
                 noise=noise_clone,
                 inference_delay=self.cfg.inference_delay,
-                prev_chunk_left_over=prev_chunk_left_over,
+                prev_chunk_left_over=prev_chunk_left_over_org,
                 execution_horizon=self.cfg.rtc.execution_horizon,
+                smoothing_method=smoothing_method,
+                fps=50,
             )
+            # resume orignal actions
+            rtc_actions = self.postprocessor(rtc_actions)
+
         rtc_tracked_steps = policy_rtc_policy.rtc_processor.get_all_debug_steps()
         logging.info(f"  Tracked {len(rtc_tracked_steps)} steps with RTC")
         logging.info(f"  Generated rtc_actions shape: {rtc_actions.shape}")
@@ -673,7 +698,7 @@ class RTCEvaluator:
                 start_from=0,
                 color="red",
                 label="Previous Chunk (Ground Truth)",
-                linewidth=2.5,
+                linewidth=2,
                 alpha=0.8,
             )
 
@@ -695,7 +720,7 @@ class RTCEvaluator:
                 start_from=0,
                 color="green",
                 label="RTC",
-                linewidth=2,
+                linewidth=2.5,
                 alpha=0.7,
             )
 
