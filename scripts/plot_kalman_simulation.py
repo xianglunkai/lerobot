@@ -12,7 +12,7 @@ from lerobot.processor.filter_processor import KalmanFilterProcessor
 from lerobot.processor.core import TransitionKey
 
 
-def run_simulation_and_plot(n_joints=2, duration=10.0, dt=0.02, noise_std=0.1, lp_cutoff=3.0):
+def run_simulation_and_plot(n_joints=6, duration=10.0, dt=0.02, noise_std=0.1, lp_cutoff=3.0):
     steps = int(duration / dt)
     t = np.arange(steps) * dt
 
@@ -60,7 +60,7 @@ def run_simulation_and_plot(n_joints=2, duration=10.0, dt=0.02, noise_std=0.1, l
             lp_last[name] = lp_alpha * meas_val + (1.0 - lp_alpha) * lp_last[name]
             lp_estimates[name][step] = lp_last[name]
         t1 = time.perf_counter()
-        print(f"Step {step+1}/{steps}, KF update time: {(t1 - t0)*1000:.2f} ms")
+        # print(f"Step {step+1}/{steps}, KF update time: {(t1 - t0)*1000:.2f} ms")
 
     # Compute RMSE
     rmse_raw_per_joint = [np.sqrt(np.mean((measurements[n] - true_signals[n]) ** 2)) for n in joint_names]

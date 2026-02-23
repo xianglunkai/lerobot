@@ -144,6 +144,7 @@ from lerobot.configs.types import RTCAttentionSchedule
 from lerobot.datasets.factory import resolve_delta_timestamps
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors
+from lerobot.processor import DataProcessorPipeline, QPActionSmoothingProcessor
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.policies.rtc.debug_visualizer import RTCDebugVisualizer
 from lerobot.utils.hub import HubMixin
@@ -318,6 +319,21 @@ class RTCEvaluator:
                 "device_processor": {"device": self.device},
             },
         )
+
+        qp_step = QPActionSmoothingProcessor(
+            dt=0.02,
+            vel_limits=None,
+            acc_limits=None,
+            w_data=1.0,
+            w_acc=1.0,
+            w_jerk=1.0,
+            fix_ends=False,
+            verbose=False,
+        )
+
+        self.opt_pipeline = DataProcessorPipeline(steps=[qp_step], name="qp_test_pipeline")
+
+
 
         logging.info("=" * 80)
         logging.info("Ready to run evaluation with sequential policy loading:")
@@ -564,6 +580,8 @@ class RTCEvaluator:
 
             # resume orignal actions
             prev_chunk_left_over = self.postprocessor(prev_chunk_left_over)
+
+            prev_chunk_left_over = self.opt_pipeline.process_action(prev_chunk_left_over)
             prev_chunk_left_over = prev_chunk_left_over[:, shift:, :].squeeze(0)
 
         logging.info(f"  Generated prev_chunk shape: {prev_chunk_left_over.shape}")
@@ -601,6 +619,7 @@ class RTCEvaluator:
             )
             # resume orignal actions
             no_rtc_actions = self.postprocessor(no_rtc_actions)
+            no_rtc_actions = self.opt_pipeline.process_action(no_rtc_actions)
             
 
         no_rtc_tracked_steps = policy_no_rtc_policy.rtc_processor.tracker.get_all_steps()
@@ -638,6 +657,7 @@ class RTCEvaluator:
             )
             # resume orignal actions
             rtc_actions = self.postprocessor(rtc_actions)
+            rtc_actions = self.opt_pipeline.process_action(rtc_actions)
 
         rtc_tracked_steps = policy_rtc_policy.rtc_processor.get_all_debug_steps()
         logging.info(f"  Tracked {len(rtc_tracked_steps)} steps with RTC")
