@@ -1,6 +1,6 @@
 from __future__ import annotations
-
-from typing import Any, Dict, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Dict, Tuple, Optional
 
 import torch
 from torch import Tensor
@@ -167,36 +167,39 @@ def optimize_actions_qp(
 
 
 @ProcessorStepRegistry.register(name="qp_action_smoothing_processor")
+@dataclass
 class QPActionSmoothingProcessor(PolicyActionProcessorStep):
     """Processor step that applies QP-based smoothing to policy action tensors.
 
-    This wraps `optimize_actions_qp` 
+    This wraps `optimize_actions_qp`.
     The processor expects the action to be a tensor of shape (B, T, A).
     """
 
-    def __init__(
-        self,
-        dt: float = 1.0,
-        vel_limits: Tuple[float, float] | None = None,
-        acc_limits: Tuple[float, float] | None = None,
-        w_data: float = 1.0,
-        w_acc: float = 1.0,
-        w_jerk: float = 0.0,
-        fix_ends: bool = True,
-        eps: float = 1e-6,
-        verbose: bool = False,
-        fps: float | None = None,
-    ):
+    # Public parameters (can be set from config)
+    dt: float = 1.0
+    vel_limits: Optional[Tuple[float, float]] = None
+    acc_limits: Optional[Tuple[float, float]] = None
+    w_data: float = 1.0
+    w_acc: float = 1.0
+    w_jerk: float = 0.0
+    fix_ends: bool = True
+    eps: float = 1e-6
+    verbose: bool = False
+    fps: Optional[float] = None
+
+    def __post_init__(self) -> None:
         # If fps is provided, override dt
-        self.dt = 1.0 / float(fps) if fps is not None else float(dt)
-        self.vel_limits = tuple(vel_limits) if vel_limits is not None else None
-        self.acc_limits = tuple(acc_limits) if acc_limits is not None else None
-        self.w_data = float(w_data)
-        self.w_acc = float(w_acc)
-        self.w_jerk = float(w_jerk)
-        self.fix_ends = bool(fix_ends)
-        self.eps = float(eps)
-        self.verbose = bool(verbose)
+        self.dt = 1.0 / float(self.fps) if self.fps is not None else float(self.dt)
+        # Normalize optional tuples
+        self.vel_limits = tuple(self.vel_limits) if self.vel_limits is not None else None
+        self.acc_limits = tuple(self.acc_limits) if self.acc_limits is not None else None
+        # Ensure numeric types
+        self.w_data = float(self.w_data)
+        self.w_acc = float(self.w_acc)
+        self.w_jerk = float(self.w_jerk)
+        self.fix_ends = bool(self.fix_ends)
+        self.eps = float(self.eps)
+        self.verbose = bool(self.verbose)
 
     def get_config(self) -> Dict[str, Any]:
         return {

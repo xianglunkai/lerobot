@@ -144,7 +144,7 @@ from lerobot.configs.types import RTCAttentionSchedule
 from lerobot.datasets.factory import resolve_delta_timestamps
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors
-from lerobot.processor import DataProcessorPipeline, QPActionSmoothingProcessor
+# from lerobot.processor import DataProcessorPipeline, QPActionSmoothingProcessor
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.policies.rtc.debug_visualizer import RTCDebugVisualizer
 from lerobot.utils.hub import HubMixin
@@ -319,21 +319,6 @@ class RTCEvaluator:
                 "device_processor": {"device": self.device},
             },
         )
-
-        qp_step = QPActionSmoothingProcessor(
-            dt=0.02,
-            vel_limits=None,
-            acc_limits=None,
-            w_data=1.0,
-            w_acc=1.0,
-            w_jerk=1.0,
-            fix_ends=False,
-            verbose=False,
-        )
-
-        self.opt_pipeline = DataProcessorPipeline(steps=[qp_step], name="qp_test_pipeline")
-
-
 
         logging.info("=" * 80)
         logging.info("Ready to run evaluation with sequential policy loading:")
@@ -567,21 +552,13 @@ class RTCEvaluator:
             rtc_debug=False,
         )
         with torch.no_grad():
-            # prev_chunk_left_over = policy_prev_chunk_policy.predict_action_chunk(
-            #     preprocessed_first_sample,
-            # )[:, shift:, :].squeeze(0)
-            prev_chunk_left_over ,prev_chunk_left_over_org= policy_prev_chunk_policy.predict_action_chunk_test(
+            prev_chunk_left_over = policy_prev_chunk_policy.predict_action_chunk(
                 preprocessed_first_sample,
-                smoothing_method=smoothing_method,
-                fps=50,
             )
-        
-            prev_chunk_left_over_org = prev_chunk_left_over_org[:, shift:, :].squeeze(0)
-
+            prev_chunk_left_over_org = prev_chunk_left_over[:, shift:, :].squeeze(0).clone()
+            
             # resume orignal actions
             prev_chunk_left_over = self.postprocessor(prev_chunk_left_over)
-
-            prev_chunk_left_over = self.opt_pipeline.process_action(prev_chunk_left_over)
             prev_chunk_left_over = prev_chunk_left_over[:, shift:, :].squeeze(0)
 
         logging.info(f"  Generated prev_chunk shape: {prev_chunk_left_over.shape}")
@@ -611,15 +588,14 @@ class RTCEvaluator:
         noise_clone = noise.clone()
         policy_no_rtc_policy.rtc_processor.reset_tracker()
         with torch.no_grad():
-            no_rtc_actions, _ = policy_no_rtc_policy.predict_action_chunk_test(
+            no_rtc_actions = policy_no_rtc_policy.predict_action_chunk(
                 preprocessed_second_sample,
                 noise=noise_clone,
-                smoothing_method=smoothing_method,
-                fps=50,
+                # smoothing_method=smoothing_method,
+                # fps=50,
             )
             # resume orignal actions
             no_rtc_actions = self.postprocessor(no_rtc_actions)
-            no_rtc_actions = self.opt_pipeline.process_action(no_rtc_actions)
             
 
         no_rtc_tracked_steps = policy_no_rtc_policy.rtc_processor.tracker.get_all_steps()
@@ -646,18 +622,17 @@ class RTCEvaluator:
         )
         policy_rtc_policy.rtc_processor.reset_tracker()
         with torch.no_grad():
-            rtc_actions, _ = policy_rtc_policy.predict_action_chunk_test(
+            rtc_actions = policy_rtc_policy.predict_action_chunk(
                 preprocessed_second_sample,
                 noise=noise_clone,
                 inference_delay=self.cfg.inference_delay,
                 prev_chunk_left_over=prev_chunk_left_over_org,
                 execution_horizon=self.cfg.rtc.execution_horizon,
-                smoothing_method=smoothing_method,
-                fps=50,
+                # smoothing_method=smoothing_method,
+                # fps=50,
             )
             # resume orignal actions
             rtc_actions = self.postprocessor(rtc_actions)
-            rtc_actions = self.opt_pipeline.process_action(rtc_actions)
 
         rtc_tracked_steps = policy_rtc_policy.rtc_processor.get_all_debug_steps()
         logging.info(f"  Tracked {len(rtc_tracked_steps)} steps with RTC")
