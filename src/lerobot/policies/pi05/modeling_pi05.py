@@ -1332,10 +1332,6 @@ class PI05Policy(PreTrainedPolicy):
 
         actions = self.prepare_action(batch)
 
-        if self.config.use_delta_actions:
-            state = pad_vector(batch[OBS_STATE], self.config.max_state_dim)
-            actions = to_delta_actions(actions, state, self.config.mask_action_deltas)
-
         # Compute loss (no separate state needed for PI05)
         postfix_mask = None
         rtc_cfg = self.config.rtc_training_config
