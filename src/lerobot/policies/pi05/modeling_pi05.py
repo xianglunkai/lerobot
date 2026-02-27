@@ -1314,36 +1314,8 @@ class PI05Policy(PreTrainedPolicy):
         original_action_dim = self.config.output_features[ACTION].shape[0]
         actions = actions[:, :, :original_action_dim]
 
-        if self.config.use_delta_actions:
-            state = pad_vector(batch[OBS_STATE], self.config.max_state_dim)
-            actions = to_absolute_actions(actions, state, self.config.mask_action_deltas)
-      
         return actions
 
-
-    @torch.no_grad()
-    def predict_action_chunk_test(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> tuple[Tensor, Tensor]:
-        """Predict a chunk of actions given environment observations."""
-        self.eval()
-
-        # Prepare inputs
-        images, img_masks = self._preprocess_images(batch)
-        tokens, masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
-
-        # Sample actions using the model (pass through RTC kwargs, no separate state needed for PI05)
-        org_actions = self.model.sample_actions(images, img_masks, tokens, masks, **kwargs)
-
-        # Unpad actions to actual action dimension
-        original_action_dim = self.config.output_features[ACTION].shape[0]
-        org_actions = org_actions[:, :, :original_action_dim]
-
-        if self.config.use_delta_actions:
-            state = pad_vector(batch[OBS_STATE], self.config.max_state_dim)
-            actions = to_absolute_actions(org_actions, state, self.config.mask_action_deltas)
-        else:
-            actions = org_actions.clone()
-   
-        return actions, org_actions
 
     def forward(self, batch: dict[str, Tensor], reduction: str = "mean") -> tuple[Tensor, dict]:
         """Run the batch through the model and compute the loss for training.

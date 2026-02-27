@@ -194,15 +194,6 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         """
         raise NotImplementedError
 
-    def predict_action_chunk_test(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> tuple[Tensor, Tensor]:
-        """Returns the action chunk (for action chunking policies) for a given observation, potentially in batch mode.
-
-        Child classes using action chunking should use this method within `select_action` to form the action chunk
-        cached for selection.
-        """
-        pass
-
-
     @abc.abstractmethod
     def select_action(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
         """Return one action to run in the environment (potentially in batch mode).

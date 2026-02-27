@@ -36,6 +36,15 @@ def to_delta_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) -> Te
     """
     mask_t = torch.tensor(mask, dtype=actions.dtype, device=actions.device)
     dims = mask_t.shape[0]
+    # Ensure state is a tensor on the same device and dtype as actions to avoid
+    # cross-device operations (CPU <-> CUDA). Some pipelines keep observation
+    # tensors on CPU while actions are on GPU, which triggers runtime errors.
+    if not isinstance(state, Tensor):
+        state = torch.tensor(state, dtype=actions.dtype, device=actions.device)
+    else:
+        if state.device != actions.device or state.dtype != actions.dtype:
+            state = state.to(device=actions.device, dtype=actions.dtype)
+
     state_offset = state[..., :dims] * mask_t
     if actions.ndim == 3:
         state_offset = state_offset.unsqueeze(-2)
@@ -54,6 +63,15 @@ def to_absolute_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) ->
     """
     mask_t = torch.tensor(mask, dtype=actions.dtype, device=actions.device)
     dims = mask_t.shape[0]
+    # Move/cast state to the same device/dtype as actions to avoid RuntimeError:
+    # "Expected all tensors to be on the same device..." when action is on CUDA
+    # but the cached state is on CPU.
+    if not isinstance(state, Tensor):
+        state = torch.tensor(state, dtype=actions.dtype, device=actions.device)
+    else:
+        if state.device != actions.device or state.dtype != actions.dtype:
+            state = state.to(device=actions.device, dtype=actions.dtype)
+
     state_offset = state[..., :dims] * mask_t
     if actions.ndim == 3:
         state_offset = state_offset.unsqueeze(-2)
@@ -245,7 +263,11 @@ class DeltaActionsProcessorStep(ProcessorStep):
         return new_transition
 
     def get_config(self) -> dict[str, Any]:
-        return {"enabled": self.enabled, "exclude_joints": self.exclude_joints}
+        return {
+            "enabled": self.enabled,
+            "exclude_joints": self.exclude_joints,
+            "action_names": self.action_names,
+        }
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
