@@ -17,6 +17,8 @@
 import logging
 from functools import cached_property
 
+from lerobot.cameras.utils import make_cameras_from_configs
+from lerobot.processor import RobotAction, RobotObservation
 from lerobot.robots.openarm_follower import OpenArmFollower, OpenArmFollowerConfig
 from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
@@ -38,6 +40,9 @@ class BiOpenArmFollower(Robot):
     def __init__(self, config: BiOpenArmFollowerConfig):
         super().__init__(config)
         self.config = config
+        self._use_global_cameras = bool(config.cameras)
+        left_cameras = {} if self._use_global_cameras else config.left_arm_config.cameras
+        right_cameras = {} if self._use_global_cameras else config.right_arm_config.cameras
 
         # Top-level cameras are distributed evenly: each arm's OpenArmFollower
         # will only open the cameras assigned to it. Per-arm cameras are used
@@ -88,8 +93,12 @@ class BiOpenArmFollower(Robot):
         self.left_arm = OpenArmFollower(left_arm_config)
         self.right_arm = OpenArmFollower(right_arm_config)
 
-        # Only for compatibility with other parts of the codebase that expect a `robot.cameras` attribute
-        self.cameras = {**self.left_arm.cameras, **self.right_arm.cameras}
+        # Keep a robot-level cameras mapping for downstream dataset/image writer code.
+        self.cameras = (
+            make_cameras_from_configs(config.cameras)
+            if self._use_global_cameras
+            else {**self.left_arm.cameras, **self.right_arm.cameras}
+        )
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -118,15 +127,24 @@ class BiOpenArmFollower(Robot):
 
     @property
     def is_connected(self) -> bool:
+        if self._use_global_cameras:
+            return (
+                self.left_arm.is_connected
+                and self.right_arm.is_connected
+                and all(cam.is_connected for cam in self.cameras.values())
+            )
         return self.left_arm.is_connected and self.right_arm.is_connected
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
         self.left_arm.connect(calibrate)
         self.right_arm.connect(calibrate)
+        if self._use_global_cameras:
+            for cam in self.cameras.values():
+                cam.connect()
 
     @property
-    def is_calibrated(self) -> bool:
+    def is_calibrated(self) -> bool: 
         return self.left_arm.is_calibrated and self.right_arm.is_calibrated
 
     def calibrate(self) -> None:
@@ -187,5 +205,8 @@ class BiOpenArmFollower(Robot):
 
     @check_if_not_connected
     def disconnect(self):
+        if self._use_global_cameras:
+            for cam in self.cameras.values():
+                cam.disconnect()
         self.left_arm.disconnect()
         self.right_arm.disconnect()

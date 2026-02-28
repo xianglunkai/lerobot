@@ -17,8 +17,8 @@ from lerobot.processor.converters import (
     transition_to_observation,
     transition_to_robot_action,
 )
-from lerobot.robots import Robot, RobotConfig
-from lerobot.teleoperators import Teleoperator, TeleoperatorConfig
+from lerobot.robots import Robot
+from lerobot.teleoperators import Teleoperator
 from lerobot.utils.control_utils import is_headless
 from lerobot.utils.robot_utils import precise_sleep
 
@@ -40,24 +40,30 @@ class HILDatasetConfig:
     num_image_writer_processes: int = 0
     num_image_writer_threads_per_camera: int = 4
     video_encoding_batch_size: int = 1
+    vcodec: str = "auto"
+    streaming_encoding: bool = True
+    encoder_queue_maxsize: int = 30
+    encoder_threads: int | None = None
     rename_map: dict[str, str] = field(default_factory=dict)
 
 
 def teleop_has_motor_control(teleop: Teleoperator) -> bool:
     """Check if teleoperator has motor control capabilities."""
-    return hasattr(teleop, "bus") and hasattr(teleop.bus, "disable_torque")
+    return all(
+        hasattr(teleop, attr) for attr in ("enable_torque", "disable_torque", "write_goal_positions")
+    )
 
 
 def teleop_disable_torque(teleop: Teleoperator) -> None:
     """Disable teleop torque if supported."""
-    if teleop_has_motor_control(teleop):
-        teleop.bus.disable_torque()
+    if hasattr(teleop, "disable_torque"):
+        teleop.disable_torque()
 
 
 def teleop_enable_torque(teleop: Teleoperator) -> None:
     """Enable teleop torque if supported."""
-    if teleop_has_motor_control(teleop):
-        teleop.bus.enable_torque()
+    if hasattr(teleop, "enable_torque"):
+        teleop.enable_torque()
 
 
 def teleop_smooth_move_to(teleop: Teleoperator, target_pos: dict, duration_s: float = 2.0, fps: int = 50):
@@ -68,7 +74,7 @@ def teleop_smooth_move_to(teleop: Teleoperator, target_pos: dict, duration_s: fl
 
     teleop_enable_torque(teleop)
     current = teleop.get_action()
-    steps = int(duration_s * fps)
+    steps = max(int(duration_s * fps), 1)
 
     for step in range(steps + 1):
         t = step / steps
@@ -78,7 +84,7 @@ def teleop_smooth_move_to(teleop: Teleoperator, target_pos: dict, duration_s: fl
                 interp[k] = current[k] * (1 - t) + target_pos[k] * t
             else:
                 interp[k] = current[k]
-        teleop.bus.sync_write("Goal_Position", {k.replace(".pos", ""): v for k, v in interp.items()})
+        teleop.write_goal_positions(interp)
         time.sleep(1 / fps)
 
 
@@ -90,6 +96,7 @@ def init_keyboard_listener():
         "stop_recording": False,
         "policy_paused": False,
         "correction_active": False,
+        "resume_policy": False,
         "in_reset": False,
         "start_next_episode": False,
     }
@@ -115,12 +122,16 @@ def init_keyboard_listener():
             else:
                 if key == keyboard.Key.space:
                     if not events["policy_paused"] and not events["correction_active"]:
-                        print("\n[HIL] ⏸ PAUSED - Press 'c' to take control")
+                        print("\n[HIL] ⏸ PAUSED - Press 'c' to take control or 'p' to resume policy")
                         events["policy_paused"] = True
                 elif hasattr(key, "char") and key.char == "c":
                     if events["policy_paused"] and not events["correction_active"]:
                         print("\n[HIL] ▶ Taking control...")
                         events["start_next_episode"] = True
+                elif hasattr(key, "char") and key.char == "p":
+                    if events["policy_paused"] or events["correction_active"]:
+                        print("\n[HIL] ⏵ Resuming policy...")
+                        events["resume_policy"] = True
                 elif key == keyboard.Key.right:
                     print("[HIL] → End episode")
                     events["exit_early"] = True
@@ -137,51 +148,7 @@ def init_keyboard_listener():
 
     listener = keyboard.Listener(on_press=on_press)
     listener.start()
-    start_pedal_listener(events)
     return listener, events
-
-
-def start_pedal_listener(events: dict):
-    """Start foot pedal listener if evdev is available."""
-    import threading
-
-    try:
-        from evdev import InputDevice, categorize, ecodes
-    except ImportError:
-        logger.info("[Pedal] evdev not installed - pedal support disabled")
-        return
-
-    PEDAL_DEVICE = "/dev/input/by-id/usb-PCsensor_FootSwitch-event-kbd"
-    KEY_LEFT, KEY_RIGHT = "KEY_A", "KEY_C"
-
-    def pedal_reader():
-        try:
-            dev = InputDevice(PEDAL_DEVICE)
-            print(f"[Pedal] Connected: {dev.name}")
-            for ev in dev.read_loop():
-                if ev.type != ecodes.EV_KEY:
-                    continue
-                key = categorize(ev)
-                code = key.keycode[0] if isinstance(key.keycode, (list, tuple)) else key.keycode
-                if key.keystate != 1:
-                    continue
-
-                if events["in_reset"]:
-                    if code in [KEY_LEFT, KEY_RIGHT]:
-                        events["start_next_episode"] = True
-                else:
-                    if code == KEY_RIGHT:
-                        if events["correction_active"]:
-                            events["exit_early"] = True
-                        elif not events["policy_paused"]:
-                            events["policy_paused"] = True
-                    elif code == KEY_LEFT:
-                        if events["policy_paused"] and not events["correction_active"]:
-                            events["start_next_episode"] = True
-        except (FileNotFoundError, PermissionError) as e:
-            logger.info(f"[Pedal] {e}")
-
-    threading.Thread(target=pedal_reader, daemon=True).start()
 
 
 def make_identity_processors():
@@ -212,7 +179,7 @@ def reset_loop(robot: Robot, teleop: Teleoperator, events: dict, fps: int):
     robot_pos = {k: v for k, v in obs.items() if k.endswith(".pos") and k in robot.observation_features}
     teleop_smooth_move_to(teleop, robot_pos, duration_s=2.0, fps=50)
 
-    print("  Press any key/pedal to enable teleoperation")
+    print("  Press any key to enable teleoperation")
     while not events["start_next_episode"] and not events["stop_recording"]:
         precise_sleep(0.05)
 
@@ -221,7 +188,7 @@ def reset_loop(robot: Robot, teleop: Teleoperator, events: dict, fps: int):
 
     events["start_next_episode"] = False
     teleop_disable_torque(teleop)
-    print("  Teleop enabled - press any key/pedal to start episode")
+    print("  Teleop enabled - press any key to start episode")
 
     while not events["start_next_episode"] and not events["stop_recording"]:
         loop_start = time.perf_counter()
@@ -234,6 +201,7 @@ def reset_loop(robot: Robot, teleop: Teleoperator, events: dict, fps: int):
     events["exit_early"] = False
     events["policy_paused"] = False
     events["correction_active"] = False
+    events["resume_policy"] = False
 
 
 def print_controls(rtc: bool = False):
@@ -245,6 +213,7 @@ def print_controls(rtc: bool = False):
     print("  Controls:")
     print("    SPACE  - Pause policy")
     print("    c      - Take control")
+    print("    p      - Resume policy after pause/correction")
     print("    →      - End episode")
     print("    ESC    - Stop and push to hub")
     print("=" * 60 + "\n")
