@@ -5,15 +5,11 @@ export repo_id=eval_lerobot_fold_towel_20260116_110149  # lerobot_fold_clothes_2
 python examples/rtc/eval_dataset.py \
         --policy.path=/home/xlk/work/lerobot/checkpoints/fold_towel/30k-30hz/pretrained_model \
         --dataset.repo_id=$repo_id \
-        --rtc.enabled=True \
-        --rtc.execution_horizon=15 \
-        --rtc.max_guidance_weight=10.0 \
-        --rtc.prefix_attention_schedule=EXP \
-        --rtc.sigma_d=0.2 \
-        --smoothing_method='None' \
+        --rtc.enabled=False \
+        --smoothing_method="ccr" \
+        --fps=30 \
         --inference_delay=8 \
         --num_inference_steps=10 \
         --device=cuda \
         --use_torch_compile=False \
         --next_inference_after=10 \
-    

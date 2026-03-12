@@ -1,70 +1,3 @@
-#!/usr/bin/env python
-
-# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-"""
-Demo script showing how to use Real-Time Chunking (RTC) with action chunking policies on real robots.
-
-This script demonstrates:
-1. Creating a robot and policy (SmolVLA, Pi0, etc.) with RTC
-2. Consuming actions from the policy while the robot executes
-3. Periodically requesting new action chunks in the background using threads
-4. Managing action buffers and timing for real-time operation
-
-For simulation environments, see eval_with_simulation.py
-
-Usage:
-    # Run RTC with Real robot with RTC
-    uv run examples/rtc/eval_with_real_robot.py \
-        --policy.path=<USER>/smolvla_check_rtc_last3 \
-        --policy.device=mps \
-        --rtc.enabled=true \
-        --rtc.execution_horizon=20 \
-        --robot.type=so100_follower \
-        --robot.port=/dev/tty.usbmodem58FA0834591 \
-        --robot.id=so100_follower \
-        --robot.cameras="{ gripper: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}, front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
-        --task="Move green small object into the purple platform" \
-        --duration=120
-
-    # Run RTC with Real robot without RTC
-    uv run examples/rtc/eval_with_real_robot.py \
-        --policy.path=<USER>/smolvla_check_rtc_last3 \
-        --policy.device=mps \
-        --rtc.enabled=false \
-        --robot.type=so100_follower \
-        --robot.port=/dev/tty.usbmodem58FA0834591 \
-        --robot.id=so100_follower \
-        --robot.cameras="{ gripper: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}, front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
-        --task="Move green small object into the purple platform" \
-        --duration=120
-
-    # Run RTC with Real robot with pi0.5 policy
-    uv run examples/rtc/eval_with_real_robot.py \
-        --policy.path=<USER>/pi05_check_rtc \
-        --policy.device=mps \
-        --rtc.enabled=true \
-        --rtc.execution_horizon=20 \
-        --robot.type=so100_follower \
-        --robot.port=/dev/tty.usbmodem58FA0834591 \
-        --robot.id=so100_follower \
-        --robot.cameras="{ gripper: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, front: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
-        --task="Move green small object into the purple platform" \
-        --duration=120
-"""
-
 import logging
 import math
 import sys
@@ -158,11 +91,6 @@ class RTCDemoConfig(HubMixin):
     # Demo parameters
     duration: float = 60.0  # Duration to run the demo (seconds)
     fps: float = 30.0  # Action execution frequency (Hz)
-    
-    smoothing_method: str = field(
-        default=None,
-        metadata={"help": "Smoothing method for action interpolation, e.g., 'ccr' or 'mpc'"},
-    )
 
     # Compute device
     device: str | None = None  # Device to run on (cuda, cpu, auto)
@@ -272,15 +200,10 @@ def get_actions(
             preprocessor_overrides={
                 "device_processor": {"device": cfg.policy.device},
             },
-        )
-
+        )       
         logger.info("[GET_ACTIONS] Preprocessor/postprocessor loaded successfully with embedded stats")
 
-   
         get_actions_threshold = cfg.action_queue_size_to_get_new_actions
-        if not cfg.rtc.enabled:
-            get_actions_threshold = 0
-            
         inference_warmup_times = 0
 
         while not shutdown_event.is_set():
@@ -330,10 +253,9 @@ def get_actions(
                 with torch.no_grad():
                     actions = policy.predict_action_chunk(
                         preproceseded_obs,
-                        inference_delay=inference_delay+2, 
+                        inference_delay=inference_delay+2,
                         prev_chunk_left_over=prev_actions,
-                        smoothing_method=cfg.smoothing_method,
-                        fps=cfg.fps,
+                        smoothing_method="ccr",
                     )
                     # Store original actions (before postprocessing) for RTC
                     original_actions = actions.squeeze(0).clone()
@@ -341,23 +263,19 @@ def get_actions(
                     postprocessed_actions = postprocessor(actions)
 
                     postprocessed_actions = postprocessed_actions.squeeze(0)
-                    
+                
                 inference_warmup_times += 1
                 if inference_warmup_times < 3:
                     continue
-          
+                
                 new_latency = time.perf_counter() - current_time
                 new_delay = math.ceil(new_latency / time_per_chunk)
                 latency_tracker.add(new_latency)
                 
-                if cfg.action_queue_size_to_get_new_actions < cfg.rtc.execution_horizon + new_delay:
-                    logger.warning(
-                        "[GET_ACTIONS] cfg.action_queue_size_to_get_new_actions Too small, It should be higher than inference delay + execution horizon."
-                    )
-
                 action_queue.merge(
                     original_actions, postprocessed_actions, new_delay, action_index_before_inference
                 )
+                
             else:
                 # Small sleep to prevent busy waiting
                 time.sleep(0.1)
@@ -410,9 +328,9 @@ def actor_control(
                
                 # Store executed action for visualization
                 if viz_queue is not None and cfg.enable_visualization:
-                        viz_queue.put_nowait((time.time(), action))
+                    viz_queue.put_nowait((time.time(), action))
             else:
-                print(f"{time.time()}: Action queue is empty!")
+               print(f"{time.time()}: Action queue is empty!")
                      
             dt_s = time.perf_counter() - start_time
             if dt_s < action_interval:
@@ -566,13 +484,8 @@ def demo_cli(cfg: RTCDemoConfig):
     else:
         policy = policy_class.from_pretrained(cfg.policy.pretrained_path, config=config)
 
-    # Turn on RTC
-    policy.config.rtc_config = cfg.rtc
     policy.type = cfg.policy.type
 
-    # Init RTC processort, as by default if RTC disabled in the config
-    # The processor won't be created
-    policy.init_rtc_processor()
 
     assert policy.name in ["smolvla", "pi05", "pi0"], "Only smolvla, pi05, and pi0 are supported for RTC"
 
@@ -657,7 +570,7 @@ def demo_cli(cfg: RTCDemoConfig):
         daemon=True,
         name="Actor",
     )
-        
+
     get_actions_thread.start()
     logger.info("Started get actions thread")
     
@@ -665,12 +578,13 @@ def demo_cli(cfg: RTCDemoConfig):
     
     actor_thread.start()
     logger.info("Started actor thread")
-    
+
     logger.info("Started stop by duration thread")
 
     # Main thread monitors for duration or shutdown and updates visualization
     logger.info(f"Running demo for {cfg.duration} seconds...")
     start_time = time.time()
+
 
     while not shutdown_event.is_set() and (time.time() - start_time) < cfg.duration:
         time.sleep(10)
@@ -683,6 +597,7 @@ def demo_cli(cfg: RTCDemoConfig):
             break
 
     logger.info("Demo duration reached or shutdown requested")
+
 
     # Signal shutdown
     shutdown_event.set()

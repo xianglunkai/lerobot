@@ -59,7 +59,6 @@ Usage:
         --seed=10 \
         --sample_correlation_shift=10 \
         --rtc.sigma_d=1.0 \
-        --rtc.full_trajectory_alignment=true
 
     # Basic usage with pi0.5 policy with cuda device
     uv run python examples/rtc/eval_dataset.py \
@@ -128,6 +127,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 import torch
+import time
 
 try:
     import matplotlib.pyplot as plt
@@ -144,7 +144,6 @@ from lerobot.configs.types import RTCAttentionSchedule
 from lerobot.datasets.factory import resolve_delta_timestamps
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors
-# from lerobot.processor import DataProcessorPipeline, QPActionSmoothingProcessor
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.policies.rtc.debug_visualizer import RTCDebugVisualizer
 from lerobot.utils.hub import HubMixin
@@ -212,6 +211,16 @@ class RTCEvalConfig(HubMixin):
     seed: int = field(
         default=42,
         metadata={"help": "Random seed for reproducibility"},
+    )
+    
+    smoothing_method: str = field(
+        default=None,
+        metadata={"help": "Smoothing method for action interpolation, e.g., 'ccr' or 'mpc'"},
+    )
+    
+    fps: int = field(
+        default=30,
+        metadata={"help": "Frames per second for action interpolation"},
     )
 
     inference_delay: int = field(
@@ -319,6 +328,14 @@ class RTCEvaluator:
                 "device_processor": {"device": self.device},
             },
         )
+        
+        # print preprocessor and postprocessor steps for debugging
+        logging.info("Preprocessor steps:")
+        for step in self.preprocessor.steps:
+            logging.info(f"  - {step}")
+        logging.info("Postprocessor steps:")
+        for step in self.postprocessor.steps:
+            logging.info(f"  - {step}")
 
         logging.info("=" * 80)
         logging.info("Ready to run evaluation with sequential policy loading:")
@@ -372,7 +389,6 @@ class RTCEvaluator:
             prefix_attention_schedule=self.cfg.rtc.prefix_attention_schedule,
             debug=rtc_debug,
             debug_maxlen=self.cfg.rtc.debug_maxlen,
-            full_trajectory_alignment=self.cfg.rtc.full_trajectory_alignment,
             sigma_d=self.cfg.rtc.sigma_d,
         )
         policy.config.rtc_config = rtc_config
@@ -503,8 +519,7 @@ class RTCEvaluator:
         logging.info(f"Using correlated sampling: second sample shifted by {shift} from first sample")
 
         # Get random first index
-        # first_idx = random.randint(0, len(self.dataset) - 1)
-        first_idx = int(len(self.dataset) / 2)
+        first_idx = random.randint(0, len(self.dataset) - 1)
 
         # Calculate second index with shift, ensuring it's within bounds
         second_idx = first_idx + shift
@@ -543,7 +558,6 @@ class RTCEvaluator:
         logging.info("=" * 80)
         logging.info("Step 1: Generating previous chunk with policy_prev_chunk")
         logging.info("=" * 80)
-        smoothing_method = None
 
         # Initialize policy 1
         policy_prev_chunk_policy = self._init_policy(
@@ -554,6 +568,8 @@ class RTCEvaluator:
         with torch.no_grad():
             prev_chunk_left_over = policy_prev_chunk_policy.predict_action_chunk(
                 preprocessed_first_sample,
+                smoothing_method=self.cfg.smoothing_method,
+                fps=self.cfg.fps
             )
             prev_chunk_left_over_org = prev_chunk_left_over[:, shift:, :].squeeze(0).clone()
             
@@ -591,8 +607,8 @@ class RTCEvaluator:
             no_rtc_actions = policy_no_rtc_policy.predict_action_chunk(
                 preprocessed_second_sample,
                 noise=noise_clone,
-                # smoothing_method=smoothing_method,
-                # fps=50,
+                smoothing_method=self.cfg.smoothing_method,
+                fps=self.cfg.fps,
             )
             # resume orignal actions
             no_rtc_actions = self.postprocessor(no_rtc_actions)
@@ -617,26 +633,29 @@ class RTCEvaluator:
         # Initialize policy 3
         policy_rtc_policy = self._init_policy(
             name="policy_rtc",
-            rtc_enabled=True,
+            rtc_enabled=self.cfg.rtc.enabled,
             rtc_debug=True,
         )
         policy_rtc_policy.rtc_processor.reset_tracker()
+        t0 = time.perf_counter()
         with torch.no_grad():
             rtc_actions = policy_rtc_policy.predict_action_chunk(
                 preprocessed_second_sample,
                 noise=noise_clone,
-                inference_delay=self.cfg.inference_delay,
+                inference_delay=self.cfg.inference_delay + 2,
                 prev_chunk_left_over=prev_chunk_left_over_org,
                 execution_horizon=self.cfg.rtc.execution_horizon,
-                # smoothing_method=smoothing_method,
-                # fps=50,
+                smoothing_method=self.cfg.smoothing_method,
+                fps=self.cfg.fps,
             )
             # resume orignal actions
             rtc_actions = self.postprocessor(rtc_actions)
 
         rtc_tracked_steps = policy_rtc_policy.rtc_processor.get_all_debug_steps()
+        t1 = time.perf_counter()
         logging.info(f"  Tracked {len(rtc_tracked_steps)} steps with RTC")
         logging.info(f"  Generated rtc_actions shape: {rtc_actions.shape}")
+        logging.info(f"  Time taken for RTC inference: {t1 - t0:.2f}s")
 
         # Save num_steps before destroying policy (needed for plotting)
         try:

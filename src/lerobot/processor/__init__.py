@@ -85,6 +85,7 @@ from .rename_processor import RenameObservationsProcessorStep
 from .tokenizer_processor import ActionTokenizerProcessorStep, TokenizerProcessorStep
 from .filter_processor import LowPassFilterProcessor
 from .qp_action_processor import QPActionSmoothingProcessor
+from .spline_action_processor import SplineActionSmoothingProcessor
 
 __all__ = [
     "ActionProcessorStep",
@@ -145,6 +146,7 @@ __all__ = [
     "VanillaObservationProcessorStep",
     "LowPassFilterProcessor",
     "QPActionSmoothingProcessor",
+    "SplineActionSmoothingProcessor",
     "to_absolute_actions",
     "to_delta_actions",
 ]

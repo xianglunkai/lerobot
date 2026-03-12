@@ -71,9 +71,8 @@ class LatencyTracker:
         """Return the 95th percentile latency or None if empty."""
         return self.percentile(0.95)
     
-    def latest(self) -> float | None:
-        """ Return the latest latency or None if empty"""
-        if not self._values:
-            return 0.0
-        vals = np.array(list(self._values), dtype=np.float32)
-        return float(np.array(vals[-1]))
+def latest(self) -> float | None:
+    """Return the latest latency or None if empty"""
+    if not self._values:
+        return 0.0
+    return self._values[-1]  # ← O(1)
