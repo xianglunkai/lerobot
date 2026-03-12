@@ -1,90 +1,3 @@
-#!/usr/bin/env python
-
-# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-"""
-Demo script showing how to use Real-Time Chunking (RTC) with action chunking policies on real robots.
-
-This script demonstrates:
-1. Creating a robot and policy (SmolVLA, Pi0, etc.) with RTC
-2. Consuming actions from the policy while the robot executes
-3. Periodically requesting new action chunks in the background using threads
-4. Managing action buffers and timing for real-time operation
-
-For simulation environments, see eval_with_simulation.py
-
-Usage:
-    # Run RTC with Real robot with RTC
-    uv run examples/rtc/eval_with_real_robot.py \
-        --policy.path=<USER>/smolvla_check_rtc_last3 \
-        --policy.device=mps \
-        --rtc.enabled=true \
-        --rtc.execution_horizon=20 \
-        --robot.type=so100_follower \
-        --robot.port=/dev/tty.usbmodem58FA0834591 \
-        --robot.id=so100_follower \
-        --robot.cameras="{ gripper: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}, front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
-        --task="Move green small object into the purple platform" \
-        --duration=120
-
-    # Run RTC with Real robot without RTC
-    uv run examples/rtc/eval_with_real_robot.py \
-        --policy.path=<USER>/smolvla_check_rtc_last3 \
-        --policy.device=mps \
-        --rtc.enabled=false \
-        --robot.type=so100_follower \
-        --robot.port=/dev/tty.usbmodem58FA0834591 \
-        --robot.id=so100_follower \
-        --robot.cameras="{ gripper: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}, front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
-        --task="Move green small object into the purple platform" \
-        --duration=120
-
-    # Run RTC with Real robot with pi0.5 policy
-    uv run examples/rtc/eval_with_real_robot.py \
-        --policy.path=<USER>/pi05_check_rtc \
-        --policy.device=mps \
-        --rtc.enabled=true \
-        --rtc.execution_horizon=20 \
-        --robot.type=so100_follower \
-        --robot.port=/dev/tty.usbmodem58FA0834591 \
-        --robot.id=so100_follower \
-        --robot.cameras="{ gripper: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, front: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
-        --task="Move green small object into the purple platform" \
-        --duration=120
-
-    # Run RTC with bi_openarm_follower (dual-arm OpenArms) and pi0.5 policy
-    python examples/rtc/eval_with_real_robot.py \
-        --policy.path=lerobot-data-collection/folding_final \
-        --robot.type=bi_openarm_follower \
-        --robot.cameras='{left_wrist: {type: opencv, index_or_path: "/dev/video4", width: 1280, height: 720, fps: 30}, base: {type: opencv, index_or_path: "/dev/video2", width: 640, height: 480, fps: 30}, right_wrist: {type: opencv, index_or_path: "/dev/video0", width: 1280, height: 720, fps: 30}}' \
-        --robot.left_arm_config.port=can1 \
-        --robot.left_arm_config.side=left \
-        --robot.left_arm_config.can_interface=socketcan \
-        --robot.right_arm_config.port=can0 \
-        --robot.right_arm_config.side=right \
-        --robot.right_arm_config.can_interface=socketcan \
-        --task="Fold the T-shirt properly" \
-        --fps=30 \
-        --duration=2000 \
-        --rtc.enabled=true \
-        --rtc.execution_horizon=20 \
-        --rtc.max_guidance_weight=5.0 \
-        --rtc.prefix_attention_schedule=LINEAR \
-        --device=cuda
-"""
-
 import logging
 import math
 import sys
@@ -100,39 +13,30 @@ from torch import Tensor
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
-from lerobot.cameras.zmq.configuration_zmq import ZMQCameraConfig  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import RTCAttentionSchedule
-from lerobot.datasets.feature_utils import build_dataset_frame, hw_to_dataset_features
+from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 from lerobot.policies.rtc.action_queue import ActionQueue
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.policies.rtc.latency_tracker import LatencyTracker
-from lerobot.processor import (
-    NormalizerProcessorStep,
-    RelativeActionsProcessorStep,
-    TransitionKey,
-    create_transition,
-)
+from lerobot.policies.rtc.action_interpolator import ActionInterpolator
 from lerobot.processor.factory import (
     make_default_robot_action_processor,
     make_default_robot_observation_processor,
 )
-from lerobot.processor.relative_action_processor import to_relative_actions
 from lerobot.rl.process import ProcessSignalHandler
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
-    bi_openarm_follower,
     bi_so_follower,
     koch_follower,
     so_follower,
-    unitree_g1,
     agilex_cobot,
 )
 from lerobot.robots.utils import make_robot_from_config
-from lerobot.utils.constants import OBS_IMAGES, OBS_STATE
+from lerobot.utils.constants import OBS_IMAGES
 from lerobot.utils.hub import HubMixin
 from lerobot.utils.utils import init_logging
 from lerobot.policies.pi05.modeling_pi05 import PI05Policy
@@ -187,11 +91,6 @@ class RTCDemoConfig(HubMixin):
     # Demo parameters
     duration: float = 60.0  # Duration to run the demo (seconds)
     fps: float = 30.0  # Action execution frequency (Hz)
-    
-    smoothing_method: str = field(
-        default=None,
-        metadata={"help": "Smoothing method for action interpolation, e.g., 'ccr' or 'mpc'"},
-    )
 
     # Compute device
     device: str | None = None  # Device to run on (cuda, cpu, auto)
@@ -262,155 +161,6 @@ def is_image_key(k: str) -> bool:
     return k.startswith(OBS_IMAGES)
 
 
-def _reanchor_relative_rtc_prefix(
-    prev_actions_absolute: Tensor,
-    current_state: Tensor,
-    relative_step: RelativeActionsProcessorStep,
-    normalizer_step: NormalizerProcessorStep | None,
-    policy_device: torch.device | str,
-) -> Tensor:
-    """Convert absolute leftovers into model-space for relative-action RTC policies.
-
-    When a policy uses relative actions, the RTC prefix (leftover actions from
-    the previous chunk) is stored in absolute space. Before feeding it back to
-    the policy we need to re-express it relative to the *current* robot state
-    and then re-normalize.
-    """
-    state = current_state.detach().cpu()
-    if state.dim() == 1:
-        state = state.unsqueeze(0)
-
-    action_cpu = prev_actions_absolute.detach().cpu()
-    mask = relative_step._build_mask(action_cpu.shape[-1])
-    relative_actions = to_relative_actions(action_cpu, state, mask)
-
-    transition = create_transition(action=relative_actions)
-    if normalizer_step is not None:
-        transition = normalizer_step(transition)
-
-    return transition[TransitionKey.ACTION].to(policy_device)
-def visualize_actions(
-    action_queue_data: Queue,
-    robot: RobotWrapper,
-    shutdown_event: Event,
-    cfg: RTCDemoConfig,
-):
-    """Thread function to visualize executed action sequences in real-time.
-
-    Args:
-        action_queue_data: Queue containing executed actions (thread-safe)
-        action_features: List of action feature names
-        shutdown_event: Event to signal shutdown
-        cfg: Demo configuration
-    """
-    try:
-        logger.info("[VIZ] Starting visualization thread")
-
-        # Try to import matplotlib, disable if not available
-        try:
-            import matplotlib.pyplot as plt
-            from matplotlib.animation import FuncAnimation
-        except ImportError:
-            logger.warning("[VIZ] matplotlib not available, visualization disabled")
-            return
-
-        # Setup figure and subplots
-        action_features = robot.action_features()
-        num_actions = len(action_features)
-        fig, axes = plt.subplots(num_actions, 1, figsize=(10, 2 * num_actions), sharex=True)
-        if num_actions == 1:
-            axes = [axes]
-        fig.suptitle("Executed Actions (Sent to Robot)", fontsize=14)
-
-        # Create line objects for each action
-        lines = []
-        y_min, y_max = 0, 1
-        for i, ax in enumerate(axes):
-            line, = ax.plot([], [], linewidth=2, color='blue', label='Executed')
-            lines.append(line)
-            ax.set_ylabel(action_features[i], fontsize=10)
-            ax.grid(True, alpha=0.3)
-            ax.set_ylim(y_min, y_max)
-
-        axes[-1].set_xlabel("Time Steps", fontsize=10)
-        plt.tight_layout()
-
-        def update_plot(frame):
-            """Update function for animation."""
-            if shutdown_event.is_set():
-                return lines
-
-            try:
-                # Get executed actions from queue (thread-safe)
-                history = []
-                while not action_queue_data.empty():
-                    history.append(action_queue_data.get_nowait())
-
-                if not history:
-                    return lines
-
-                # history is list of tuples: (timestamp, action_tensor)
-                # Extract actions
-                timestamps = [h[0] for h in history]
-                actions = [h[1].cpu().numpy() for h in history]
-
-                # Limit to history size
-                if len(timestamps) > cfg.viz_history_size:
-                    timestamps = timestamps[-cfg.viz_history_size:]
-                    actions = actions[-cfg.viz_history_size:]
-
-                # Convert to array: [num_steps, num_actions]
-                actions_array = torch.tensor(actions)
-
-                # Update lines for each action
-                x_data = list(range(len(timestamps)))
-                for i, line in enumerate(lines):
-                    if i < actions_array.shape[1]:
-                        line.set_data(x_data, actions_array[:, i].tolist())
-
-                # Dynamically adjust y-axis
-                if len(actions_array) > 0:
-                    all_values = actions_array.flatten().tolist()
-                    if all_values:
-                        y_min_new, y_max_new = min(all_values), max(all_values)
-                        margin = (y_max_new - y_min_new) * 0.1 if y_max_new != y_min_new else 0.1
-                        for ax in axes:
-                            ax.set_ylim(y_min_new - margin, y_max_new + margin)
-
-                # Adjust x-axis
-                if len(x_data) > 0:
-                    for ax in axes:
-                        ax.set_xlim(0, max(cfg.viz_history_size, len(x_data)))
-
-            except Exception as e:
-                logger.warning(f"[VIZ] Error updating plot: {e}")
-
-            return lines
-
-        # Create animation
-        anim = FuncAnimation(
-            fig,
-            update_plot,
-            interval=int(cfg.viz_update_interval * 1000),
-            blit=True,
-            cache_frame_data=False,
-        )
-
-        logger.info("[VIZ] Visualization window opened")
-
-        # Keep thread alive while showing plot
-        while not shutdown_event.is_set():
-            plt.pause(0.1)
-
-        logger.info("[VIZ] Visualization thread shutting down")
-        plt.close(fig)
-
-    except Exception as e:
-        logger.error(f"[VIZ] Fatal exception in visualization thread: {e}")
-        logger.error(traceback.format_exc())
-        # Don't exit, allow other threads to continue
-
-
 def get_actions(
     policy,
     robot: RobotWrapper,
@@ -436,15 +186,7 @@ def get_actions(
         fps = cfg.fps
         time_per_chunk = 1.0 / fps
 
-        # Only keep .pos joints + camera streams if the policy was trained on positions,
-        # not the full pos/vel/torque state the robot exposes.
-        observation_features_hw = {
-            key: value
-            for key, value in robot.observation_features().items()
-            if key.endswith(".pos") or isinstance(value, tuple)
-        }
-
-        dataset_features = hw_to_dataset_features(observation_features_hw, "observation")
+        dataset_features = hw_to_dataset_features(robot.observation_features(), "observation")
         policy_device = policy.config.device
 
         # Load preprocessor and postprocessor from pretrained files
@@ -458,33 +200,10 @@ def get_actions(
             preprocessor_overrides={
                 "device_processor": {"device": cfg.policy.device},
             },
-        )
-
+        )       
         logger.info("[GET_ACTIONS] Preprocessor/postprocessor loaded successfully with embedded stats")
 
-        relative_step = next(
-            (s for s in preprocessor.steps if isinstance(s, RelativeActionsProcessorStep) and s.enabled),
-            None,
-        )
-        normalizer_step = next(
-            (s for s in preprocessor.steps if isinstance(s, NormalizerProcessorStep)),
-            None,
-        )
-        if relative_step is not None:
-            if relative_step.action_names is None:
-                cfg_names = getattr(cfg.policy, "action_feature_names", None)
-                if cfg_names:
-                    relative_step.action_names = list(cfg_names)
-                else:
-                    relative_step.action_names = [
-                        k for k in robot.robot.action_features if k.endswith(".pos")
-                    ]
-            logger.info("[GET_ACTIONS] Relative actions enabled: will re-anchor RTC prefix")
-
         get_actions_threshold = cfg.action_queue_size_to_get_new_actions
-        if not cfg.rtc.enabled:
-            get_actions_threshold = 0
-            
         inference_warmup_times = 0
 
         while not shutdown_event.is_set():
@@ -524,36 +243,19 @@ def get_actions(
 
                 preproceseded_obs = preprocessor(obs_with_policy_features)
 
-                # Re-anchor leftover actions for relative-action policies.
-                # We need the *postprocessed* (absolute) leftover, not the original
-                # (normalized/relative) one that get_left_over() returns.
-                if (
-                    prev_actions is not None
-                    and relative_step is not None
-                    and OBS_STATE in obs_with_policy_features
-                ):
-                    with action_queue.lock:
-                        if action_queue.queue is not None:
-                            prev_actions_abs = action_queue.queue[action_queue.last_index :].clone()
-                        else:
-                            prev_actions_abs = None
-                    if prev_actions_abs is not None and prev_actions_abs.numel() > 0:
-                        prev_actions = _reanchor_relative_rtc_prefix(
-                            prev_actions_absolute=prev_actions_abs,
-                            current_state=obs_with_policy_features[OBS_STATE],
-                            relative_step=relative_step,
-                            normalizer_step=normalizer_step,
-                            policy_device=policy_device,
-                        )
+                # Note: At the time this example was written, LeRobot did not support delta values for actions.
+                # Because of this, the previous action chunk is simply copied as-is and pushed into the action queue.
+                # If delta actions are used, the previous action chunk must first be processed (and additionally pre-processed)
+                # before inference to ensure it can be correctly consumed during RTC execution, as deltas should be calculated
+                # based on the last robot state.
 
                 # Generate actions WITH RTC
                 with torch.no_grad():
                     actions = policy.predict_action_chunk(
                         preproceseded_obs,
-                        inference_delay=inference_delay+2, 
+                        inference_delay=inference_delay+2,
                         prev_chunk_left_over=prev_actions,
-                        smoothing_method=cfg.smoothing_method,
-                        fps=cfg.fps,
+                        smoothing_method="ccr",
                     )
                     # Store original actions (before postprocessing) for RTC
                     original_actions = actions.squeeze(0).clone()
@@ -561,23 +263,19 @@ def get_actions(
                     postprocessed_actions = postprocessor(actions)
 
                     postprocessed_actions = postprocessed_actions.squeeze(0)
-                    
+                
                 inference_warmup_times += 1
                 if inference_warmup_times < 3:
                     continue
-          
+                
                 new_latency = time.perf_counter() - current_time
                 new_delay = math.ceil(new_latency / time_per_chunk)
                 latency_tracker.add(new_latency)
                 
-                if cfg.action_queue_size_to_get_new_actions < cfg.rtc.execution_horizon + new_delay:
-                    logger.warning(
-                        "[GET_ACTIONS] cfg.action_queue_size_to_get_new_actions Too small, It should be higher than inference delay + execution horizon."
-                    )
-
                 action_queue.merge(
                     original_actions, postprocessed_actions, new_delay, action_index_before_inference
                 )
+                
             else:
                 # Small sleep to prevent busy waiting
                 time.sleep(0.1)
@@ -609,8 +307,6 @@ def actor_control(
     try:
         logger.info("[ACTOR] Starting actor thread")
 
-        action_keys = [k for k in robot.action_features() if k.endswith(".pos")]
-
         action_count = 0
         interpolator = ActionInterpolator(multiplier=cfg.interpolation_multiplier)
         action_interval = interpolator.get_control_interval(cfg.fps)
@@ -625,17 +321,16 @@ def actor_control(
             
             action = interpolator.get()
             if action is not None:
-                action = action.cpu()
-                action_dict = {key: action[i].item() for i, key in enumerate(action_keys)}
+                action_dict = {key: action[i].item() for i, key in enumerate(robot.action_features())}
                 action_processed = robot_action_processor((action_dict, None))
                 robot.send_action(action_processed)
                 action_count += 1
                
                 # Store executed action for visualization
                 if viz_queue is not None and cfg.enable_visualization:
-                        viz_queue.put_nowait((time.time(), action))
+                    viz_queue.put_nowait((time.time(), action))
             else:
-                print(f"{time.time()}: Action queue is empty!")
+               print(f"{time.time()}: Action queue is empty!")
                      
             dt_s = time.perf_counter() - start_time
             if dt_s < action_interval:
@@ -789,13 +484,8 @@ def demo_cli(cfg: RTCDemoConfig):
     else:
         policy = policy_class.from_pretrained(cfg.policy.pretrained_path, config=config)
 
-    # Turn on RTC
-    policy.config.rtc_config = cfg.rtc
     policy.type = cfg.policy.type
 
-    # Init RTC processort, as by default if RTC disabled in the config
-    # The processor won't be created
-    policy.init_rtc_processor()
 
     assert policy.name in ["smolvla", "pi05", "pi0"], "Only smolvla, pi05, and pi0 are supported for RTC"
 
@@ -880,7 +570,7 @@ def demo_cli(cfg: RTCDemoConfig):
         daemon=True,
         name="Actor",
     )
-        
+
     get_actions_thread.start()
     logger.info("Started get actions thread")
     
@@ -888,12 +578,13 @@ def demo_cli(cfg: RTCDemoConfig):
     
     actor_thread.start()
     logger.info("Started actor thread")
-    
+
     logger.info("Started stop by duration thread")
 
     # Main thread monitors for duration or shutdown and updates visualization
     logger.info(f"Running demo for {cfg.duration} seconds...")
     start_time = time.time()
+
 
     while not shutdown_event.is_set() and (time.time() - start_time) < cfg.duration:
         time.sleep(10)
@@ -906,6 +597,7 @@ def demo_cli(cfg: RTCDemoConfig):
             break
 
     logger.info("Demo duration reached or shutdown requested")
+
 
     # Signal shutdown
     shutdown_event.set()

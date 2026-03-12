@@ -176,6 +176,7 @@ class QPActionSmoothingProcessor(PolicyActionProcessorStep):
     """
 
     # Public parameters (can be set from config)
+    enabled: bool = False
     dt: float = 1.0
     vel_limits: Optional[Tuple[float, float]] = None
     acc_limits: Optional[Tuple[float, float]] = None
@@ -203,6 +204,7 @@ class QPActionSmoothingProcessor(PolicyActionProcessorStep):
 
     def get_config(self) -> Dict[str, Any]:
         return {
+            "enabled": self.enabled,
             "dt": self.dt,
             "vel_limits": list(self.vel_limits) if self.vel_limits is not None else None,
             "acc_limits": list(self.acc_limits) if self.acc_limits is not None else None,
@@ -229,6 +231,8 @@ class QPActionSmoothingProcessor(PolicyActionProcessorStep):
         # Expect a tensor of shape (B, T, A)
         if not isinstance(action, torch.Tensor):
             raise ValueError("QPActionSmoothingProcessor expects a torch.Tensor as action")
+        if not self.enabled:
+            return action
 
         orig_dtype = action.dtype
         device = action.device

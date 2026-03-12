@@ -908,10 +908,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         if smoothing_method is not None:
             method = str(smoothing_method).lower()
-            # Work on torch Tensor on same device to avoid host transfer.
-            device = x_t.device
-            dtype = x_t.dtype
-
+           
             if method == "poly5":
                 # VLA-RAIL intra-chunk trajectory smoothing using cubic polynomial fitting
                 # This implements the algorithm described in the VLA-RAIL paper
@@ -922,13 +919,32 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                     dt=1.0/ float(fps),
                     w_data=1.0,
                     w_acc=1.0,
-                    w_jerk=1.0,
+                    w_jerk=10.0,
                     vel_limits=None,
                     acc_limits=None,
                     fix_ends=False,
                     verbose=False,
                 )
-
+            elif method == "bspline":
+                x_t = optimize_actions_with_spline(
+                    actions=x_t,
+                    k=3,
+                    n_ctrl=8,
+                )
+            elif method =="ccr":
+                if prev_chunk_left_over is not None and inference_delay > 0:
+                    x_t = optimize_actions_with_ccr(
+                        actions=x_t,
+                        executed_actions=prev_chunk_left_over,
+                        k=3,
+                        n_ctrl=8, # total number of control points (including fixed and free)
+                        n_prefix= inference_delay,
+                        n_free=4, # number of free control points (not fixed by execution horizon)
+                        last_pt_weight=0.05,
+                    )
+                else:
+                    x_t = optimize_actions_with_spline(actions=x_t, k=3, n_ctrl=8)
+                
             # else: unknown method -> leave actions unchanged
 
         return x_t
@@ -1628,3 +1644,168 @@ def optimize_actions_qp_with_constraints(
         out[b, :, a] = torch.from_numpy(xn).to(dtype)
 
     return out.to(device)
+
+
+def optimize_actions_with_spline(actions: torch.Tensor, k: int, n_ctrl: int):
+    # Expect (B, T, A)
+    if not isinstance(actions, torch.Tensor):
+        raise ValueError("SplineActionSmoothingProcessor expects a torch.Tensor as action")
+
+    device = actions.device
+    dtype = actions.dtype
+    B, T, A_dim = actions.shape
+    
+    try:
+        from lerobot.utils.bspline import BSplineFitter
+        import numpy as np
+        fitter = BSplineFitter(T=T, k=k, n_ctrl=n_ctrl)
+    except Exception as e:
+        print(f"SplineActionSmoothingProcessor: failed to import BSplineFitter ({e}), returning original action")
+        return actions
+    
+    try:
+        # Work in float32 on CPU for the fitter
+        compute_dtype = torch.float32 if actions.dtype in (torch.float16, torch.bfloat16) else actions.dtype
+        action_fp = actions.to(dtype=compute_dtype, device='cpu') # Move to CPU for fitting
+        out_np = np.empty((B, T, A_dim), dtype=np.float32) 
+        for b in range(B):
+            y_tb = action_fp[b].numpy()  # shape (T, A)
+
+            # Fit spline; BSplineFitter.fit accepts (T, D) and returns (n_ctrl, D)
+            try:
+                ctrl = fitter.fit(y_tb)
+                y_hat, _spline = fitter.rebuild(ctrl)
+            except Exception as e:
+                y_hat = y_tb
+
+            out_np[b] = y_hat
+
+        out_arr = torch.from_numpy(out_np)
+
+    except Exception as e:
+        print(f"SplineActionSmoothingProcessor: unexpected error ({e}), returning original action")
+        return actions
+    
+    return out_arr.to(device=device).to(dtype=dtype)
+
+
+    
+def optimize_actions_with_ccr(
+        actions: torch.Tensor,
+        executed_actions: torch.Tensor,
+        k: int = 3,
+        n_ctrl: int = 8,
+        n_prefix: int = 8,
+        n_free: int = 3,
+        last_pt_weight: float = 0.0,
+    )-> torch.Tensor:
+        """
+            CCR (Continuity-Constrained Refitting) for asynchronous action chunking.
+            
+            Adjusts the first `n_free` control points of the new trajectory to match
+            the `executed_actions` history, ensuring smooth transition between chunks.
+            
+            Based on ABPolicy: Asynchronous B-Spline Flow Policy for Real-Time and 
+            Smooth Robotic Manipulation (arXiv:2602.23901).
+            
+            Parameters
+            ----------
+            actions : torch.Tensor
+                Newly predicted actions, shape (B, T, A).
+            executed_actions : torch.Tensor  
+                Actions executed during inference delay, shape (B, P, A) where P >= n_prefix.
+            k : int, default 3
+                B-spline degree (cubic).
+            n_ctrl : int, default 8
+                Number of control points for fitting.
+            n_prefix : int, default 8
+                Number of points from executed_actions to use for refitting.
+            n_free : int, default 3
+                Number of initial control points to optimize (typically k or k+1).
+            last_pt_weight : float, default 0.0
+                Weight for penalizing movement of the last free control point.
+                
+            Returns
+            -------
+            refitted_actions : torch.Tensor
+                Smoothed actions with continuity constraints, shape (B, T, A).
+        """
+        if not isinstance(actions, torch.Tensor):
+            raise ValueError("actions must be a torch.Tensor")
+        if not isinstance(executed_actions, torch.Tensor):
+            raise ValueError("executed_actions must be a torch.Tensor")
+        
+        device = actions.device
+        dtype = actions.dtype
+        B, T, A_dim = actions.shape
+        
+        if len(executed_actions.shape) < 3:
+            # Add batch dimension
+            executed_actions = executed_actions.unsqueeze(0)
+        
+        
+        # If the previous action chunk is to short then it doesn't make sense to use long execution horizon
+        # because there is nothing to merge
+        if n_prefix > executed_actions.shape[1]:
+            n_prefix = executed_actions.shape[1]
+        
+        # Validate executed_actions shape
+        if executed_actions.shape[0] != B:
+            raise ValueError(f"Batch size mismatch: actions {B}, executed_actions {executed_actions.shape[0]}")
+        if executed_actions.shape[2] < A_dim:
+            # Pad with first action if not enough history
+            padded = actions[:,: executed_actions.shape[1],:].clone()
+            padded[:, :, : executed_actions.shape[2]] = executed_actions
+            executed_actions = padded
+        
+        try:
+            # Work in float32 on CPU for scipy compatibility
+            compute_dtype = torch.float32 if actions.dtype in (torch.float16, torch.bfloat16) else actions.dtype
+            actions_fp = actions.to(dtype=compute_dtype).to(device='cpu')  # Move to CPU for fitting
+            executed_fp = executed_actions.to(dtype=compute_dtype).to(device='cpu')  # Move to CPU for fitting
+            
+            # Initialize fitter for the new trajectory length
+            from lerobot.utils.bspline import BSplineFitter
+            import numpy as np
+            fitter = BSplineFitter(T=T, k=k, n_ctrl=n_ctrl)
+            
+            out_np = np.empty((B, T, A_dim), dtype=np.float32) 
+            
+            for b in range(B):
+                # Step 1: Fit B-spline to the NEW trajectory
+                y_new = actions_fp[b].numpy()  # (T, A)
+                ctrl_y = fitter.fit(y_new)      # (n_ctrl, A)
+                
+                # Step 2: Extract prefix from EXECUTED actions
+                y_prefix = executed_fp[b, :n_prefix, :].numpy()  # (n_prefix, A)
+                
+                # Step 3: Apply CCR - refit prefix to ensure continuity
+                if last_pt_weight > 0:
+                    ctrl_y_new = fitter.refit_prefix_w(
+                        y_prefix=y_prefix,
+                        ctrl_y=ctrl_y,
+                        n_prefix=n_prefix,
+                        n_free=n_free,
+                        last_pt_weight=last_pt_weight,
+                        dtype=np.float32
+                    )
+                else:
+                    ctrl_y_new = fitter.refit_prefix(
+                        y_prefix=y_prefix,
+                        ctrl_y=ctrl_y,
+                        n_prefix=n_prefix,
+                        n_free=n_free,
+                        dtype=np.float32
+                    )
+                
+                # Step 4: Reconstruct the full trajectory from refitted control points
+                y_hat, _ = fitter.rebuild(ctrl_y_new, dtype=np.float32)
+                out_np[b] = y_hat
+            
+            # Stack and return to original device/dtype
+            out = torch.from_numpy(out_np)
+            return out.to(device=device, dtype=dtype)
+            
+        except Exception as e:
+            print(f"optimize_actions_with_ccr: error ({e}), returning original actions")
+            return actions
