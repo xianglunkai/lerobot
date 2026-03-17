@@ -253,7 +253,7 @@ def get_actions(
                 with torch.no_grad():
                     actions = policy.predict_action_chunk(
                         preproceseded_obs,
-                        inference_delay=inference_delay+2,
+                        inference_delay=inference_delay,
                         prev_chunk_left_over=prev_actions,
                         smoothing_method="ccr",
                     )

@@ -10,7 +10,7 @@ python examples/rtc/eval_ccr_with_robot.py \
     --duration=25 \
     --fps=30 \
     --device=cuda \
-    --action_queue_size_to_get_new_actions=20 \
+    --action_queue_size_to_get_new_actions=12 \
     --use_torch_compile=False \
     --enable_visualization=True \
     --interpolation_multiplier=1 \

@@ -3,13 +3,13 @@ export HF_HOME=/data/huggingface/lerobot
 export repo_id=eval_lerobot_fold_towel_20260116_110149  # lerobot_fold_clothes_20260204_154839
     
 python examples/rtc/eval_dataset.py \
-        --policy.path=/home/xlk/work/lerobot/checkpoints/fold_towel/30k-30hz/pretrained_model \
+        --policy.path=/home/xlk/work/lerobot/checkpoints/rabc_sarm_pi05/040000/pretrained_model \
         --dataset.repo_id=$repo_id \
         --rtc.enabled=False \
         --smoothing_method="ccr" \
         --fps=30 \
-        --inference_delay=8 \
+        --inference_delay=7 \
         --num_inference_steps=10 \
         --device=cuda \
         --use_torch_compile=False \
-        --next_inference_after=10 \
+        --next_inference_after=38 \

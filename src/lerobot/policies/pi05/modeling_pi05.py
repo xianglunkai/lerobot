@@ -937,7 +937,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                         actions=x_t,
                         executed_actions=prev_chunk_left_over,
                         k=3,
-                        n_ctrl=8, # total number of control points (including fixed and free)
+                        n_ctrl=10, # total number of control points (including fixed and free)
                         n_prefix= inference_delay,
                         n_free=4, # number of free control points (not fixed by execution horizon)
                         last_pt_weight=0.05,

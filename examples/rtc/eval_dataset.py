@@ -643,7 +643,7 @@ class RTCEvaluator:
             rtc_actions = policy_rtc_policy.predict_action_chunk(
                 preprocessed_second_sample,
                 noise=noise_clone,
-                inference_delay=self.cfg.inference_delay + 2,
+                inference_delay=self.cfg.inference_delay,
                 prev_chunk_left_over=prev_chunk_left_over_org,
                 execution_horizon=self.cfg.rtc.execution_horizon,
                 smoothing_method=self.cfg.smoothing_method,
