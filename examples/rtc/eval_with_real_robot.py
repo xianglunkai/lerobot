@@ -580,7 +580,7 @@ def get_actions(
                 )
             else:
                 # Small sleep to prevent busy waiting
-                time.sleep(0.1)
+                time.sleep(time_per_chunk)
 
         logger.info("[GET_ACTIONS] get actions thread shutting down")
     except Exception as e:
