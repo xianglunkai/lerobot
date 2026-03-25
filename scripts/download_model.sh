@@ -10,5 +10,8 @@
 # huggingface-cli download microsoft/resnet-18 --local-dir /home/xlk/work/lerobot/pretrain_model/resnet-18 --local-dir-use-symlinks False   --resume-download 
 
 
-modelscope download --model x-square-robot/wall-oss-flow --local_dir ./pretrain_model/x-square-robot-wall-oss-flow
+# modelscope download --model x-square-robot/wall-oss-flow --local_dir ./pretrain_model/x-square-robot-wall-oss-flow
+
+
+modelscope download --model lerobot/smolvla_base --local_dir ./pretrain_model/smolvla_base
 

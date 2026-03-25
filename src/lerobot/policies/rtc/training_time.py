@@ -68,7 +68,7 @@ def apply_training_time_rtc_inference(
     inference_delay: int | None,
     prev_chunk_left_over: torch.Tensor | None,
     chunk_size: int,
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
     """Apply training-time RTC conditioning during inference.
 
     Based on Algorithm 1 from "Training-Time Action Conditioning for Efficient Real-Time Chunking".
@@ -89,14 +89,34 @@ def apply_training_time_rtc_inference(
         time_per_token: Per-token timesteps (B, T) with 1.0 for prefix
     """
     batch_size = x_t.shape[0]
+    action_chunk_size = x_t.shape[1]
+    action_dim = x_t.shape[2]
     device = x_t.device
+    
+    assert chunk_size <= action_chunk_size, (
+        "Chunk size must be equal to the action chunk size"
+    )
 
     if inference_delay is None or inference_delay <= 0 or prev_chunk_left_over is None:
         time_scalar = torch.full((batch_size,), time, device=device, dtype=torch.float32)
-        return x_t, time_scalar
+        return x_t, time_scalar, None
+    
+    if len(prev_chunk_left_over.shape) < 3:
+        # Add batch dimension
+        prev_chunk_left_over = prev_chunk_left_over.unsqueeze(0)
 
-    delay = min(inference_delay, chunk_size)
+
+    delay = min(inference_delay, prev_chunk_left_over.shape[1])
     prefix_mask = torch.arange(chunk_size, device=device)[None, :] < delay
+
+    if prev_chunk_left_over.shape[1] < chunk_size or prev_chunk_left_over.shape[2] < action_dim:
+        padded = x_t.clone()
+        padded[:, : prev_chunk_left_over.shape[1], : prev_chunk_left_over.shape[2]] = prev_chunk_left_over
+        prev_chunk_left_over = padded
+
+    assert prev_chunk_left_over.shape == x_t.shape, (
+        "The padded previous chunk must be the same size as the input tensor"
+    )
 
     x_t_conditioned = torch.where(
         prefix_mask[:, :, None].expand_as(x_t),
@@ -107,4 +127,4 @@ def apply_training_time_rtc_inference(
     time_per_token = torch.full((batch_size, chunk_size), time, device=device, dtype=torch.float32)
     time_per_token = time_per_token.masked_fill(prefix_mask, 1.0)
 
-    return x_t_conditioned, time_per_token
+    return x_t_conditioned, time_per_token, prev_chunk_left_over.clone()

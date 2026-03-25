@@ -872,11 +872,12 @@ class VLAFlowMatching(nn.Module):
         use_training_time_rtc = self._training_time_rtc_inference_enabled()
 
         x_t = noise
+        prev_chunk_left_over_ext = None
         for step in range(num_steps):
             time = 1.0 + step * dt
 
             if use_training_time_rtc:
-                x_t_cond, time_tensor = apply_training_time_rtc_inference(
+                x_t_cond, time_tensor, prev_chunk_left_over_ext = apply_training_time_rtc_inference(
                     x_t, time, inference_delay, prev_chunk_left_over, self.config.chunk_size
                 )
                 v_t = self.denoise_step(
@@ -915,10 +916,16 @@ class VLAFlowMatching(nn.Module):
                 )
 
             x_t = x_t + dt * v_t
-
+            
             if self.rtc_processor is not None and self.rtc_processor.is_debug_enabled():
                 self.rtc_processor.track(time=time, x_t=x_t, v_t=v_t)
 
+      # hold the previous inference_delay steps
+        if use_training_time_rtc and (prev_chunk_left_over_ext is not None):
+            if inference_delay is not None and inference_delay > 0:
+                delay = min(inference_delay, prev_chunk_left_over.shape[1])
+                x_t[:, :delay, :] = prev_chunk_left_over_ext[:, :delay, :]
+       
         return x_t
 
     def denoise_step(

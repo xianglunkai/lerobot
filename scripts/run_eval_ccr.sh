@@ -8,8 +8,8 @@ python examples/rtc/eval_dataset.py \
         --rtc.enabled=False \
         --smoothing_method="ccr" \
         --fps=30 \
-        --inference_delay=7 \
+        --inference_delay=8 \
         --num_inference_steps=10 \
         --device=cuda \
         --use_torch_compile=False \
-        --next_inference_after=38 \
+        --next_inference_after=25 \
