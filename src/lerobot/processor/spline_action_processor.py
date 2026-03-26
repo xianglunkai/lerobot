@@ -97,7 +97,7 @@ class SplineActionSmoothingProcessor(PolicyActionProcessorStep):
                 # Fit spline; BSplineFitter.fit accepts (T, D) and returns (n_ctrl, D)
                 try:
                     ctrl = self._fitter.fit(y_tb)
-                    y_hat, _spline = self._fitter.rebuild(ctrl)
+                    y_hat, _ = self._fitter.rebuild(ctrl)
                 except Exception as e:
                     if self.verbose:
                         print(f"SplineActionSmoothingProcessor: fit failed for batch {b} ({e}), using original trajectory")

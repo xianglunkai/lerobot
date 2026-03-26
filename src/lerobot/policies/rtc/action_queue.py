@@ -124,6 +124,18 @@ class ActionQueue:
             if self.original_queue is None:
                 return None
             return self.original_queue[self.last_index :]
+        
+    def get_processed_left_over(self) -> Tensor | None:
+        """Get leftover processed actions (the actions currently executed by the robot).
+
+        Returns:
+            Tensor | None: Remaining processed actions (remaining_steps, action_dim),
+                or None if no processed queue exists.
+        """
+        with self.lock:
+            if self.queue is None:
+                return None
+            return self.queue[self.last_index :]
 
     def merge(
         self,
