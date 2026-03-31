@@ -178,15 +178,13 @@ outputs/
 *.xml
 *.part
 
-# modules
-modules/
 
 # modles
 pretrain_model/
 checkpoints/
 google/
-rtc_debug_output/
-sarm_viz/
-exp/
-papers/
 physical-intelligence/
+
+#debug output
+rtc_debug_output/
+others/
