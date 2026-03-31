@@ -40,6 +40,7 @@ from lerobot.utils.constants import OBS_IMAGES
 from lerobot.utils.hub import HubMixin
 from lerobot.utils.utils import init_logging
 from lerobot.policies.pi05.modeling_pi05 import PI05Policy
+from lerobot.utils.bspline import optimize_actions_with_ccr
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -210,7 +211,7 @@ def get_actions(
             if action_queue.qsize() <= get_actions_threshold:
                 current_time = time.perf_counter()
                 action_index_before_inference = action_queue.get_action_index()
-                prev_actions = action_queue.get_left_over()
+                prev_actions = action_queue.get_processed_left_over()
 
                 inference_latency = latency_tracker.max()
                 inference_delay = math.ceil(inference_latency / time_per_chunk)
@@ -249,17 +250,14 @@ def get_actions(
                 # before inference to ensure it can be correctly consumed during RTC execution, as deltas should be calculated
                 # based on the last robot state.
 
-                # Generate actions WITH RTC
+                # Generate actions WITH CCR
                 with torch.no_grad():
                     actions = policy.predict_action_chunk(
                         preproceseded_obs,
-                        inference_delay=inference_delay,
-                        prev_chunk_left_over=prev_actions,
-                        smoothing_method="ccr",
                     )
                     # Store original actions (before postprocessing) for RTC
                     original_actions = actions.squeeze(0).clone()
-
+                    
                     postprocessed_actions = postprocessor(actions)
 
                     postprocessed_actions = postprocessed_actions.squeeze(0)
@@ -268,6 +266,20 @@ def get_actions(
                 if inference_warmup_times < 3:
                     continue
                 
+                    
+                # use CCR to optimize actions if enabled
+                if prev_actions is not None and inference_delay > 0:
+                    postprocessed_actions = optimize_actions_with_ccr(
+                        actions=postprocessed_actions.clone(),
+                        executed_actions=prev_actions,
+                        k=3,
+                        n_ctrl=10, # total number of control points (including fixed and free)
+                        n_prefix= inference_delay+1, # number of fixed control points at the start (execution horizon + 1)
+                        n_free=4, # number of free control points (not fixed by execution horizon)
+                        last_pt_weight=0.05,
+                    )  
+                    
+                
                 new_latency = time.perf_counter() - current_time
                 new_delay = math.ceil(new_latency / time_per_chunk)
                 latency_tracker.add(new_latency)
@@ -275,6 +287,8 @@ def get_actions(
                 action_queue.merge(
                     original_actions, postprocessed_actions, new_delay, action_index_before_inference
                 )
+                
+                print(f"new_latency:{new_latency *1000}ms, new_delay:{new_delay}")
                 
             else:
                 # Small sleep to prevent busy waiting

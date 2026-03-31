@@ -1,5 +1,5 @@
-export HF_LEROBOT_HOME=/data/huggingface/lerobot/lerobot
-export HF_HOME=/data/huggingface/lerobot
+export HF_LEROBOT_HOME=/data/huggingface/lerobot
+export HF_HOME=/data/huggingface
 export repo_id=eval_lerobot_fold_towel_20260116_110149  # lerobot_fold_clothes_20260204_154839
 
 
@@ -19,11 +19,11 @@ case "$SELECT_MODEL" in
             --policy.path=/home/xlk/work/lerobot/checkpoints/rabc_sarm_pi05/040000/pretrained_model \
             --dataset.repo_id="$repo_id" \
             --rtc.enabled=True \
+            --use_ccr=False \
             --rtc.execution_horizon=25 \
             --rtc.max_guidance_weight=10.0 \
             --rtc.prefix_attention_schedule=EXP \
             --rtc.sigma_d=1.0 \
-            --smoothing_method='None' \
             --inference_delay=8 \
             --num_inference_steps=10 \
             --device=cuda \
@@ -35,11 +35,11 @@ case "$SELECT_MODEL" in
             --policy.path=/home/xlk/work/lerobot/checkpoints/smolval_traiining_rtc_fold_towel_v3_0/checkpoints/020000/pretrained_model \
             --dataset.repo_id="$repo_id" \
             --rtc.enabled=False \
+            --use_ccr=True \
             --rtc.execution_horizon=25 \
             --rtc.max_guidance_weight=10.0 \
             --rtc.prefix_attention_schedule=EXP \
-            --rtc.sigma_d=1.0 \
-            --smoothing_method='None' \
+            --rtc.sigma_d=0.2 \
             --inference_delay=8 \
             --num_inference_steps=10 \
             --device=cuda \

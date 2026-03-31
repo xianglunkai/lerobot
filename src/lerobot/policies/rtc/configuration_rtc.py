@@ -39,7 +39,7 @@ class RTCConfig:
 
     # Core RTC settings
     # Todo change to exp
-    prefix_attention_schedule: RTCAttentionSchedule = RTCAttentionSchedule.LINEAR
+    prefix_attention_schedule: RTCAttentionSchedule = RTCAttentionSchedule.EXP
 
     # This parameter is used to clip the guidance weight
     # In the original RTC it's a hyperparameter that can be tuned to balance the smoothness of the transitions and the reactivity of the policy.

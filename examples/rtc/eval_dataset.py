@@ -149,6 +149,7 @@ from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.policies.rtc.debug_visualizer import RTCDebugVisualizer
 from lerobot.utils.hub import HubMixin
 from lerobot.utils.utils import init_logging
+from lerobot.utils.bspline import optimize_actions_with_ccr
 
 
 def set_seed(seed: int):
@@ -195,6 +196,10 @@ class RTCEvalConfig(HubMixin):
             debug_maxlen=1000,
         )
     )
+    use_ccr: bool = field(
+        default=False,
+        metadata={"help": "Use CCR for action smoothing"},
+    )
 
     # Device configuration
     device: str | None = field(
@@ -213,12 +218,7 @@ class RTCEvalConfig(HubMixin):
         default=42,
         metadata={"help": "Random seed for reproducibility"},
     )
-    
-    smoothing_method: str = field(
-        default=None,
-        metadata={"help": "Smoothing method for action interpolation, e.g., 'ccr' or 'mpc'"},
-    )
-    
+
     fps: int = field(
         default=30,
         metadata={"help": "Frames per second for action interpolation"},
@@ -569,8 +569,6 @@ class RTCEvaluator:
         with torch.no_grad():
             prev_chunk_left_over = policy_prev_chunk_policy.predict_action_chunk(
                 preprocessed_first_sample,
-                smoothing_method=self.cfg.smoothing_method,
-                fps=self.cfg.fps
             )
             prev_chunk_left_over_org = prev_chunk_left_over[:, shift:, :].squeeze(0).clone()
             
@@ -608,8 +606,6 @@ class RTCEvaluator:
             no_rtc_actions = policy_no_rtc_policy.predict_action_chunk(
                 preprocessed_second_sample,
                 noise=noise_clone,
-                smoothing_method=self.cfg.smoothing_method,
-                fps=self.cfg.fps,
             )
             # resume orignal actions
             no_rtc_actions = self.postprocessor(no_rtc_actions)
@@ -639,24 +635,45 @@ class RTCEvaluator:
         )
         policy_rtc_policy.rtc_processor.reset_tracker()
         t0 = time.perf_counter()
-        with torch.no_grad():
-            rtc_actions = policy_rtc_policy.predict_action_chunk(
-                preprocessed_second_sample,
-                noise=noise_clone,
-                inference_delay=self.cfg.inference_delay,
-                prev_chunk_left_over=prev_chunk_left_over_org,
-                execution_horizon=self.cfg.rtc.execution_horizon,
-                smoothing_method=self.cfg.smoothing_method,
-                fps=self.cfg.fps,
-            )
-            # resume orignal actions
-            rtc_actions = self.postprocessor(rtc_actions)
+        
+        if self.cfg.use_ccr:
+            rtc_actions = optimize_actions_with_ccr(
+                actions=no_rtc_actions.squeeze(0).clone(),
+                executed_actions=prev_chunk_left_over,
+                k=3,
+                n_ctrl=10, # total number of control points (including fixed and free)
+                n_prefix= self.cfg.inference_delay, # number of fixed control points at the start (execution horizon + 1)
+                n_free=4, # number of free control points (not fixed by execution horizon)
+                last_pt_weight=0.05,
+            ) 
+            
+        else: 
+            use_delta_actions = getattr(self.cfg.policy, "use_delta_actions", False)
+            if use_delta_actions:
+                prev_actions = prev_chunk_left_over
+                second_sample["action"] = prev_actions
+                preprocessed_second_sample = self.preprocessor(second_sample)
+                prev_actions = preprocessed_second_sample["action"]
+                
+            else:
+                prev_actions = prev_chunk_left_over_org
+            
+            with torch.no_grad():
+                rtc_actions = policy_rtc_policy.predict_action_chunk(
+                    preprocessed_second_sample,
+                    noise=noise_clone,
+                    inference_delay=self.cfg.inference_delay,
+                    prev_chunk_left_over=prev_actions,
+                    execution_horizon=self.cfg.rtc.execution_horizon,
+                )
+                # resume orignal actions
+                rtc_actions = self.postprocessor(rtc_actions)
 
         rtc_tracked_steps = policy_rtc_policy.rtc_processor.get_all_debug_steps()
         t1 = time.perf_counter()
         logging.info(f"  Tracked {len(rtc_tracked_steps)} steps with RTC")
         logging.info(f"  Generated rtc_actions shape: {rtc_actions.shape}")
-        logging.info(f"  Time taken for RTC inference: {t1 - t0:.2f}s")
+        logging.info(f"  Time taken for RTC inference: {(t1 - t0)*10000}ms")
 
         # Save num_steps before destroying policy (needed for plotting)
         try:

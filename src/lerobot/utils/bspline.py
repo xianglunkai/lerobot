@@ -299,5 +299,122 @@ class BSplineFitter:
         return self.ctrl_x
 
 
-
-
+import torch
+def optimize_actions_with_ccr(
+        actions: torch.Tensor,
+        executed_actions: torch.Tensor,
+        k: int = 3,
+        n_ctrl: int = 8,
+        n_prefix: int = 8,
+        n_free: int = 3,
+        last_pt_weight: float = 0.0,
+    )-> torch.Tensor:
+        """
+            CCR (Continuity-Constrained Refitting) for asynchronous action chunking.
+            
+            Adjusts the first `n_free` control points of the new trajectory to match
+            the `executed_actions` history, ensuring smooth transition between chunks.
+            
+            Based on ABPolicy: Asynchronous B-Spline Flow Policy for Real-Time and 
+            Smooth Robotic Manipulation (arXiv:2602.23901).
+            
+            Parameters
+            ----------
+            actions : torch.Tensor
+                Newly predicted actions, shape (T, A).
+            executed_actions : torch.Tensor  
+                Actions executed during inference delay, shape (P, A) where P >= n_prefix.
+            k : int, default 3
+                B-spline degree (cubic).
+            n_ctrl : int, default 8
+                Number of control points for fitting.
+            n_prefix : int, default 8
+                Number of points from executed_actions to use for refitting.
+            n_free : int, default 3
+                Number of initial control points to optimize (typically k or k+1).
+            last_pt_weight : float, default 0.0
+                Weight for penalizing movement of the last free control point.
+                
+            Returns
+            -------
+            refitted_actions : torch.Tensor
+                Smoothed actions with continuity constraints, shape (B, T, A).
+        """
+        if not isinstance(actions, torch.Tensor):
+            raise ValueError("actions must be a torch.Tensor")
+        if not isinstance(executed_actions, torch.Tensor):
+            raise ValueError("executed_actions must be a torch.Tensor")
+        
+        if len(actions.shape) != 2:
+            raise ValueError("actions shape must be [T, A_DIM]")
+        device = actions.device
+        dtype = actions.dtype
+        T, A_dim = actions.shape
+        
+        if len(executed_actions.shape) != 2:
+            # Add batch dimension
+            raise ValueError("executed_actions shape must be [T, A_DIM]")
+        
+        
+        # If the previous action chunk is to short then it doesn't make sense to use long execution horizon
+        # because there is nothing to merge
+        if n_prefix > executed_actions.shape[0]:
+            n_prefix = executed_actions.shape[0]
+        
+        # Validate executed_actions shape
+        if executed_actions.shape[1] < A_dim:
+            # Pad with first action if not enough history
+            padded = actions[:executed_actions.shape[0],:].clone()
+            padded[:, : executed_actions.shape[1]] = executed_actions
+            executed_actions = padded
+        
+        try:
+            # Work in float32 on CPU for scipy compatibility
+            compute_dtype = torch.float32 if actions.dtype in (torch.float16, torch.bfloat16) else actions.dtype
+            actions_fp = actions.to(dtype=compute_dtype).to(device='cpu')  # Move to CPU for fitting
+            executed_fp = executed_actions.to(dtype=compute_dtype).to(device='cpu')  # Move to CPU for fitting
+            
+            # Initialize fitter for the new trajectory length
+            from lerobot.utils.bspline import BSplineFitter
+            import numpy as np
+            fitter = BSplineFitter(T=T, k=k, n_ctrl=n_ctrl)
+            
+            out_np = np.empty((T, A_dim), dtype=np.float32) 
+            
+            # Step 1: Fit B-spline to the NEW trajectory
+            y_new = actions_fp.numpy()  # (T, A)
+            ctrl_y = fitter.fit(y_new)      # (n_ctrl, A)
+            
+            # Step 2: Extract prefix from EXECUTED actions
+            y_prefix = executed_fp[:n_prefix, :].numpy()  # (n_prefix, A)
+            
+            # Step 3: Apply CCR - refit prefix to ensure continuity
+            if last_pt_weight > 0:
+                ctrl_y_new = fitter.refit_prefix_w(
+                    y_prefix=y_prefix,
+                    ctrl_y=ctrl_y,
+                    n_prefix=n_prefix,
+                    n_free=n_free,
+                    last_pt_weight=last_pt_weight,
+                    dtype=np.float32
+                )
+            else:
+                ctrl_y_new = fitter.refit_prefix(
+                    y_prefix=y_prefix,
+                    ctrl_y=ctrl_y,
+                    n_prefix=n_prefix,
+                    n_free=n_free,
+                    dtype=np.float32
+                )
+            
+            # Step 4: Reconstruct the full trajectory from refitted control points
+            y_hat, _ = fitter.rebuild(ctrl_y_new, dtype=np.float32)
+            out_np = y_hat
+            
+            # Stack and return to original device/dtype
+            out = torch.from_numpy(out_np)
+            return out.to(device=device, dtype=dtype)
+            
+        except Exception as e:
+            print(f"optimize_actions_with_ccr: error ({e}), returning original actions")
+            return actions

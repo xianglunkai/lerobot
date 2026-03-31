@@ -182,17 +182,11 @@ class RTCDemoConfig(HubMixin):
         )
     )
     
-    interpolation_multiplier: int = 2  # Control rate multiplier (1=off, 2=2x, 3=3x)
-
     # Demo parameters
     duration: float = 60.0  # Duration to run the demo (seconds)
     fps: float = 30.0  # Action execution frequency (Hz)
+    interpolation_multiplier: int = 1  # Control rate multiplier (1=off, 2=2x, 3=3x)
     
-    smoothing_method: str = field(
-        default=None,
-        metadata={"help": "Smoothing method for action interpolation, e.g., 'ccr' or 'mpc'"},
-    )
-
     # Compute device
     device: str | None = None  # Device to run on (cuda, cpu, auto)
 
@@ -486,12 +480,17 @@ def get_actions(
             get_actions_threshold = 0
             
         inference_warmup_times = 0
+        use_delta_actions = getattr(cfg.policy, "use_delta_actions", False)
 
         while not shutdown_event.is_set():
             if action_queue.qsize() <= get_actions_threshold:
                 current_time = time.perf_counter()
                 action_index_before_inference = action_queue.get_action_index()
-                prev_actions = action_queue.get_left_over()
+                # use processed left over if delta actions are used
+                if use_delta_actions:
+                    prev_actions = action_queue.get_processed_left_over()
+                else:
+                    prev_actions = action_queue.get_left_over()
 
                 inference_latency = latency_tracker.max()
                 inference_delay = math.ceil(inference_latency / time_per_chunk)
@@ -522,6 +521,9 @@ def get_actions(
                     robot.robot.name if hasattr(robot.robot, "name") else ""
                 )
 
+                if use_delta_actions:
+                    obs_with_policy_features["action"] = prev_actions
+                    
                 preproceseded_obs = preprocessor(obs_with_policy_features)
 
                 # Re-anchor leftover actions for relative-action policies.
@@ -550,10 +552,8 @@ def get_actions(
                 with torch.no_grad():
                     actions = policy.predict_action_chunk(
                         preproceseded_obs,
-                        inference_delay=inference_delay, 
+                        inference_delay=inference_delay+1, 
                         prev_chunk_left_over=prev_actions,
-                        smoothing_method=cfg.smoothing_method,
-                        fps=cfg.fps,
                     )
                     # Store original actions (before postprocessing) for RTC
                     original_actions = actions.squeeze(0).clone()
@@ -569,6 +569,7 @@ def get_actions(
                 new_latency = time.perf_counter() - current_time
                 new_delay = math.ceil(new_latency / time_per_chunk)
                 latency_tracker.add(new_latency)
+                # print(f"new_latency: {new_latency}, new_delay: {new_delay}")
                 
                 if cfg.action_queue_size_to_get_new_actions < cfg.rtc.execution_horizon + new_delay:
                     logger.warning(

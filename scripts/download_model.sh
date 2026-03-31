@@ -13,5 +13,7 @@
 # modelscope download --model x-square-robot/wall-oss-flow --local_dir ./pretrain_model/x-square-robot-wall-oss-flow
 
 
-modelscope download --model lerobot/smolvla_base --local_dir ./pretrain_model/smolvla_base
+# modelscope download --model lerobot/smolvla_base --local_dir ./pretrain_model/smolvla_base
+
+huggingface-cli download physical-intelligence/fast --local-dir physical-intelligence/fast --local-dir-use-symlinks False   --resume-download 
 
