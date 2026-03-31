@@ -99,7 +99,6 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> "Teleoperator":
         from .openarm_mini import OpenArmMini
 
         return OpenArmMini(config)
-        return QnbotWTeleop(config)
     elif config.type == "agilex_cobot_teleop":
         from .agilex_cobot_teleop import AgilexCobotTeleop
         

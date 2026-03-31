@@ -57,7 +57,6 @@ from lerobot.robots import (  # noqa: F401
     make_robot_from_config,
     so_follower,
     agilex_cobot,  # noqa: F401
-    cobot_magic,  # noqa: F401
 )
 from lerobot.robots.robot import Robot
 from lerobot.robots.so_follower.robot_kinematic_processor import (
@@ -161,7 +160,7 @@ class RobotEnv(gym.Env):
         # Episode tracking.
         self.current_step = 0
         self.episode_data = None
-        if self.robot.name in ['agilex_cobot', 'cobot_magic']:
+        if self.robot.name in ['agilex_cobot']:
             self._joint_names = self.robot.motors_features.keys()
             self._image_keys = self.robot.camera_features.keys()
         else:   
@@ -181,7 +180,7 @@ class RobotEnv(gym.Env):
     def _get_observation(self) -> RobotObservation:
         """Get current robot observation including joint positions and camera images."""
         obs_dict = self.robot.get_observation()
-        if self.robot.name in ['agilex_cobot', 'cobot_magic']:
+        if self.robot.name in ['agilex_cobot']:
             raw_joint_joint_position = {f"{name}": obs_dict[f"{name}"] for name in self._joint_names}
             joint_positions = np.array([raw_joint_joint_position[f"{name}"] for name in self._joint_names])
         else:
@@ -267,7 +266,7 @@ class RobotEnv(gym.Env):
         self.episode_data = None
         obs = self._get_observation()
         # print(f"obs.key: {obs.keys()}\n _joint_names: {self._joint_names}")
-        if self.robot.name in ['agilex_cobot', 'cobot_magic']:
+        if self.robot.name in ['agilex_cobot']:
             self._raw_joint_positions = {f"{key}": obs[f"{key}"] for key in self._joint_names}
         else:
             self._raw_joint_positions = {f"{key}.pos": obs[f"{key}.pos"] for key in self._joint_names}
@@ -277,7 +276,7 @@ class RobotEnv(gym.Env):
         """Execute one environment step with given action."""
         
         # print(f"action : {action}")
-        if self.robot.name in ['agilex_cobot', 'cobot_magic']:
+        if self.robot.name in ['agilex_cobot']:
             joint_targets_dict = {f"{key}": action[i] for i, key in enumerate(self._joint_names)}
         else:
             joint_targets_dict = {f"{key}.pos": action[i] for i, key in enumerate(self.robot.bus.motors.keys())}
@@ -286,7 +285,7 @@ class RobotEnv(gym.Env):
 
         obs = self._get_observation()
 
-        if self.robot.name in ['agilex_cobot', 'cobot_magic']:
+        if self.robot.name in ['agilex_cobot']:
             self._raw_joint_positions = {f"{key}": obs[f"{key}"] for key in self._joint_names}
         else:
             self._raw_joint_positions = {f"{key}.pos": obs[f"{key}.pos"] for key in self._joint_names}

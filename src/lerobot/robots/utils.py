@@ -68,19 +68,11 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .bi_openarm_follower import BiOpenArmFollower
 
         return BiOpenArmFollower(config)
-    
-    elif config.type == "qnbot_w":
-        from .qnbot_w import QnbotW
 
-        return QnbotW(config)
     elif config.type == "mock_robot":
         from tests.mocks.mock_robot import MockRobot
 
         return MockRobot(config)
-    elif config.type == "cobot_magic":
-        from .cobot_magic import CobotMagic
-
-        return CobotMagic(config)
     elif config.type == "agilex_cobot":
         from .agilex_cobot import AgilexCobot
 

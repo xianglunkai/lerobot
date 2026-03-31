@@ -6,8 +6,6 @@ from lerobot.datasets.utils import hw_to_dataset_features
 from lerobot.policies.factory import make_pre_post_processors
 from lerobot.policies.pi05.modeling_pi05 import PI05Policy
 from lerobot.policies.utils import build_inference_frame, make_robot_action
-from lerobot.robots.cobot_magic.config_cobot_magic import CobotMagicConfig
-from lerobot.robots.cobot_magic.cobot_magic import CobotMagic
 from lerobot.robots.agilex_cobot.config_agilex_cobot import AgilexCobotConfig
 from lerobot.robots.agilex_cobot.agilex_cobot import AgilexCobot
 from lerobot.processor.factory import (

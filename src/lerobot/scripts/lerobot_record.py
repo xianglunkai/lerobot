@@ -125,8 +125,6 @@ from lerobot.robots import (  # noqa: F401
     so_follower,
     unitree_g1 as unitree_g1_robot,
     unitree_g1,
-    qnbot_w,
-    cobot_magic,
     agilex_cobot,
 )
 from lerobot.teleoperators import (  # noqa: F401
@@ -449,7 +447,7 @@ def record_loop(
         else:
             # For ROS robots without teleop/policy, use current observation as action
             # This allows recording the robot's current state as both observation and action
-            if robot.name in ['qnbot_w', 'cobot_magic', 'agilex_cobot']:
+            if robot.name in ['agilex_cobot']:
                 # Extract position values from observation for action
                 action = {}
                 for key, value in obs.items():
@@ -473,7 +471,7 @@ def record_loop(
         # Action can eventually be clipped using `max_relative_target`,
         # so action actually sent is saved in the dataset.
         # For ROS2 robots in observation-only mode, don't send commands
-        if robot.name in ['qnbot_w', 'cobot_magic', 'agilex_cobot'] and teleop is None and policy is None:
+        if robot.name in ['agilex_cobot'] and teleop is None and policy is None:
             # In observation-only mode, just record the current state as action
             _sent_action = action
             logging.debug("Recording observation as action without sending commands")
