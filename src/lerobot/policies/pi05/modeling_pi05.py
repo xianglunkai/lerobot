@@ -1573,7 +1573,7 @@ def optimize_actions_qp_with_constraints(
         if A_vel_raw is not None:
             vmin, vmax = vel_limits
             # (x[i+1]-x[i])/dt ∈ [vmin, vmax] → (x[i+1]-x[i]) ∈ [vmin*dt, vmax*dt]
-            A_vel_scaled = A_vel_raw / dt
+            A_vel_scaled = A_vel_raw
             A_list.append(A_vel_scaled)
             l_list.extend([vmin * dt] * (T-1))
             u_list.extend([vmax * dt] * (T-1))
@@ -1581,7 +1581,7 @@ def optimize_actions_qp_with_constraints(
         if A_acc_raw is not None:
             amin, amax = acc_limits
             # (x[i+2]-2x[i+1]+x[i])/dt^2 ∈ [amin, amax] → raw second diff ∈ [amin*dt^2, amax*dt^2]
-            A_acc_scaled = A_acc_raw / (dt**2)
+            A_acc_scaled = A_acc_raw
             A_list.append(A_acc_scaled)
             l_list.extend([amin * (dt**2)] * (T-2))
             u_list.extend([amax * (dt**2)] * (T-2))
