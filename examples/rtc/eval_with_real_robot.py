@@ -508,7 +508,7 @@ def get_actions(
                     obs_with_policy_features[name] = torch.from_numpy(obs_with_policy_features[name])
                     if "image" in name:
                         obs_with_policy_features[name] = (
-                            obs_with_policy_features[name].type(torch.float32) / 255
+                            obs_with_policy_features[name].type(torch.float32) / 255.0
                         )
                         obs_with_policy_features[name] = (
                             obs_with_policy_features[name].permute(2, 0, 1).contiguous()
