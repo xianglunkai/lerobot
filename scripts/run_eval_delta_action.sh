@@ -6,7 +6,7 @@ export repo_id=eval_lerobot_fold_towel_20260116_110149  # lerobot_fold_clothes_2
 python examples/rtc/eval_dataset.py \
         --policy.path=/home/xlk/work/lerobot/checkpoints/pi05_delta_act_fold_clothes40_v30/checkpoints/015000/pretrained_model \
         --dataset.repo_id=$repo_id \
-        --rtc.enabled=True \
+        --rtc.enabled=False \
         --use_ccr=False \
         --rtc.execution_horizon=25 \
         --rtc.max_guidance_weight=10.0 \

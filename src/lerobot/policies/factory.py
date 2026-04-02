@@ -58,16 +58,6 @@ from lerobot.utils.constants import (
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
 
-def _reconnect_delta_absolute_steps(preprocessor: PolicyProcessorPipeline, postprocessor: PolicyProcessorPipeline) -> None:
-    """Wire AbsoluteActionsProcessorStep.delta_step to the DeltaActionsProcessorStep after deserialization."""
-    from lerobot.processor.delta_action_processor import AbsoluteActionsProcessorStep, DeltaActionsProcessorStep
-
-    delta_step = next((s for s in preprocessor.steps if isinstance(s, DeltaActionsProcessorStep)), None)
-    if delta_step is None:
-        return
-    for step in postprocessor.steps:
-        if isinstance(step, AbsoluteActionsProcessorStep) and step.delta_step is None:
-            step.delta_step = delta_step
 
 def _reconnect_relative_absolute_steps(
     preprocessor: PolicyProcessorPipeline, postprocessor: PolicyProcessorPipeline

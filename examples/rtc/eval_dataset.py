@@ -648,8 +648,8 @@ class RTCEvaluator:
             ) 
             
         else: 
-            use_delta_actions = getattr(self.cfg.policy, "use_delta_actions", False)
-            if use_delta_actions:
+            use_relative_actions = getattr(self.cfg.policy, "use_relative_actions", False)
+            if use_relative_actions:
                 prev_actions = prev_chunk_left_over
                 second_sample["action"] = prev_actions
                 preprocessed_second_sample = self.preprocessor(second_sample)
