@@ -54,7 +54,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.utils.constants import ACTION
 
 from .converters import from_tensor_to_numpy, to_tensor
-from .core import EnvTransition, PolicyAction, RobotAction, TransitionKey
+from lerobot.types import EnvTransition, PolicyAction, RobotAction, TransitionKey
 from .pipeline import PolicyProcessorPipeline, ProcessorStep, ProcessorStepRegistry
 
 import math

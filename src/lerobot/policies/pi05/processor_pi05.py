@@ -26,7 +26,6 @@ from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     AddBatchDimensionProcessorStep,
-    DeltaActionsProcessorStep,
     DeviceProcessorStep,
     NormalizerProcessorStep,
     PolicyAction,

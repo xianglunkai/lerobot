@@ -52,7 +52,7 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.pi0_fast.configuration_pi0_fast import PI0FastConfig
 from lerobot.policies.pretrained import PreTrainedPolicy, T
 from lerobot.policies.rtc.modeling_rtc import RTCProcessor
-from lerobot.processor.delta_action_processor import to_absolute_actions
+
 from lerobot.utils.constants import (
     ACTION,
     ACTION_TOKEN_MASK,

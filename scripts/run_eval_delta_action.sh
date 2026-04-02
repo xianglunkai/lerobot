@@ -12,7 +12,6 @@ python examples/rtc/eval_dataset.py \
         --rtc.max_guidance_weight=10.0 \
         --rtc.prefix_attention_schedule=EXP \
         --rtc.sigma_d=0.2 \
-        --rtc.ignore_speed_jacobian=False \
         --inference_delay=8 \
         --num_inference_steps=10 \
         --device=cuda \

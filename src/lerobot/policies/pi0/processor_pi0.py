@@ -24,7 +24,6 @@ from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     AddBatchDimensionProcessorStep,
     ComplementaryDataProcessorStep,
-    DeltaActionsProcessorStep,
     DeviceProcessorStep,
     NormalizerProcessorStep,
     PolicyAction,
