@@ -7,7 +7,7 @@ python examples/rtc/eval_dataset.py \
         --policy.path=/home/xlk/work/lerobot/checkpoints/pi05_delta_act_fold_clothes40_v30/checkpoints/015000/pretrained_model \
         --dataset.repo_id=$repo_id \
         --rtc.enabled=False \
-        --use_ccr=False \
+        --use_ccr=True \
         --rtc.execution_horizon=25 \
         --rtc.max_guidance_weight=10.0 \
         --rtc.prefix_attention_schedule=EXP \
