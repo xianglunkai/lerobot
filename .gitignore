@@ -176,3 +176,9 @@ outputs/
 *.urdf
 *.xml
 *.part
+
+google/
+physical-intelligence/
+pretrain_model/
+rtc_debug_output/
+scripts_files/
