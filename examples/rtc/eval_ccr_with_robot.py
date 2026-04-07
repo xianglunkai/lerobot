@@ -16,7 +16,7 @@ from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraCon
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import RTCAttentionSchedule
-from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features
+from lerobot.datasets.feature_utils import build_dataset_frame, hw_to_dataset_features
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 from lerobot.policies.rtc.action_queue import ActionQueue
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
@@ -320,6 +320,10 @@ def actor_control(
     """
     try:
         logger.info("[ACTOR] Starting actor thread")
+        
+        action_keys = [k for k in robot.action_features() if k.endswith(".pos")]
+        print(f"action_keys:{action_keys}")
+
 
         action_count = 0
         interpolator = ActionInterpolator(multiplier=cfg.interpolation_multiplier)
@@ -335,7 +339,7 @@ def actor_control(
             
             action = interpolator.get()
             if action is not None:
-                action_dict = {key: action[i].item() for i, key in enumerate(robot.action_features())}
+                action_dict = {key: action[i].item() for i, key in enumerate(action_keys)}
                 action_processed = robot_action_processor((action_dict, None))
                 robot.send_action(action_processed)
                 action_count += 1

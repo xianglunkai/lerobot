@@ -602,6 +602,7 @@ class RTCEvaluator:
         noise = policy_no_rtc_policy.model.sample_noise(noise_size, self.device)
         noise_clone = noise.clone()
         policy_no_rtc_policy.rtc_processor.reset_tracker()
+        t0 = time.perf_counter()
         with torch.no_grad():
             no_rtc_actions = policy_no_rtc_policy.predict_action_chunk(
                 preprocessed_second_sample,
@@ -610,7 +611,7 @@ class RTCEvaluator:
             # resume orignal actions
             no_rtc_actions = self.postprocessor(no_rtc_actions)
             
-
+        logging.info(f"  Generated no_rtc_actions in {time.perf_counter() - t0:.4f} seconds")
         no_rtc_tracked_steps = policy_no_rtc_policy.rtc_processor.tracker.get_all_steps()
         logging.info(f"  Tracked {len(no_rtc_tracked_steps)} steps without RTC")
         logging.info(f"  Generated no_rtc_actions shape: {no_rtc_actions.shape}")
@@ -670,10 +671,9 @@ class RTCEvaluator:
                 rtc_actions = self.postprocessor(rtc_actions)
 
         rtc_tracked_steps = policy_rtc_policy.rtc_processor.get_all_debug_steps()
-        t1 = time.perf_counter()
+        logging.info(f"  Generated rtc_actions in {time.perf_counter() - t0:.4f} seconds")
         logging.info(f"  Tracked {len(rtc_tracked_steps)} steps with RTC")
         logging.info(f"  Generated rtc_actions shape: {rtc_actions.shape}")
-        logging.info(f"  Time taken for RTC inference: {(t1 - t0)*10000}ms")
 
         # Save num_steps before destroying policy (needed for plotting)
         try:

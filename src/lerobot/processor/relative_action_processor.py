@@ -104,6 +104,14 @@ class RelativeActionsProcessorStep(ProcessorStep):
     _last_state: torch.Tensor | None = field(default=None, init=False, repr=False)
 
     def _build_mask(self, action_dim: int) -> list[bool]:
+        if self.action_names is not None and isinstance(self.action_names[0], list):
+            print(f"warning: action_names has extra nesting level, using first element. action_names={self.action_names}")
+            self.action_names = self.action_names[0]
+        
+        if self.exclude_joints is not None and isinstance(self.exclude_joints[0], list):
+            print(f"warning: exclude_joints has extra nesting level, using first element. exclude_joints={self.exclude_joints}")
+            self.exclude_joints = self.exclude_joints[0]
+        
         if not self.exclude_joints or self.action_names is None:
             return [True] * action_dim
 

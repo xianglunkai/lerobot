@@ -18,8 +18,8 @@ case "$SELECT_MODEL" in
         python examples/rtc/eval_dataset.py \
             --policy.path=/home/xlk/work/lerobot/checkpoints/rabc_sarm_pi05/040000/pretrained_model \
             --dataset.repo_id="$repo_id" \
-            --rtc.enabled=False \
-            --use_ccr=True \
+            --rtc.enabled=True \
+            --use_ccr=False \
             --rtc.execution_horizon=25 \
             --rtc.max_guidance_weight=10.0 \
             --rtc.prefix_attention_schedule=EXP \
