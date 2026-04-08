@@ -235,9 +235,6 @@ class AgilexCobot(AgilexCobotBase):
                 for joint in self.robot_base
             ]
         
-        if self.config.use_external_commands:
-            return action
-        
         # Publish commands via ROS manager
         if self.config.ros_config.with_l_arm:
             self.ros_manager.publish_left_arm_command(left_arm_positions)

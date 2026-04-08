@@ -132,7 +132,7 @@ def prepare_observation_for_inference(
         observation[name] = observation[name].unsqueeze(0)
         observation[name] = observation[name].to(device)
 
-    observation["task"] = task if task else ""
+    observation["task"] = [task] if task else ""
     observation["robot_type"] = robot_type if robot_type else ""
 
     return observation

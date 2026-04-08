@@ -1,28 +1,9 @@
 export HF_LEROBOT_HOME=/data/huggingface/lerobot
 export HF_HOME=/data/huggingface
 
-# delta action rtc test
-python examples/rtc/eval_with_real_robot.py \
-    --policy.path=/home/xlk/work/lerobot/checkpoints/pi05_delta_act_fold_clothes40_v30/checkpoints/015000/pretrained_model  \
-    --policy.device=cuda \
-    --robot.type=agilex_cobot \
-    --rtc.enabled=True \
-    --rtc.execution_horizon=25 \
-    --rtc.max_guidance_weight=10.0 \
-    --rtc.prefix_attention_schedule=EXP \
-    --rtc.sigma_d=0.2 \
-    --task="Carefully fold the clothes." \
-    --duration=120 \
-    --fps=30 \
-    --device=cuda \
-    --action_queue_size_to_get_new_actions=25 \
-    --use_torch_compile=False \
-    --enable_visualization=true \
-    --interpolation_multiplier=2 \
-
-# absolute action rtc test
+# delta action for folding clothes
 # python examples/rtc/eval_with_real_robot.py \
-#     --policy.path=/home/xlk/work/lerobot/checkpoints/fold_towel/30k-50hz/pretrained_model  \
+#     --policy.path=/home/xlk/work/lerobot/checkpoints/pi05_delta_act_fold_clothes40_v30/checkpoints/015000/pretrained_model  \
 #     --policy.device=cuda \
 #     --robot.type=agilex_cobot \
 #     --rtc.enabled=True \
@@ -30,14 +11,34 @@ python examples/rtc/eval_with_real_robot.py \
 #     --rtc.max_guidance_weight=10.0 \
 #     --rtc.prefix_attention_schedule=EXP \
 #     --rtc.sigma_d=0.2 \
-#     --task="Carefully fold the towel and then place the folded towel on the black notebook" \
-#     --duration=30 \
+#     --task="Carefully fold the clothes." \
+#     --duration=120 \
 #     --fps=30 \
 #     --device=cuda \
 #     --action_queue_size_to_get_new_actions=25 \
 #     --use_torch_compile=False \
 #     --enable_visualization=true \
 #     --interpolation_multiplier=2 \
+
+# delta action for folding towel
+python examples/rtc/eval_with_real_robot.py \
+    --policy.path=/home/xlk/work/lerobot/checkpoints/pi05_delta_act_fold_towel/030000/pretrained_model  \
+    --policy.device=cuda \
+    --robot.type=agilex_cobot \
+    --rtc.enabled=True \
+    --rtc.execution_horizon=16 \
+    --rtc.max_guidance_weight=10.0 \
+    --rtc.prefix_attention_schedule=EXP \
+    --rtc.sigma_d=0.2 \
+    --task="Carefully fold the towel and then place the folded towel on the black notebook" \
+    --duration=60 \
+    --fps=30 \
+    --device=cuda \
+    --action_queue_size_to_get_new_actions=16 \
+    --use_torch_compile=False \
+    --enable_visualization=true \
+    --interpolation_multiplier=2 \
+
 
 # training rtc test
 # python examples/rtc/eval_with_real_robot.py \

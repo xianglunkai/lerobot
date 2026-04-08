@@ -501,7 +501,6 @@ def record_loop(
         precise_sleep(max(sleep_time_s, 0.0))
 
         timestamp = time.perf_counter() - start_episode_t
-        print(f"vla inference takes time {dt_s*1000:.2f} ms")   
 
 
 @parser.wrap()

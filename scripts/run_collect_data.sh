@@ -9,26 +9,6 @@ export HF_LEROBOT_HOME=/data/huggingface/lerobot
 export HF_HOME=/data/huggingface
 
 
-
-# python3 -m lerobot.scripts.lerobot_record \
-#     --robot.type=agilex_cobot \
-#     --robot.id=lerobot_navigation \
-#     --robot.use_external_commands=true \
-#     --robot.ros_config.with_mobile_base=true \
-#     --teleop.type=agilex_cobot_teleop \
-#     --teleop.use_present_position=false \
-#     --teleop.use_eef_pose_action=false \
-#     --dataset.repo_id=lerobot/lerobot_hover_bottle_action_from_slave_$(date +%Y%m%d_%H%M%S) \
-#     --dataset.single_task="use the one arm to grasp the bottle on the table, handover it to the another arm and place it on the black book" \
-#     --dataset.num_episodes=30 \
-#     --dataset.fps=50 \
-#     --dataset.video=True \
-#     --dataset.push_to_hub=false \
-#     --display_data=true \
-#     --dataset.episode_time_s=60 \
-#     --dataset.reset_time_s=60 \
-
-
 # python3 -m lerobot.scripts.lerobot_record \
 #     --robot.type=agilex_cobot \
 #     --robot.id=lerobot_navigation \
