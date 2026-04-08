@@ -124,7 +124,6 @@ from lerobot.robots import (  # noqa: F401
     reachy2,
     so_follower,
     unitree_g1 as unitree_g1_robot,
-    unitree_g1,
     agilex_cobot,
 )
 from lerobot.teleoperators import (  # noqa: F401
@@ -238,7 +237,9 @@ class RecordConfig:
     play_sounds: bool = True
     # Resume recording on an existing dataset.
     resume: bool = False
-    interpolation_multiplier: int = 5
+    # Action interpolation multiplier for smoother policy control (1=off, 2=2x, 3=3x)
+    # Only applies when using a policy (not teleop)
+    interpolation_multiplier: int = 1
 
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
@@ -347,7 +348,7 @@ def record_loop(
         policy.reset()
         preprocessor.reset()
         postprocessor.reset()
-        
+
     # Reset interpolator if provided
     if interpolator is not None:
         interpolator.reset()
@@ -355,7 +356,8 @@ def record_loop(
     # Calculate control interval based on interpolation
     use_interpolation = interpolator is not None and interpolator.enabled and policy is not None
     control_interval = interpolator.get_control_interval(fps) if interpolator else 1 / fps
-
+    # Pre-compute action key order outside the hot loop — it won't change mid-episode.
+    action_keys = sorted(robot.action_features) if use_interpolation else []
 
     no_action_count = 0
     timestamp = 0
@@ -372,18 +374,20 @@ def record_loop(
 
         # Applies a pipeline to the raw robot observation, default is IdentityProcessor
         obs_processed = robot_observation_processor(obs)
-        # print(f"obs_processed:{obs_processed}")
 
         if policy is not None or dataset is not None:
             observation_frame = build_dataset_frame(dataset.features, obs_processed, prefix=OBS_STR)
-            # print(f"observation_frame : {observation_frame}")
+
+        # Track whether this iteration should be recorded to the dataset.
+        # Interpolated-only iterations send actions to the robot but don't record frames,
+        # keeping the dataset at the original fps while the robot moves at the higher rate.
+        is_record_frame = True
 
         # Get action from either policy or teleop
         if policy is not None and preprocessor is not None and postprocessor is not None:
             # With interpolation: only call policy when interpolator needs new action
             if use_interpolation:
-                # Get action keys from robot
-                action_keys = sorted(robot.action_features)
+                ran_inference = False
 
                 if interpolator.needs_new_action():
                     action_values = predict_action(
@@ -399,18 +403,18 @@ def record_loop(
                     act_processed_policy = make_robot_action(action_values, dataset.features)
                     robot_action_to_send = robot_action_processor((act_processed_policy, obs))
 
-                    # Convert to tensor for interpolator
                     action_tensor = torch.tensor([robot_action_to_send[k] for k in action_keys])
                     interpolator.add(action_tensor)
+                    ran_inference = True
 
-                # Get interpolated action
                 interp_action = interpolator.get()
                 if interp_action is not None:
                     robot_action_to_send = {k: interp_action[i].item() for i, k in enumerate(action_keys)}
                     action_values = robot_action_to_send
                 else:
-                    # No action available yet, skip this iteration
                     continue
+
+                is_record_frame = ran_inference
             else:
                 action_values = predict_action(
                     observation=observation_frame,
@@ -423,12 +427,14 @@ def record_loop(
                     robot_type=robot.robot_type,
                 )
                 act_processed_policy: RobotAction = make_robot_action(action_values, dataset.features)
+                # Applies a pipeline to the action, default is IdentityProcessor
                 robot_action_to_send = robot_action_processor((act_processed_policy, obs))
+                action_values = robot_action_to_send
 
         elif policy is None and isinstance(teleop, Teleoperator):
+            act = teleop.get_action()
             if robot.name == "unitree_g1":
                 teleop.send_feedback(obs)
-            act = teleop.get_action()
 
             # Applies a pipeline to the raw teleop action, default is IdentityProcessor
             act_processed_teleop = teleop_action_processor((act, obs))
@@ -467,20 +473,14 @@ def record_loop(
                     )
                     continue
 
-            
+        # Send action to robot
         # Action can eventually be clipped using `max_relative_target`,
-        # so action actually sent is saved in the dataset.
-        # For ROS2 robots in observation-only mode, don't send commands
-        if robot.name in ['agilex_cobot'] and teleop is None and policy is None:
-            # In observation-only mode, just record the current state as action
-            _sent_action = action
-            logging.debug("Recording observation as action without sending commands")
-        else:
-            # TODO(steven, pepijn, adil): we should use a pipeline step to clip the action, so the sent action is the action that we input to the robot.
-            _sent_action = robot.send_action(robot_action_to_send)
+        # so action actually sent is saved in the dataset. action = postprocessor.process(action)
+        # TODO(steven, pepijn, adil): we should use a pipeline step to clip the action, so the sent action is the action that we input to the robot.
+        _sent_action = robot.send_action(robot_action_to_send)
 
-        # Write to dataset
-        if dataset is not None:
+        # Write to dataset (only on real policy frames, not interpolated-only iterations)
+        if dataset is not None and is_record_frame:
             action_frame = build_dataset_frame(dataset.features, action_values, prefix=ACTION)
             frame = {**observation_frame, **action_frame, "task": single_task}
             dataset.add_frame(frame)
@@ -535,7 +535,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             use_videos=cfg.dataset.video,
         ),
     )
-    # print(f"dataset_features: {dataset_features}")
 
     dataset = None
     listener = None
@@ -595,7 +594,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             if cfg.interpolation_multiplier > 1:
                 interpolator = ActionInterpolator(multiplier=cfg.interpolation_multiplier)
                 logging.info(f"Action interpolation enabled: {cfg.interpolation_multiplier}x control rate")
-
 
         robot.connect()
         if teleop is not None:
