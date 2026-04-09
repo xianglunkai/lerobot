@@ -1,3 +1,17 @@
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Shared utilities for Human-in-the-Loop data collection scripts."""
 
 import logging
@@ -49,9 +63,7 @@ class HILDatasetConfig:
 
 def teleop_has_motor_control(teleop: Teleoperator) -> bool:
     """Check if teleoperator has motor control capabilities."""
-    return all(
-        hasattr(teleop, attr) for attr in ("enable_torque", "disable_torque", "write_goal_positions")
-    )
+    return all(hasattr(teleop, attr) for attr in ("enable_torque", "disable_torque", "write_goal_positions"))
 
 
 def teleop_disable_torque(teleop: Teleoperator) -> None:
@@ -111,40 +123,40 @@ def init_keyboard_listener():
         try:
             if events["in_reset"]:
                 if key in [keyboard.Key.space, keyboard.Key.right]:
-                    print("\n[HIL] Starting next episode...")
+                    logger.info("[HIL] Starting next episode...")
                     events["start_next_episode"] = True
                 elif hasattr(key, "char") and key.char == "c":
                     events["start_next_episode"] = True
                 elif key == keyboard.Key.esc:
-                    print("[HIL] ESC - Stop recording, pushing to hub...")
+                    logger.info("[HIL] ESC - Stop recording, pushing to hub...")
                     events["stop_recording"] = True
                     events["start_next_episode"] = True
             else:
                 if key == keyboard.Key.space:
                     if not events["policy_paused"] and not events["correction_active"]:
-                        print("\n[HIL] ⏸ PAUSED - Press 'c' to take control or 'p' to resume policy")
+                        logger.info("[HIL] PAUSED - Press 'c' to take control or 'p' to resume policy")
                         events["policy_paused"] = True
                 elif hasattr(key, "char") and key.char == "c":
                     if events["policy_paused"] and not events["correction_active"]:
-                        print("\n[HIL] ▶ Taking control...")
+                        logger.info("[HIL] Taking control...")
                         events["start_next_episode"] = True
                 elif hasattr(key, "char") and key.char == "p":
                     if events["policy_paused"] or events["correction_active"]:
-                        print("\n[HIL] ⏵ Resuming policy...")
+                        logger.info("[HIL] Resuming policy...")
                         events["resume_policy"] = True
                 elif key == keyboard.Key.right:
-                    print("[HIL] → End episode")
+                    logger.info("[HIL] End episode")
                     events["exit_early"] = True
                 elif key == keyboard.Key.left:
-                    print("[HIL] ← Re-record episode")
+                    logger.info("[HIL] Re-record episode")
                     events["rerecord_episode"] = True
                     events["exit_early"] = True
                 elif key == keyboard.Key.esc:
-                    print("[HIL] ESC - Stop recording...")
+                    logger.info("[HIL] ESC - Stop recording...")
                     events["stop_recording"] = True
                     events["exit_early"] = True
         except Exception as e:
-            print(f"Key error: {e}")
+            logger.info(f"Key error: {e}")
 
     listener = keyboard.Listener(on_press=on_press)
     listener.start()
@@ -168,9 +180,7 @@ def make_identity_processors():
 
 def reset_loop(robot: Robot, teleop: Teleoperator, events: dict, fps: int):
     """Reset period where human repositions environment."""
-    print("\n" + "=" * 60)
-    print("  [HIL] RESET")
-    print("=" * 60)
+    logger.info("[HIL] RESET")
 
     events["in_reset"] = True
     events["start_next_episode"] = False
@@ -179,7 +189,7 @@ def reset_loop(robot: Robot, teleop: Teleoperator, events: dict, fps: int):
     robot_pos = {k: v for k, v in obs.items() if k.endswith(".pos") and k in robot.observation_features}
     teleop_smooth_move_to(teleop, robot_pos, duration_s=2.0, fps=50)
 
-    print("  Press any key to enable teleoperation")
+    logger.info("Press any key to enable teleoperation")
     while not events["start_next_episode"] and not events["stop_recording"]:
         precise_sleep(0.05)
 
@@ -188,7 +198,7 @@ def reset_loop(robot: Robot, teleop: Teleoperator, events: dict, fps: int):
 
     events["start_next_episode"] = False
     teleop_disable_torque(teleop)
-    print("  Teleop enabled - press any key to start episode")
+    logger.info("Teleop enabled - press any key to start episode")
 
     while not events["start_next_episode"] and not events["stop_recording"]:
         loop_start = time.perf_counter()
@@ -206,14 +216,13 @@ def reset_loop(robot: Robot, teleop: Teleoperator, events: dict, fps: int):
 
 def print_controls(rtc: bool = False):
     """Print control instructions."""
-    print("\n" + "=" * 60)
-    print("  Human-in-the-Loop Data Collection" + (" (RTC)" if rtc else ""))
-    print("=" * 60)
-    print()
-    print("  Controls:")
-    print("    SPACE  - Pause policy")
-    print("    c      - Take control")
-    print("    p      - Resume policy after pause/correction")
-    print("    →      - End episode")
-    print("    ESC    - Stop and push to hub")
-    print("=" * 60 + "\n")
+    mode = "Human-in-the-Loop Data Collection" + (" (RTC)" if rtc else "")
+    logger.info(
+        "%s\n  Controls:\n"
+        "    SPACE  - Pause policy\n"
+        "    c      - Take control\n"
+        "    p      - Resume policy after pause/correction\n"
+        "    →      - End episode\n"
+        "    ESC    - Stop and push to hub",
+        mode,
+    )
