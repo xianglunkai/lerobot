@@ -176,3 +176,13 @@ outputs/
 *.urdf
 *.xml
 *.part
+
+# modles
+pretrain_model/
+checkpoints/
+google/
+physical-intelligence/
+
+#debug output
+rtc_debug_output/
+others/
