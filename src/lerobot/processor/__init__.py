@@ -81,6 +81,7 @@ from .relative_action_processor import (
     to_absolute_actions,
     to_relative_actions,
 )
+from .temporal_profile_processor import TimeAxisOptimizationProcessor
 from .rename_processor import RenameObservationsProcessorStep
 from .tokenizer_processor import ActionTokenizerProcessorStep, TokenizerProcessorStep
 from .filter_processor import LowPassFilterProcessor
@@ -147,4 +148,5 @@ __all__ = [
     "LowPassFilterProcessor",
     "QPActionSmoothingProcessor",
     "SplineActionSmoothingProcessor",
+    "TimeAxisOptimizationProcessor",
 ]
