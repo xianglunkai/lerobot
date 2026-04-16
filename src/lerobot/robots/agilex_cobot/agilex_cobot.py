@@ -216,6 +216,17 @@ class AgilexCobot(AgilexCobotBase):
         
         if self.config.use_external_commands:
             return action
+    
+        # check that action is eef position
+        if (
+                "delta_x" in action
+            and "delta_y" in action
+            and "delta_z" in action
+            and "delta_roll" in action
+            and "delta_pitch" in action
+            and "delta_yaw" in action
+        ):
+            return self.send_action_from_eef(action)
         
         # Extract arm commands
         left_arm_positions = [
@@ -244,6 +255,75 @@ class AgilexCobot(AgilexCobotBase):
             self.ros_manager.publish_mobile_base_command(vel_cmd)
         
         return action
+    
+    
+    def send_action_from_eef(self, ee_command: Dict[str, np.ndarray]) -> Dict[str, float]:
+        """Send action commands to robot based on end-effector command."""
+    
+        # Extract delta commands
+        delta_x = ee_command.get("delta_x", 0.0)
+        delta_y = ee_command.get("delta_y", 0.0)
+        delta_z = ee_command.get("delta_z", 0.0)
+        delta_roll = ee_command.get("delta_roll", 0.0)
+        delta_pitch = ee_command.get("delta_pitch", 0.0)
+        delta_yaw = ee_command.get("delta_yaw", 0.0)
+        gripper = ee_command.get("gripper", 1.0) # default to stay
+        
+        # import RobotKinematics here to avoid circular import
+        from lerobot.model.kinematics import RobotKinematics
+        from lerobot.utils.rotation import Rotation
+        import transforms3d as t3d
+        kinematics = RobotKinematics(
+            urdf_path=self.config.urdf_path, 
+            target_frame_name=self.config.ik_target_frame_name, 
+            joint_names=self.config.ik_joint_names,
+            use_rad=True,
+        )
+        # get current joint positions,noly consider left arm for now 
+        # todo: add right arm as well
+        q_raw = self.ros_manager._get_current_arm_position('left')
+        q = np.array(q_raw[:-1], dtype=np.float32) # exclude gripper joint
+        
+        # compute current end-effector pose
+        current_ee_pose = kinematics.forward_kinematics(q)
+        
+        # compute desired end-effector pose
+        ref = current_ee_pose.copy()
+        delta_p = np.array([delta_x, delta_y, delta_z], dtype=np.float32)
+        # r_abs = Rotation.from_rotvec([wx, wy, wz]).as_matrix()
+        r_abs = t3d.euler.euler2mat(delta_roll, delta_pitch, delta_yaw)
+        desired = np.eye(4, dtype=float)
+        desired[:3, :3] = ref[:3, :3] @ r_abs
+        desired[:3, 3] = ref[:3, 3] + delta_p
+        
+        # compute IK to get desired joint positions
+        q_target = kinematics.inverse_kinematics(q, desired)
+        
+        # add gripper command to q_target if applicable
+        if gripper == 0.0: # close
+            q_target.append(0.0)
+        elif gripper == 1.0: # stay
+            q_target.append(q_raw[-1])
+        elif gripper == 2.0: # open
+            q_target.append(0.07) # stay at current position, 0.09 is the open position for the gripper
+        else:
+            q_target.append(q_raw[-1])
+            
+        # Publish commands via ROS manager
+        if self.config.ros_config.with_l_arm:
+            self.ros_manager.publish_left_arm_command(q_target.tolist())
+        if self.config.ros_config.with_r_arm:
+            self.ros_manager.publish_right_arm_command(q_target.tolist())
+        
+        action = {}
+        for i, name in enumerate(self.motors_features.keys()):
+            if name != "left_joint6.pos": # gripper joint
+                action[name] = float(q_target[i])
+            else:
+                action["left_joint6.pos"] = float(gripper)
+     
+        return action
+     
     
     def reset_to_default_positions(self) -> None:
         """Reset robot to default positions."""

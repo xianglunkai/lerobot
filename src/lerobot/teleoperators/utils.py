@@ -103,6 +103,10 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> "Teleoperator":
         from .agilex_cobot_teleop import AgilexCobotTeleop
         
         return AgilexCobotTeleop(config)
+    elif config.type == "spacemouse":
+        from .spacemouse.teleop_spacemouse import SpacemouseTeleop
+        
+        return SpacemouseTeleop(config)
     else:
         try:
             return cast("Teleoperator", make_device_from_device_class(config))

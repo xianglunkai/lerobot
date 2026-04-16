@@ -67,6 +67,10 @@ class AgilexCobotROSManager:
         self.config = config
         self._initialized = True
         self._ros_initialized = False
+        # Lock that protects concurrent access to the deques used by ROS callbacks
+        # and by the main thread that builds synchronized frames.
+        self.deques_lock = threading.Lock()
+
         self._init_ros_components()
         
     def _init_ros_components(self):
@@ -291,48 +295,55 @@ class AgilexCobotROSManager:
     
     def img_high_img_callback(self, msg):
         """Callback for front camera images."""
-        if len(self.img_front_deque) >= SUB_MSG_QUEUE_SIZE:
-            self.img_front_deque.popleft()
-        self.img_front_deque.append(msg)
-        self.camera_images_timestamp["high"] = time.time()
+        with self.deques_lock:
+            if len(self.img_front_deque) >= SUB_MSG_QUEUE_SIZE:
+                self.img_front_deque.popleft()
+            self.img_front_deque.append(msg)
+            self.camera_images_timestamp["high"] = time.time()
     
     def img_left_img_callback(self, msg):
         """Callback for left camera images."""
-        if len(self.img_left_deque) >= SUB_MSG_QUEUE_SIZE:
-            self.img_left_deque.popleft()
-        self.img_left_deque.append(msg)
-        self.camera_images_timestamp["left"] = time.time()
+        with self.deques_lock:
+            if len(self.img_left_deque) >= SUB_MSG_QUEUE_SIZE:
+                self.img_left_deque.popleft()
+            self.img_left_deque.append(msg)
+            self.camera_images_timestamp["left"] = time.time()
     
     def img_right_img_callback(self, msg):
         """Callback for right camera images."""
-        if len(self.img_right_deque) >= SUB_MSG_QUEUE_SIZE:
-            self.img_right_deque.popleft()
-        self.img_right_deque.append(msg)
-        self.camera_images_timestamp["right"] = time.time()
+        with self.deques_lock:
+            if len(self.img_right_deque) >= SUB_MSG_QUEUE_SIZE:
+                self.img_right_deque.popleft()
+            self.img_right_deque.append(msg)
+            self.camera_images_timestamp["right"] = time.time()
     
     def img_left_depth_callback(self, msg):
         """Callback for left depth images."""
-        if len(self.img_left_depth_deque) >= SUB_MSG_QUEUE_SIZE:
-            self.img_left_depth_deque.popleft()
-        self.img_left_depth_deque.append(msg)
+        with self.deques_lock:
+            if len(self.img_left_depth_deque) >= SUB_MSG_QUEUE_SIZE:
+                self.img_left_depth_deque.popleft()
+            self.img_left_depth_deque.append(msg)
     
     def img_right_depth_callback(self, msg):
         """Callback for right depth images."""
-        if len(self.img_right_depth_deque) >= SUB_MSG_QUEUE_SIZE:
-            self.img_right_depth_deque.popleft()
-        self.img_right_depth_deque.append(msg)
+        with self.deques_lock:
+            if len(self.img_right_depth_deque) >= SUB_MSG_QUEUE_SIZE:
+                self.img_right_depth_deque.popleft()
+            self.img_right_depth_deque.append(msg)
     
     def img_front_depth_callback(self, msg):
         """Callback for front depth images."""
-        if len(self.img_front_depth_deque) >= SUB_MSG_QUEUE_SIZE:
-            self.img_front_depth_deque.popleft()
-        self.img_front_depth_deque.append(msg)
+        with self.deques_lock:
+            if len(self.img_front_depth_deque) >= SUB_MSG_QUEUE_SIZE:
+                self.img_front_depth_deque.popleft()
+            self.img_front_depth_deque.append(msg)
     
     def robot_base_callback(self, msg: Odometry):
         """Callback for mobile base state."""
-        if len(self.robot_base_deque) >= SUB_MSG_QUEUE_SIZE:
-            self.robot_base_deque.popleft()
-        self.robot_base_deque.append(msg)
+        with self.deques_lock:
+            if len(self.robot_base_deque) >= SUB_MSG_QUEUE_SIZE:
+                self.robot_base_deque.popleft()
+            self.robot_base_deque.append(msg)
         with self.mobile_base_state_lock:
             self.mobile_base_positions['vx'] = msg.twist.twist.linear.x
             self.mobile_base_positions['vtheta'] = msg.twist.twist.angular.z
@@ -400,14 +411,24 @@ class AgilexCobotROSManager:
         Get synchronized observation from all sensors.
         Returns motor positions, camera images, and end effector poses.
         """ 
-        while True and not rospy.is_shutdown():
+        start_time = time.time()
+        timeout = getattr(self.config, "connection_timeout", 5.0)
+
+        while not rospy.is_shutdown():
             result = self._get_synchronized_frame()
-            if not result:
-                # print("get_synchronized_observation FAILED!")
-                time.sleep(0.01)
-                continue
-            # print("get_synchronized_observation SUCCED!")
-            return self._process_observation_frame(*result)
+            if result:
+                return self._process_observation_frame(*result)
+
+            # Check timeout: if exceeded, fall back to latest available frame (best-effort)
+            if time.time() - start_time > timeout:
+                logger.warning(
+                    f"AgilexCobotROSManager: timed out waiting for synchronized frame after {timeout}s; returning latest available data (may be incomplete)."
+                )
+                latest = self._get_latest_frame_no_wait()
+                return self._process_observation_frame(*latest)
+
+            # Short sleep to avoid busy loop
+            time.sleep(0.01)
     
     def _get_synchronized_frame(self):
         """Get synchronized frame from all sensors."""
@@ -514,32 +535,85 @@ class AgilexCobotROSManager:
     
     def _get_image_from_deque(self, deque_obj, frame_time):
         """Get image from deque synchronized to frame time."""
-        while deque_obj and deque_obj[0].header.stamp.to_sec() < frame_time:
-            deque_obj.popleft()
-        msg = self.cv_bridge.imgmsg_to_cv2(deque_obj[0], 'passthrough')
-        deque_obj.popleft()
-        return msg
+        with self.deques_lock:
+            # Remove old messages
+            try:
+                while deque_obj and deque_obj[0].header.stamp.to_sec() < frame_time:
+                    deque_obj.popleft()
+                if not deque_obj:
+                    return None
+                msg = deque_obj[0]
+                deque_obj.popleft()
+            except Exception:
+                # In case of concurrent modification or unexpected data, return None
+                return None
+
+        try:
+            return self.cv_bridge.imgmsg_to_cv2(msg, 'passthrough')
+        except Exception as e:
+            logger.warning(f"Failed to convert image message to CV2: {e}")
+            return None
     
     def _get_joint_state_from_deque(self, deque_obj, frame_time):
         """Get joint state from deque synchronized to frame time."""
-        while deque_obj and deque_obj[0].header.stamp.to_sec() < frame_time:
-            deque_obj.popleft()
-        msg = deque_obj.popleft()
-        return msg
+        with self.deques_lock:
+            try:
+                while deque_obj and deque_obj[0].header.stamp.to_sec() < frame_time:
+                    deque_obj.popleft()
+                if not deque_obj:
+                    return None
+                return deque_obj.popleft()
+            except Exception:
+                return None
     
     def _get_endpose_from_deque(self, deque_obj, frame_time):
         """Get end effector pose from deque synchronized to frame time."""
-        while deque_obj and deque_obj[0].header.stamp.to_sec() < frame_time:
-            deque_obj.popleft()
-        msg = deque_obj.popleft()
-        return msg
+        with self.deques_lock:
+            try:
+                while deque_obj and deque_obj[0].header.stamp.to_sec() < frame_time:
+                    deque_obj.popleft()
+                if not deque_obj:
+                    return None
+                return deque_obj.popleft()
+            except Exception:
+                return None
     
     def _get_robot_base_from_deque(self, deque_obj, frame_time):
         """Get robot base state from deque synchronized to frame time."""
-        while deque_obj and deque_obj[0].header.stamp.to_sec() < frame_time:
-            deque_obj.popleft()
-        msg = deque_obj.popleft()
-        return msg
+        with self.deques_lock:
+            try:
+                while deque_obj and deque_obj[0].header.stamp.to_sec() < frame_time:
+                    deque_obj.popleft()
+                if not deque_obj:
+                    return None
+                return deque_obj.popleft()
+            except Exception:
+                return None
+
+    def _get_latest_frame_no_wait(self):
+        """Best-effort snapshot of latest messages (may be None)."""
+        with self.deques_lock:
+            img_front = self.img_front_deque[-1] if getattr(self, 'img_front_deque', None) and len(self.img_front_deque) > 0 else None
+            img_left = self.img_left_deque[-1] if getattr(self, 'img_left_deque', None) and len(self.img_left_deque) > 0 else None
+            img_right = self.img_right_deque[-1] if getattr(self, 'img_right_deque', None) and len(self.img_right_deque) > 0 else None
+
+            img_front_depth = self.img_front_depth_deque[-1] if getattr(self, 'img_front_depth_deque', None) and len(self.img_front_depth_deque) > 0 else None
+            img_left_depth = self.img_left_depth_deque[-1] if getattr(self, 'img_left_depth_deque', None) and len(self.img_left_depth_deque) > 0 else None
+            img_right_depth = self.img_right_depth_deque[-1] if getattr(self, 'img_right_depth_deque', None) and len(self.img_right_depth_deque) > 0 else None
+
+            puppet_arm_left = self.puppet_arm_left_deque[-1] if len(self.puppet_arm_left_deque) > 0 else None
+            puppet_arm_right = self.puppet_arm_right_deque[-1] if len(self.puppet_arm_right_deque) > 0 else None
+
+            endpose_left = self.endpose_left_deque[-1] if len(self.endpose_left_deque) > 0 else None
+            endpose_right = self.endpose_right_deque[-1] if len(self.endpose_right_deque) > 0 else None
+
+            robot_base = self.robot_base_deque[-1] if getattr(self, 'robot_base_deque', None) and len(self.robot_base_deque) > 0 else None
+
+        # Note: return the raw ROS messages (or None) — _process_observation_frame will handle None values.
+        return (
+            img_front, img_left, img_right, img_front_depth, img_left_depth, img_right_depth,
+            puppet_arm_left, puppet_arm_right, endpose_left, endpose_right, robot_base
+        )
     
     def _process_observation_frame(self, img_front, img_left, img_right, img_front_depth, 
                                  img_left_depth, img_right_depth, puppet_arm_left, 
@@ -565,10 +639,35 @@ class AgilexCobotROSManager:
             motor_position["vx"] = robot_base.twist.twist.linear.x
             motor_position["vtheta"] = robot_base.twist.twist.angular.z
         
-        # Process camera images
-        cameras["high"] = jpeg_mapping(img_front)
-        cameras["left"] = jpeg_mapping(img_left)
-        cameras["right"] = jpeg_mapping(img_right)
+        # Process camera images. If any image is None (e.g., timed out or conversion
+        # failure), replace with a small placeholder image (consistent 3-channel uint8).
+        default_h = 480
+        default_w = 640
+
+        try:
+            if img_front is None:
+                img_front_cv = np.zeros((default_h, default_w, 3), dtype=np.uint8)
+            else:
+                img_front_cv = img_front
+            if img_left is None:
+                img_left_cv = np.zeros((default_h, default_w, 3), dtype=np.uint8)
+            else:
+                img_left_cv = img_left
+            if img_right is None:
+                img_right_cv = np.zeros((default_h, default_w, 3), dtype=np.uint8)
+            else:
+                img_right_cv = img_right
+
+            cameras["high"] = jpeg_mapping(img_front_cv)
+            cameras["left"] = jpeg_mapping(img_left_cv)
+            cameras["right"] = jpeg_mapping(img_right_cv)
+        except Exception as e:
+            logger.warning(f"Failed to process camera images: {e}")
+            # Fallback to small black images
+            placeholder = np.zeros((default_h, default_w, 3), dtype=np.uint8)
+            cameras["high"] = jpeg_mapping(placeholder)
+            cameras["left"] = jpeg_mapping(placeholder)
+            cameras["right"] = jpeg_mapping(placeholder)
         
         # Process end effector poses
         if endpose_left:

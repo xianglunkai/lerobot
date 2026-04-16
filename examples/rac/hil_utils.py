@@ -96,7 +96,8 @@ def teleop_smooth_move_to(teleop: Teleoperator, target_pos: dict, duration_s: fl
                 interp[k] = current[k] * (1 - t) + target_pos[k] * t
             else:
                 interp[k] = current[k]
-        teleop.write_goal_positions(interp)
+        if hasattr(teleop, "write_goal_positions"):
+            teleop.write_goal_positions(interp)
         time.sleep(1 / fps)
 
 

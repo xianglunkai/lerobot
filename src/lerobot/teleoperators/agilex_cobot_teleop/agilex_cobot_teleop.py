@@ -177,11 +177,6 @@ class AgilexCobotTeleop(Teleoperator):
         
         try:
             # Get synchronized observation from ROS manager
-            slave_positions = self.ros_manager.get_slave_joint_states()
-            master_positions = self.ros_manager.get_master_joint_states()
-            robot_base = self.ros_manager.get_robot_base_state()
-            endpose = self.ros_manager.get_end_effector_poses()
-            
             # The motor_positions dictionary already contains:
             # - left_joint0, left_joint1, ..., left_joint6
             # - right_joint0, right_joint1, ..., right_joint6  
@@ -191,23 +186,27 @@ class AgilexCobotTeleop(Teleoperator):
             action_dict = {}
             
             if self.config.use_present_position:
-            # Add joint positions with proper formatting
+                slave_positions = self.ros_manager.get_slave_joint_states()
+                # Add joint positions with proper formatting
                 for joint_name, position in slave_positions.items():
                     if joint_name.startswith(('left_', 'right_')):
                         # Joints: convert "left_joint0" to "left_joint0.pos"
                         action_dict[f"{joint_name}.pos"] = position
             else:
                 # Use goal positions if not using present positions
+                master_positions = self.ros_manager.get_master_joint_states()
                 for joint_name, position in master_positions.items():
                     if joint_name.startswith(('left_', 'right_')):
                         action_dict[f"{joint_name}.pos"] = position
             
             # Add mobile base velocities if applicable
             if self.config.ros_config.with_mobile_base:
+                robot_base = self.ros_manager.get_robot_base_state()
                 for joint_name, velocity in robot_base.items():
                     action_dict[f"{joint_name}.pos"] = velocity
             
             if self.config.use_eef_pose_action:
+                endpose = self.ros_manager.get_end_effector_poses()
                 for joint_name, position in endpose.items():
                     # End effector poses: convert "x" to "x.pos", etc.
                     action_dict[f"{joint_name}.pos"] = position

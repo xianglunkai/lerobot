@@ -638,9 +638,9 @@ def _rollout_sync(
 
         if events["correction_active"]:
             robot_action = teleop.get_action()
-            robot.send_action(robot_action)
+            send_action = robot.send_action(robot_action)
             robot_command_count += 1
-            action_frame = build_dataset_frame(dataset.features, robot_action, prefix=ACTION)
+            action_frame = build_dataset_frame(dataset.features, send_action, prefix=ACTION)
             if record_tick % record_stride == 0:
                 frame = {**obs_frame, **action_frame, "task": cfg.dataset.single_task}
                 if stream_online:
@@ -842,9 +842,9 @@ def _rollout_rtc(
 
         if events["correction_active"]:
             robot_action = teleop.get_action()
-            robot.send_action(robot_action)
+            send_action = robot.send_action(robot_action)
             robot_command_count += 1
-            action_frame = build_dataset_frame(dataset.features, robot_action, prefix=ACTION)
+            action_frame = build_dataset_frame(dataset.features, send_action, prefix=ACTION)
             if record_tick % record_stride == 0:
                 frame = {**obs_frame, **action_frame, "task": cfg.dataset.single_task}
                 if stream_online:

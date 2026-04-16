@@ -25,17 +25,35 @@ export HF_HOME=/data/huggingface
 #     --dataset.reset_time_s=60 \
 
 
+# python3 -m lerobot.scripts.lerobot_record \
+#     --robot.type=agilex_cobot \
+#     --robot.id=fold_cloth \
+#     --robot.use_external_commands=true \
+#     --robot.ros_config.with_mobile_base=false \
+#     --dataset.repo_id=lerobot/lerobot_fold_cloth_action_from_slave_$(date +%Y%m%d_%H%M%S) \
+#     --dataset.single_task="Please fold the clothes on the desktop!" \
+#     --dataset.num_episodes=30 \
+#     --dataset.fps=30 \
+#     --dataset.video=True \
+#     --dataset.push_to_hub=false \
+#     --display_data=true \
+#     --dataset.episode_time_s=180 \
+#     --dataset.reset_time_s=15 \
+
 python3 -m lerobot.scripts.lerobot_record \
     --robot.type=agilex_cobot \
-    --robot.id=fold_cloth \
+    --robot.id=screw_sorting \
     --robot.use_external_commands=true \
     --robot.ros_config.with_mobile_base=false \
-    --dataset.repo_id=lerobot/lerobot_fold_cloth_action_from_slave_$(date +%Y%m%d_%H%M%S) \
-    --dataset.single_task="Please fold the clothes on the desktop!" \
+    --robot.ros_config.with_l_arm=False \
+    --robot.ros_config.with_r_arm=True \
+    --robot.ros_config.with_left_camera=False \
+    --dataset.repo_id=lerobot/screw_sorting_$(date +%Y%m%d_%H%M%S) \
+    --dataset.single_task="Please sort and return the silver screws in the grey box to their proper places." \
     --dataset.num_episodes=30 \
     --dataset.fps=30 \
     --dataset.video=True \
     --dataset.push_to_hub=false \
     --display_data=true \
-    --dataset.episode_time_s=180 \
-    --dataset.reset_time_s=15 \
+    --dataset.episode_time_s=120 \
+    --dataset.reset_time_s=30 \

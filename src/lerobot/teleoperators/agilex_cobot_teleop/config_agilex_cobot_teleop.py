@@ -25,7 +25,7 @@ class AgilexCobotTeleopConfig(TeleoperatorConfig):
     
     # Whether to use the present position of the joints as actions
     # if False, the goal position of the joints will be used
-    use_present_position: bool = True
+    use_present_position: bool = False
     
     use_eef_pose_action: bool = False
 
