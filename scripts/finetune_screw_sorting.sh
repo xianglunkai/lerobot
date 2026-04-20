@@ -2,8 +2,8 @@
 
 # ==================== 选择性执行开关 ====================
 # 设置为 true 表示执行该步骤，设置为 false 表示跳过
-RUN_RECOMPUTE_STATS=true   # 步骤1：重新计算数据集统计
-RUN_TRAIN=false             # 步骤2：微调模型
+RUN_RECOMPUTE_STATS=false   # 步骤1：重新计算数据集统计
+RUN_TRAIN=true             # 步骤2：微调模型
 # ======================================================
 
 # 设置 Hugging Face 镜像端点
@@ -21,7 +21,7 @@ export HF_DATASETS_CACHE=/workspace/huggingface/.cache
 export HF_LEROBOT_HOME=/workspace/huggingface/lerobot
 export HF_HOME=/workspace/huggingface
 
-export repo_id=fold_towel_v3_0
+export repo_id=screw_sorting_v30
 
 # 清理旧的输出目录（仅当需要重新训练时执行）
 if [ "$RUN_TRAIN" = true ]; then
@@ -35,8 +35,8 @@ if [ "$RUN_RECOMPUTE_STATS" = true ]; then
         --repo_id ${HF_LEROBOT_HOME}/${repo_id} \
         --operation.type recompute_stats \
         --operation.relative_action True \
-        --operation.chunk_size 50 \
-        --operation.relative_exclude_joints "["right_gripper","left_gripper"]"
+        --operation.chunk_size 32 \
+        --operation.relative_exclude_joints "["right_joint6.pos"]"
 else
     echo ">>> 跳过步骤1（数据集统计已存在或无需重新计算）"
 fi
@@ -63,8 +63,8 @@ if [ "$RUN_TRAIN" = true ]; then
         --rabc_progress_path=${HF_LEROBOT_HOME}/${repo_id}/sarm_progress.parquet \
         --policy.type=pi05 \
         --policy.dtype="bfloat16" \
-        --policy.chunk_size=50 \
-        --policy.n_action_steps=50 \
+        --policy.chunk_size=32 \
+        --policy.n_action_steps=32 \
         --policy.pretrained_path=/workspace/lerobot/pretrain_model/pi05_base \
         --policy.push_to_hub=false \
         --policy.compile_model=true \
@@ -72,19 +72,19 @@ if [ "$RUN_TRAIN" = true ]; then
         --policy.normalization_mapping='{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}' \
         --policy.input_features='{
             "observation.images.high": {"type": "VISUAL", "shape": [480, 640, 3]},
-            "observation.images.left": {"type": "VISUAL", "shape": [480, 640, 3]},
             "observation.images.right": {"type": "VISUAL", "shape": [480, 640, 3]},
-            "observation.state": {"type": "STATE", "shape": [14]}
+            "observation.state": {"type": "STATE", "shape": [7]}
         }' \
-        --policy.output_features='{"action": {"type": "ACTION", "shape": [14]}}' \
+        --policy.output_features='{"action": {"type": "ACTION", "shape": [7]}}' \
+        --policy.empty_cameras=0 \
         --policy.use_relative_actions=true \
-        --policy.relative_exclude_joints='["right_gripper","left_gripper"]' \
+        --policy.relative_exclude_joints='["right_joint6.pos"]' \
         --output_dir=outputs/pi05_delta_act_$repo_id \
         --job_name=pi05_delta_act_$repo_id \
         --wandb.enable=true \
         --wandb.project=pi05_delta_act_$repo_id \
         --wandb.disable_artifact=True \
-        --wandb.notes="Carefully fold the towel and then place the folded towel on the black notebook"
+        --wandb.notes="Please sort and return the silver screws in the grey box to their proper places"
 else
     echo ">>> 跳过步骤2（微调未启用）"
 fi
