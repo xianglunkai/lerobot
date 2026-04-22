@@ -15,6 +15,12 @@ import time
 logger = logging.getLogger(__name__)
 
 
+# import RobotKinematics here to avoid circular import
+from lerobot.model.kinematics import RobotKinematics
+from lerobot.utils.rotation import Rotation
+import transforms3d as t3d
+
+
 class AgilexCobotBase(Robot):
     """Base class for AgilexCobot robot with common functionality."""
     
@@ -46,6 +52,14 @@ class AgilexCobotBase(Robot):
         
         # Initialize cameras
         self.cameras = make_cameras_from_configs(config.cameras)
+        
+        
+        self.kinematics = RobotKinematics(
+            urdf_path=self.config.urdf_path, 
+            target_frame_name=self.config.ik_target_frame_name, 
+            joint_names=self.config.ik_joint_names,
+            use_rad=True,
+        )
         
         logger.info(f"AgilexCobot robot initialized with {len(self.all_joints)} joints")
     
@@ -269,45 +283,40 @@ class AgilexCobot(AgilexCobotBase):
         delta_yaw = ee_command.get("delta_yaw", 0.0)
         gripper = ee_command.get("gripper", 1.0) # default to stay
         
-        # import RobotKinematics here to avoid circular import
-        from lerobot.model.kinematics import RobotKinematics
-        from lerobot.utils.rotation import Rotation
-        import transforms3d as t3d
-        kinematics = RobotKinematics(
-            urdf_path=self.config.urdf_path, 
-            target_frame_name=self.config.ik_target_frame_name, 
-            joint_names=self.config.ik_joint_names,
-            use_rad=True,
-        )
+    
         # get current joint positions,noly consider left arm for now 
         # todo: add right arm as well
         q_raw = self.ros_manager._get_current_arm_position('left')
         q = np.array(q_raw[:-1], dtype=np.float32) # exclude gripper joint
         
         # compute current end-effector pose
-        current_ee_pose = kinematics.forward_kinematics(q)
+        print(f"q_raw:{q_raw}")
+        current_ee_pose = self.kinematics.forward_kinematics(q)
         
         # compute desired end-effector pose
         ref = current_ee_pose.copy()
         delta_p = np.array([delta_x, delta_y, delta_z], dtype=np.float32)
-        # r_abs = Rotation.from_rotvec([wx, wy, wz]).as_matrix()
+        # r_abs = Rotation.from_rotvec([delta_roll, delta_pitch, delta_yaw]).as_matrix()
         r_abs = t3d.euler.euler2mat(delta_roll, delta_pitch, delta_yaw)
         desired = np.eye(4, dtype=float)
         desired[:3, :3] = ref[:3, :3] @ r_abs
         desired[:3, 3] = ref[:3, 3] + delta_p
-        
+         
         # compute IK to get desired joint positions
-        q_target = kinematics.inverse_kinematics(q, desired)
+        q_target = np.zeros(7)
+        q_target[:-1] = self.kinematics.inverse_kinematics(q, desired)
         
         # add gripper command to q_target if applicable
         if gripper == 0.0: # close
-            q_target.append(0.0)
+            q_target[-1] = 0.0
         elif gripper == 1.0: # stay
-            q_target.append(q_raw[-1])
+            q_target[-1] = q_raw[-1]
         elif gripper == 2.0: # open
-            q_target.append(0.07) # stay at current position, 0.09 is the open position for the gripper
+            q_target[-1] = 0.08
         else:
-            q_target.append(q_raw[-1])
+            q_target[-1] = q_raw[-1]
+        
+        print(f"q_target: {q_target}")
             
         # Publish commands via ROS manager
         if self.config.ros_config.with_l_arm:
@@ -317,11 +326,9 @@ class AgilexCobot(AgilexCobotBase):
         
         action = {}
         for i, name in enumerate(self.motors_features.keys()):
-            if name != "left_joint6.pos": # gripper joint
-                action[name] = float(q_target[i])
-            else:
-                action["left_joint6.pos"] = float(gripper)
-     
+            action[name] = float(q_target[i])
+       
+        print(f"action: {action}")
         return action
      
     

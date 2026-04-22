@@ -52,7 +52,7 @@ class RobotKinematics:
         self.with_gripper_joint_names = list(self.robot.joint_names()) if joint_names is None else joint_names
         # deafult setting: last joint is gripper
         self.joint_names = self.with_gripper_joint_names[:-1]
-        # print(f"[RobotKinematics.joint_names] : {joint_names}")
+        print(f"[RobotKinematics.joint_names] : {self.joint_names}")
 
         # Initialize frame task for IK
         self.tip_frame = self.solver.add_frame_task(self.target_frame_name, np.eye(4))
@@ -76,7 +76,8 @@ class RobotKinematics:
 
         # Update joint positions in placo robot
         for i, joint_name in enumerate(self.joint_names):
-            self.robot.set_joint(joint_name, joint_pos_rad[i])
+            # Ensure we pass a native Python float to the C++ binding
+            self.robot.set_joint(joint_name, float(joint_pos_rad[i]))
 
         # Update kinematics
         self.robot.update_kinematics()
@@ -112,7 +113,8 @@ class RobotKinematics:
 
         # Set current joint positions as initial guess
         for i, joint_name in enumerate(self.joint_names):
-            self.robot.set_joint(joint_name, current_joint_rad[i])
+            # Ensure we pass a native Python float to the C++ binding
+            self.robot.set_joint(joint_name, float(current_joint_rad[i]))
 
         # Update the target pose for the frame task
         self.tip_frame.T_world_frame = desired_ee_pose

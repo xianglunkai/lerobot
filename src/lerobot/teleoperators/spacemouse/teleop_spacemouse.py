@@ -196,7 +196,7 @@ class SpacemouseTeleop(Teleoperator):
             home_btn = state.buttons[0]
             if home_btn:
                 action_dict["home"] = True
-        # print(f"Gamepad Action: {action_dict}")
+      
         return action_dict
 
     def disconnect(self) -> None:
