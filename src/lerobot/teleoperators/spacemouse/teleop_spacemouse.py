@@ -26,6 +26,8 @@ from ..teleoperator import Teleoperator
 from .configuration_spacemouse import SpacemouseTeleopConfig
 
 import pyspacemouse
+import threading
+import time
 
 class GripperAction(IntEnum):
     CLOSE = 0
@@ -48,6 +50,8 @@ class SpacemouseTeleop(Teleoperator):
         self.robot_type = config.type
 
         self._connected = False
+        # Underlying pyspacemouse device object (returned by pyspacemouse.open())
+        self._device = None
         # Gripper toggle state: assume starts OPEN
         self._gripper_state: int = GripperAction.OPEN.value
         self._prev_button_state: int = 0
@@ -56,6 +60,7 @@ class SpacemouseTeleop(Teleoperator):
         self._latest_state = None  # will store the most recent raw state coming from the driver
         self._reader_thread = None
         self._stop_reader = False
+        self.state_lock = threading.Lock()
 
     @property
     def action_features(self) -> dict:
@@ -78,11 +83,19 @@ class SpacemouseTeleop(Teleoperator):
 
     def connect(self) -> None:
         """Connect to the SpaceMouse device (real or mock)."""
-        self._connected = bool(pyspacemouse.open())
+        # pyspacemouse.open() returns a device object (which may also be used
+        # as a context manager). Preserve the object so we can call its
+        # read()/close() methods instead of relying on any module-level helpers.
+        try:
+            self._device = pyspacemouse.open()
+        except Exception:
+            # open failed; ensure device stays None
+            self._device = None
+
+        self._connected = self._device is not None
 
         # Start background reader to avoid piling up driver messages (reduces perceived latency)
         if self._connected:
-            import threading
 
             def _reader_loop():
                 """Continuously poll the driver so its internal queue stays empty.
@@ -91,13 +104,17 @@ class SpacemouseTeleop(Teleoperator):
                 prevents buildup when the driver polls faster than the main control loop
                 (e.g. teleoperate.py's ≈60 Hz loop vs. SpaceMouse ≈125 Hz updates).
                 """
-
                 while not self._stop_reader:
                     try:
-                        self._latest_state = pyspacemouse.read()
+                        # Prefer the device instance's read() method.
+                        if self._device is None:
+                            break
+                        with self.state_lock:
+                            self._latest_state = self._device.read()
                     except Exception:
                         # In case device is unplugged mid-run; exit thread gracefully
                         break
+                    time.sleep(0.005)  # Sleep a little: driver typically updates ~100-200Hz; reduce CPU by a short sleep
 
             self._stop_reader = False
             self._reader_thread = threading.Thread(target=_reader_loop, daemon=True)
@@ -109,7 +126,16 @@ class SpacemouseTeleop(Teleoperator):
 
         # Prefer the state produced by the background reader (most recent),
         # fall back to direct read if thread hasn't produced anything yet.
-        state = self._latest_state if self._latest_state is not None else pyspacemouse.read()
+        with self.state_lock:
+            if self._latest_state is not None:
+                state = self._latest_state
+            else:
+                # Fallback to device.read() when available. Avoid using module-level
+                # read() which some pyspacemouse distributions do not expose.
+                if self._device is not None and hasattr(self._device, "read"):
+                    state = self._device.read()
+                else:
+                    raise RuntimeError("SpaceMouse device not ready and no read() method available")
 
         deltas = [
             state.y ** 3,
