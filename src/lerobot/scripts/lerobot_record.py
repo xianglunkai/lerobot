@@ -656,9 +656,14 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     events["exit_early"] = False
                     dataset.clear_episode_buffer()
                     continue
-
-                dataset.save_episode()
-                recorded_episodes += 1
+                
+                # ensure episode have data before save
+                if dataset.has_pending_frames():
+                    dataset.save_episode()
+                    recorded_episodes += 1
+                else:
+                    log_say("Episode buffer is empty, skipping save_episode().")
+                    dataset.clear_episode_buffer()  
     finally:
         log_say("Stop recording", cfg.play_sounds, blocking=True)
 

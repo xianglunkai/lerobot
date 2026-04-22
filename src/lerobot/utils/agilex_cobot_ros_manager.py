@@ -421,7 +421,7 @@ class AgilexCobotROSManager:
 
             # Check timeout: if exceeded, fall back to latest available frame (best-effort)
             if time.time() - start_time > timeout:
-                logger.warning(
+                print(
                     f"AgilexCobotROSManager: timed out waiting for synchronized frame after {timeout}s; returning latest available data (may be incomplete)."
                 )
                 latest = self._get_latest_frame_no_wait()
