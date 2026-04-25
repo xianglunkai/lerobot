@@ -93,6 +93,11 @@ from .relative_action_processor import (
     to_relative_actions,
 )
 from .rename_processor import RenameObservationsProcessorStep, rename_stats
+
+from .tq_processor import (
+    TimeAxisOptimizationProcessor
+)
+
 from .tokenizer_processor import ActionTokenizerProcessorStep, TokenizerProcessorStep
 
 __all__ = [
@@ -165,4 +170,5 @@ __all__ = [
     "to_relative_actions",
     "UnnormalizerProcessorStep",
     "VanillaObservationProcessorStep",
+    "TimeAxisOptimizationProcessor"
 ]

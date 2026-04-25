@@ -703,12 +703,14 @@ def compute_relative_action_stats(
 
     action_dim = features[ACTION]["shape"][0]
     action_names = features.get(ACTION, {}).get("names")
+    print(f"action_dim:{action_dim}, action_names:{action_names}, exclude_joints: {exclude_joints}")
     mask_step = RelativeActionsProcessorStep(
         enabled=True,
         exclude_joints=exclude_joints,
         action_names=action_names,
     )
     relative_mask = np.array(mask_step._build_mask(action_dim), dtype=np.float32)
+    print(f"relative_mask: {relative_mask}")
 
     logging.info("Loading action/state data for relative action stats...")
     all_actions = np.array(hf_dataset[ACTION], dtype=np.float32)

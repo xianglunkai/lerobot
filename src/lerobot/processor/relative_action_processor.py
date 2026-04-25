@@ -104,6 +104,15 @@ class RelativeActionsProcessorStep(ProcessorStep):
     _last_state: torch.Tensor | None = field(default=None, init=False, repr=False)
 
     def _build_mask(self, action_dim: int) -> list[bool]:
+
+        if self.action_names and isinstance(self.action_names[0], list):
+            print(f"***********RelativeActionsProcessorStep: [action_names]: {self.action_names}, will only use action_names[0] list********")
+            self.action_names = self.action_names[0] 
+        
+        if self.exclude_joints and isinstance(self.exclude_joints[0], list):
+            print(f"***********RelativeActionsProcessorStep: [exclude_joints]: {self.exclude_joints}, will only use exclude_joints[0] list********")
+            self.exclude_joints = self.exclude_joints[0]
+
         if not self.exclude_joints or self.action_names is None:
             return [True] * action_dim
 

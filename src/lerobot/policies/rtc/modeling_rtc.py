@@ -154,6 +154,10 @@ class RTCProcessor:
             - Guidance correction is computed via autograd using ``x1_t = x_t + time * v_t`` and
               ``error = (prev_chunk_left_over - x1_t) * weights``.
             - The final guidance weight is clamped by ``max_guidance_weight`` from the config.
+            - Alex Soare optimization: If ``max_guidance_weight`` is ``None``,
+              ``max_guidance_weight`` is automatically set to ``num_flow_matching_steps``
+              without requiring hyperparameter tuning.
+              Reference: https://alexander-soare.github.io/robotics/2025/08/05/smooth-as-butter-robot-policies.html
 
         Reference:
             https://www.physicalintelligence.company/download/real_time_chunking.pdf
@@ -209,19 +213,29 @@ class RTCProcessor:
             .unsqueeze(-1)
         )
 
-        with torch.enable_grad():
-            v_t = original_denoise_step_partial(x_t)
-            x_t.requires_grad_(True)
 
-            x1_t = x_t - time * v_t  # noqa: N806
-            err = (prev_chunk_left_over - x1_t) * weights
-            grad_outputs = err.clone().detach()
-            correction = torch.autograd.grad(x1_t, x_t, grad_outputs, retain_graph=False)[0]
+        # Identity approximation (J ≈ I): correction = err, no backward pass needed.
+        v_t = original_denoise_step_partial(x_t)
+        x1_t = x_t - time * v_t  # noqa: N806
+        err = (prev_chunk_left_over - x1_t) * weights
+        correction = err.clone().detach()
+        
 
-        max_guidance_weight = torch.as_tensor(self.rtc_config.max_guidance_weight)
+        # Alex Soare optimization: Use num_flow_matching_steps as max_guidance_weight if not set
+        # Reference: https://alexander-soare.github.io/robotics/2025/08/05/smooth-as-butter-robot-policies.html
+        # The number of flow matching steps can be used as a clipping parameter without hyperparameter tuning
+        max_guidance_weight = self.rtc_config.max_guidance_weight
+        if max_guidance_weight is None:
+            max_guidance_weight = num_flow_matching_steps
+
+        max_guidance_weight = torch.as_tensor(max_guidance_weight)
+
         tau_tensor = torch.as_tensor(tau)
         squared_one_minus_tau = (1 - tau_tensor) ** 2
-        inv_r2 = (squared_one_minus_tau + tau_tensor**2) / (squared_one_minus_tau)
+        prior_variance = torch.as_tensor(self.rtc_config.sigma_d**2)
+        inv_r2 = (squared_one_minus_tau + tau_tensor**2 * prior_variance) / (
+            squared_one_minus_tau * prior_variance
+        )
         c = torch.nan_to_num((1 - tau_tensor) / tau_tensor, posinf=max_guidance_weight)
         guidance_weight = torch.nan_to_num(c * inv_r2, posinf=max_guidance_weight)
         guidance_weight = torch.minimum(guidance_weight, max_guidance_weight)

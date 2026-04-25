@@ -20,7 +20,7 @@ from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTr
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
-from ..rtc.configuration_rtc import RTCConfig
+from ..rtc.configuration_rtc import RTCConfig, RTCTrainingConfig
 
 DEFAULT_IMAGE_SIZE = 224
 
@@ -58,6 +58,7 @@ class PI05Config(PreTrainedConfig):
 
     # Real-Time Chunking (RTC) configuration
     rtc_config: RTCConfig | None = None
+    rtc_training_config: RTCTrainingConfig | None = None
 
     image_resolution: tuple[int, int] = (
         DEFAULT_IMAGE_SIZE,

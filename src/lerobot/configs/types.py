@@ -50,3 +50,7 @@ class RTCAttentionSchedule(str, Enum):
     ONES = "ONES"
     LINEAR = "LINEAR"
     EXP = "EXP"
+
+class RTCTrainingDelayDistribution(str, Enum):
+    UNIFORM = "UNIFORM"
+    EXP = "EXP"
