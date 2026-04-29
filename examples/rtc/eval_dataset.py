@@ -549,6 +549,9 @@ class RTCEvaluator:
             k: v.unsqueeze(0) if isinstance(v, torch.Tensor) else v for k, v in second_sample.items()
         }
 
+        gt_first_actions = first_sample["action"]
+        gt_second_actions = second_sample["action"]
+        
         preprocessed_first_sample = self.preprocessor(first_sample)
         preprocessed_second_sample = self.preprocessor(second_sample)
 
@@ -575,6 +578,7 @@ class RTCEvaluator:
             # resume orignal actions
             prev_chunk_left_over = self.postprocessor(prev_chunk_left_over)
             prev_chunk_left_over = prev_chunk_left_over[:, shift:, :].squeeze(0)
+            gt_first_actions = gt_first_actions[:, shift:, :]
 
         logging.info(f"  Generated prev_chunk shape: {prev_chunk_left_over.shape}")
 
@@ -694,12 +698,12 @@ class RTCEvaluator:
         # Plot final actions comparison
         logging.info("=" * 80)
         logging.info("Plotting final actions comparison...")
-        self.plot_final_actions_comparison(rtc_actions, no_rtc_actions, prev_chunk_left_over)
+        self.plot_final_actions_comparison(rtc_actions, no_rtc_actions, prev_chunk_left_over, gt_first_actions, gt_second_actions)
 
         logging.info("=" * 80)
         logging.info("Evaluation completed successfully")
 
-    def plot_final_actions_comparison(self, rtc_actions, no_rtc_actions, prev_chunk_left_over):
+    def plot_final_actions_comparison(self, rtc_actions, no_rtc_actions, prev_chunk_left_over, gt_first_actions, gt_second_actions):
         """Plot final action predictions comparison on a single chart.
 
         Args:
@@ -732,6 +736,17 @@ class RTCEvaluator:
                 linewidth=2,
                 alpha=0.8,
             )
+            
+            # Plot original ground truth actions in orange
+            RTCDebugVisualizer.plot_waypoints(
+                [ax],
+                gt_first_actions.squeeze(0)[:, dim_idx : dim_idx + 1].cpu(),
+                start_from=0,
+                color="orange",
+                label="Original Ground Truth",
+                linewidth=2,
+                alpha=0.8,
+            )
 
             # Plot no-RTC actions in blue
             RTCDebugVisualizer.plot_waypoints(
@@ -742,6 +757,17 @@ class RTCEvaluator:
                 label="No RTC",
                 linewidth=2,
                 alpha=0.7,
+            )
+            
+            # Plot original ground truth actions for second sample in purple
+            RTCDebugVisualizer.plot_waypoints(
+                [ax],
+                gt_second_actions.squeeze(0)[:, dim_idx : dim_idx + 1].cpu(),
+                start_from=0,
+                color="purple",
+                label="Second Sample Ground Truth",
+                linewidth=2,
+                alpha=0.8,
             )
 
             # Plot RTC actions in green

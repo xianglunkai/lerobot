@@ -25,6 +25,7 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 from typing_extensions import Unpack
+from einops import rearrange, repeat
 
 from lerobot.utils.import_utils import _transformers_available
 
@@ -98,11 +99,9 @@ def create_sinusoidal_pos_embedding(  # see openpi `create_sinusoidal_pos_embedd
     if time.ndim == 1:
         sin_input = scaling_factor[None, :] * time[:, None]
         return torch.cat([torch.sin(sin_input), torch.cos(sin_input)], dim=1)
-
-    time_flat = time.reshape(-1)
-    sin_input = scaling_factor[None, :] * time_flat[:, None]
-    pos_emb = torch.cat([torch.sin(sin_input), torch.cos(sin_input)], dim=1)
-    return pos_emb.reshape(*time.shape, dimension)
+    else:
+        sin_input = rearrange(scaling_factor, "d -> 1 1 d") * rearrange(time, "b c -> b c 1")
+        return torch.cat([torch.sin(sin_input), torch.cos(sin_input)], dim=2)
 
 
 def sample_beta(alpha, beta, bsize, device):  # see openpi `sample_beta` (exact copy)
@@ -746,12 +745,24 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         if time is None:
             time = self.sample_time(actions.shape[0], actions.device)
 
-        if time.ndim == 1:
-            time_expanded = time[:, None, None]
-        elif time.ndim == 2:
-            time_expanded = time[:, :, None]
-        else:
-            raise ValueError(f"Expected time shape (B,) or (B, T), got {time.shape}")
+        rtc_cfg = self.config.rtc_training_config
+        prefix_mask = None
+        time_expanded = time[:, None, None]
+        if rtc_cfg is not None and rtc_cfg.enabled and self.training:
+            batch_size = actions.shape[0]
+           
+            # handle real time inference delay
+            delay = torch.randint(0, self.config.rtc_training_config.max_delay + 1, (batch_size,))
+            prefix_mask = rearrange(torch.arange(self.config.chunk_size), "c -> 1 c") < rearrange(
+                delay, "b -> b 1"
+            )
+            prefix_mask = prefix_mask.to(device=actions.device)
+            time = torch.where(
+                prefix_mask, 0, rearrange(time, "b -> b 1")
+            )  # using diffusion time 0 instead of flow matching time 1
+
+            time_expanded = rearrange(time, "b c -> b c 1")
+
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
 
@@ -850,28 +861,23 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         x_t = noise
         for step in range(num_steps):
             time = 1.0 + step * dt
+            time_tensor = torch.tensor(time, dtype=torch.float32, device=device).expand(bsize)
 
-            if use_training_time_rtc:
-                x_t_cond, time_tensor = apply_training_time_rtc_inference(
-                    x_t, time, inference_delay, prev_chunk_left_over, self.config.chunk_size
-                )
-                v_t = self.denoise_step(
+            def denoise_step_partial_call(input_x_t, current_timestep=time_tensor):
+                return self.denoise_step(
                     prefix_pad_masks=prefix_pad_masks,
                     past_key_values=past_key_values,
-                    x_t=x_t_cond,
-                    timestep=time_tensor,
+                    x_t=input_x_t,
+                    timestep=current_timestep,
                 )
+
+            if use_training_time_rtc:
+                x_t_cond, time_tensor, prev_chunk_left_over_ext = apply_training_time_rtc_inference(
+                    x_t, time, inference_delay, prev_chunk_left_over, self.config.chunk_size
+                )
+                v_t = denoise_step_partial_call(input_x_t=x_t_cond, current_timestep=time_tensor)
+                
             elif self._rtc_enabled():
-                time_tensor = torch.tensor(time, dtype=torch.float32, device=device).expand(bsize)
-
-                def denoise_step_partial_call(input_x_t, current_timestep=time_tensor):
-                    return self.denoise_step(
-                        prefix_pad_masks=prefix_pad_masks,
-                        past_key_values=past_key_values,
-                        x_t=input_x_t,
-                        timestep=current_timestep,
-                    )
-
                 v_t = self.rtc_processor.denoise_step(
                     x_t=x_t,
                     prev_chunk_left_over=prev_chunk_left_over,
@@ -882,19 +888,20 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                     num_flow_matching_steps=num_steps,
                 )
             else:
-                time_tensor = torch.tensor(time, dtype=torch.float32, device=device).expand(bsize)
-                v_t = self.denoise_step(
-                    prefix_pad_masks=prefix_pad_masks,
-                    past_key_values=past_key_values,
-                    x_t=x_t,
-                    timestep=time_tensor,
-                )
+                v_t = denoise_step_partial_call(x_t)
 
             x_t = x_t + dt * v_t
 
             if self.rtc_processor is not None and self.rtc_processor.is_debug_enabled():
                 self.rtc_processor.track(time=time, x_t=x_t, v_t=v_t)
 
+
+        # hold the previous inference_delay steps
+        if use_training_time_rtc and (prev_chunk_left_over_ext is not None):
+            if inference_delay is not None and inference_delay > 0:
+                delay = min(inference_delay, prev_chunk_left_over.shape[1])
+                x_t[:, :delay, :] = prev_chunk_left_over_ext[:, :delay, :]
+       
 
         # Optional smoothing:'poly5', and 'mpc' methods
         smoothing_method = kwargs.get("smoothing_method")
@@ -1339,16 +1346,8 @@ class PI05Policy(PreTrainedPolicy):
 
         # Compute loss (no separate state needed for PI05)
         postfix_mask = None
-        rtc_cfg = self.config.rtc_training_config
-        if rtc_cfg is not None and rtc_cfg.enabled and self.training:
-            batch_size = actions.shape[0]
-            time = self.model.sample_time(batch_size, actions.device)
-            noise = self.model.sample_noise(actions.shape, actions.device)
-            delay = sample_rtc_delay(rtc_cfg, batch_size, actions.device)
-            time, postfix_mask = apply_rtc_training_time(time, delay, actions.shape[1])
-            losses = self.model.forward(images, img_masks, tokens, masks, actions, noise=noise, time=time)
-        else:
-            losses = self.model.forward(images, img_masks, tokens, masks, actions)
+       
+        losses = self.model.forward(images, img_masks, tokens, masks, actions)
 
         # Truncate losses to actual action dimensions
         original_action_dim = self.config.output_features[ACTION].shape[0]

@@ -140,9 +140,11 @@ from lerobot.processor.rename_processor import rename_stats
 from lerobot.robots import Robot, RobotConfig, make_robot_from_config
 from lerobot.robots.bi_openarm_follower.config_bi_openarm_follower import BiOpenArmFollowerConfig
 from lerobot.robots.so_follower.config_so_follower import SOFollowerRobotConfig  # noqa: F401
+from lerobot.robots.agilex_cobot.config_agilex_cobot import AgilexCobotROSManagerConfig
 from lerobot.teleoperators import Teleoperator, TeleoperatorConfig, make_teleoperator_from_config
 from lerobot.teleoperators.openarm_mini.config_openarm_mini import OpenArmMiniConfig  # noqa: F401
 from lerobot.teleoperators.so_leader.config_so_leader import SOLeaderTeleopConfig  # noqa: F401
+from lerobot.teleoperators.spacemouse.configuration_spacemouse import SpacemouseTeleopConfig # noqa: F401
 from lerobot.utils.constants import ACTION, OBS_STATE, OBS_STR
 from lerobot.utils.control_utils import is_headless, predict_action
 from lerobot.utils.device_utils import get_safe_torch_device
@@ -167,9 +169,9 @@ class ThreadSafeRobot:
         with self._lock:
             return self._robot.get_observation()
 
-    def send_action(self, action: dict) -> None:
+    def send_action(self, action: dict) -> dict[str,Any]:
         with self._lock:
-            self._robot.send_action(action)
+            return self._robot.send_action(action)
 
     @property
     def observation_features(self) -> dict:
@@ -638,9 +640,9 @@ def _rollout_sync(
 
         if events["correction_active"]:
             robot_action = teleop.get_action()
-            send_action = robot.send_action(robot_action)
+            robot_action = robot.send_action(robot_action)
             robot_command_count += 1
-            action_frame = build_dataset_frame(dataset.features, send_action, prefix=ACTION)
+            action_frame = build_dataset_frame(dataset.features, robot_action, prefix=ACTION)
             if record_tick % record_stride == 0:
                 frame = {**obs_frame, **action_frame, "task": cfg.dataset.single_task}
                 if stream_online:
@@ -842,9 +844,9 @@ def _rollout_rtc(
 
         if events["correction_active"]:
             robot_action = teleop.get_action()
-            send_action = robot.send_action(robot_action)
+            robot_action = robot.send_action(robot_action)
             robot_command_count += 1
-            action_frame = build_dataset_frame(dataset.features, send_action, prefix=ACTION)
+            action_frame = build_dataset_frame(dataset.features, robot_action, prefix=ACTION)
             if record_tick % record_stride == 0:
                 frame = {**obs_frame, **action_frame, "task": cfg.dataset.single_task}
                 if stream_online:
@@ -901,6 +903,9 @@ def _rollout_rtc(
                         else:
                             frame_buffer.append(frame)
                     record_tick += 1
+                    
+        if cfg.display_data and robot_action:
+            log_rerun_data(observation=obs_filtered, action=robot_action)
 
         dt = time.perf_counter() - loop_start
         if (sleep_time := control_interval - dt) > 0:
@@ -1105,6 +1110,9 @@ def hil_collect(cfg: HILConfig) -> LeRobotDataset:
             recorded = 0
             while recorded < cfg.dataset.num_episodes and not events["stop_recording"]:
                 log_say(f"Episode {dataset.num_episodes}", cfg.play_sounds)
+                
+                if policy is not None:
+                    robot_raw.reset_to_default_positions()
 
                 if use_rtc:
                     queue_holder["queue"] = ActionQueue(cfg.rtc)
@@ -1162,6 +1170,8 @@ def hil_collect(cfg: HILConfig) -> LeRobotDataset:
             dataset.finalize()
 
         if robot_raw.is_connected:
+            if policy is not None:
+                robot_raw.reset_to_default_positions()
             robot_raw.disconnect()
         if teleop.is_connected:
             teleop.disconnect()

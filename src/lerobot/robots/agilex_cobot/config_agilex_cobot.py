@@ -39,8 +39,8 @@ class AgilexCobotConfig(RobotConfig):
     ik_target_frame_name: str = "gripper_frame_link"
     ik_joint_names: list[str] = field(
         default_factory=lambda: [
-            "left_joint0", "left_joint1", "left_joint2",
-            "left_joint3", "left_joint4", "left_joint5", "left_joint6"
+            "right_joint0", "right_joint1", "right_joint2",
+            "right_joint3", "right_joint4", "right_joint5"
         ]
     )
     

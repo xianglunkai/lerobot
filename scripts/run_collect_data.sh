@@ -8,6 +8,8 @@ export ROS_MASTER_URI=http://192.168.1.139:11311
 export HF_LEROBOT_HOME=/data/huggingface/lerobot
 export HF_HOME=/data/huggingface
 
+export LD_LIBRARY_PATH="/home/xlk/miniconda3/envs/lerobot/lib:$LD_LRARY_PATH"
+export LD_LIBRARY_PATH=/opt/ros/noetic/lib:$LD_LIBRARY_PATH
 
 # python3 -m lerobot.scripts.lerobot_record \
 #     --robot.type=agilex_cobot \
@@ -41,15 +43,14 @@ export HF_HOME=/data/huggingface
 #     --dataset.reset_time_s=15 \
 
 
-export LD_LIBRARY_PATH="/home/xlk/miniconda3/envs/lerobot/lib:$LD_LRARY_PATH"
-export LD_LIBRARY_PATH=/opt/ros/noetic/lib:$LD_LIBRARY_PATH
+
 python3 -m lerobot.scripts.lerobot_record \
     --robot.type=agilex_cobot \
     --robot.id=screw_sorting \
     --robot.use_external_commands=false \
     --robot.ros_config.with_mobile_base=false \
-    --robot.ros_config.with_l_arm=True \
-    --robot.ros_config.with_r_arm=False \
+    --robot.ros_config.with_l_arm=False \
+    --robot.ros_config.with_r_arm=True \
     --robot.ros_config.with_left_camera=False \
     --teleop.type=spacemouse \
     --dataset.repo_id=lerobot/screw_sorting_$(date +%Y%m%d_%H%M%S) \

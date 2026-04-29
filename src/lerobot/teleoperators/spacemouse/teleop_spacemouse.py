@@ -53,7 +53,7 @@ class SpacemouseTeleop(Teleoperator):
         # Underlying pyspacemouse device object (returned by pyspacemouse.open())
         self._device = None
         # Gripper toggle state: assume starts OPEN
-        self._gripper_state: int = GripperAction.OPEN.value
+        self._gripper_state: int = GripperAction.CLOSE.value
         self._prev_button_state: int = 0
 
         # Background reader thread vars (used to keep only the latest state)
@@ -141,9 +141,9 @@ class SpacemouseTeleop(Teleoperator):
             state.y ** 3,
             -state.x ** 3,
             state.z ** 3,
-            state.roll,
-            state.pitch,
-            -state.yaw ** 3,
+            state.roll*0,
+            state.pitch*0,
+            -state.yaw*0,
         ]
 
         # Clamp, apply deadzone & scaling
@@ -183,6 +183,7 @@ class SpacemouseTeleop(Teleoperator):
         # Each button press switches the command between OPEN and CLOSE accordingly.
         if self.config.use_gripper and hasattr(state, "buttons") and len(state.buttons) >= 2:
             btn = state.buttons[1]
+            print(f"btn: {btn}, self._prev_button_state: {self._prev_button_state}")
             if btn and not self._prev_button_state:
                 self._gripper_state = (
                     GripperAction.CLOSE.value

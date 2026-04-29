@@ -285,12 +285,11 @@ class AgilexCobot(AgilexCobotBase):
         
     
         # get current joint positions,noly consider left arm for now 
-        # todo: add right arm as well
-        q_raw = self.ros_manager._get_current_arm_position('left')
+        # todo: add left arm as well
+        q_raw = self.ros_manager._get_current_arm_position('right')
         q = np.array(q_raw[:-1], dtype=np.float32) # exclude gripper joint
         
         # compute current end-effector pose
-        print(f"q_raw:{q_raw}")
         current_ee_pose = self.kinematics.forward_kinematics(q)
         
         # compute desired end-effector pose
@@ -316,19 +315,14 @@ class AgilexCobot(AgilexCobotBase):
         else:
             q_target[-1] = q_raw[-1]
         
-        print(f"q_target: {q_target}")
-            
         # Publish commands via ROS manager
-        if self.config.ros_config.with_l_arm:
-            self.ros_manager.publish_left_arm_command(q_target.tolist())
         if self.config.ros_config.with_r_arm:
             self.ros_manager.publish_right_arm_command(q_target.tolist())
         
         action = {}
         for i, name in enumerate(self.motors_features.keys()):
             action[name] = float(q_target[i])
-       
-        print(f"action: {action}")
+    
         return action
      
     
