@@ -150,26 +150,15 @@ class SpacemouseTeleop(Teleoperator):
         
         # clamp deltas to [-1, 1] just in case (pyspacemouse docs say values are already normalized but we add this as a safety measure)
         deltas = np.array([max(-1.0, min(1.0, d)) for d in deltas])
-        
-        # apply deadzone & scaling
-        for i, axis in enumerate(["x", "y", "z", "roll", "pitch", "yaw"]):
-            step_size = self.config.end_effector_step_sizes.get(axis, 0.01)  # Default to 0.01 if not specified
-            delta = deltas[i] * step_size
-            
-            if abs(delta) < self.config.deadzone:
-                delta = 0
 
-            deltas[i] = delta
-
+        # convert deltas to spacemouse_action
         spacemouse_action = np.array(deltas, dtype=np.float32)
         
         # apply cutoff frequency (simple low-pass filter); alpha uses measured interval when available
         rc = 1.0 / (2 * math.pi * self.config.eef_cutoff_freq)
         now = time.perf_counter()
-     
         if not hasattr(self, "_prev_action"):
             self._prev_action = np.zeros_like(spacemouse_action)
-            
         if self._last_call_ms is not None:
             take_time = now - self._last_call_ms
             if take_time > 1.0:
@@ -180,8 +169,18 @@ class SpacemouseTeleop(Teleoperator):
                 alpha = dt_lp / (dt_lp + rc)
                 spacemouse_action = alpha * spacemouse_action.copy() + (1 - alpha) * self._prev_action.copy()
         
-        self._prev_action = spacemouse_action    
+        self._prev_action = spacemouse_action.copy() 
         
+        # apply deadzone & scaling
+        for i, axis in enumerate(["x", "y", "z", "roll", "pitch", "yaw"]):
+            step_size = self.config.end_effector_step_sizes.get(axis, 0.01)  # Default to 0.01 if not specified
+            delta_scaled   = spacemouse_action[i] * step_size
+            
+            if abs(delta_scaled) < self.config.deadzone:
+                delta_scaled = 0
+
+            spacemouse_action[i] = delta_scaled
+
         action_dict = {
             "delta_x": spacemouse_action[0],
             "delta_y": spacemouse_action[1],

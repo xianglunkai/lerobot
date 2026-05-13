@@ -38,7 +38,7 @@ class SpacemouseTeleopConfig(TeleoperatorConfig):
     )
     
     fps: float = 30.0  # Hz; should match lerobot-teleoperate --fps for consistent behaviour when using fixed-dt helpers
-    eef_cutoff_freq: float = 3  # Hz
+    eef_cutoff_freq: float = 30  # Hz
     deadzone: float=0.0005
 
   

@@ -364,6 +364,9 @@ class AgilexCobot(AgilexCobotBase):
             # It will be shut down when the program exits or when explicitly called
             self.ros_manager = None
             self._connected = False
+            self._eef_T_des = None
+            self._eef_q_cmd = None
+            self._eef_last_cmd_monotonic = None
             logger.info(f"{self.name} disconnected")
             
         
