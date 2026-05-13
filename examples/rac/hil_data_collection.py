@@ -145,6 +145,7 @@ from lerobot.teleoperators import Teleoperator, TeleoperatorConfig, make_teleope
 from lerobot.teleoperators.openarm_mini.config_openarm_mini import OpenArmMiniConfig  # noqa: F401
 from lerobot.teleoperators.so_leader.config_so_leader import SOLeaderTeleopConfig  # noqa: F401
 from lerobot.teleoperators.spacemouse.configuration_spacemouse import SpacemouseTeleopConfig # noqa: F401
+from lerobot.teleoperators.gamepad.configuration_gamepad import GamepadTeleopConfig # noqa: F401
 from lerobot.utils.constants import ACTION, OBS_STATE, OBS_STR
 from lerobot.utils.control_utils import is_headless, predict_action
 from lerobot.utils.device_utils import get_safe_torch_device
@@ -373,7 +374,7 @@ def _rtc_inference_thread(
     """Background thread for RTC action chunk generation."""
     latency_tracker = LatencyTracker()
     time_per_chunk = 1.0 / cfg.dataset.fps
-    threshold = 30
+    threshold = cfg.action_queue_size_to_get_new_actions
     policy_device = policy.config.device
     stats_window_start = time.perf_counter()
     policy_inference_count = 0
@@ -527,6 +528,7 @@ class HILConfig:
     calibrate: bool = False
     log_hz: bool = True
     hz_log_interval_s: float = 2.0
+    action_queue_size_to_get_new_actions: int = 30
 
     def __post_init__(self):
         policy_path = parser.get_path_arg("policy")
@@ -910,6 +912,9 @@ def _rollout_rtc(
         dt = time.perf_counter() - loop_start
         if (sleep_time := control_interval - dt) > 0:
             precise_sleep(sleep_time)
+        else:
+            print(f"Action execution {dt:.3f}s > expected {control_interval:.3f}s")
+         
         now = time.perf_counter()
         timestamp = now - start_t
 
@@ -1155,6 +1160,7 @@ def hil_collect(cfg: HILConfig) -> LeRobotDataset:
                 recorded += 1
 
                 if recorded < cfg.dataset.num_episodes and not events["stop_recording"]:
+                    log_say("Reset the environment", cfg.play_sounds)
                     reset_loop(robot, teleop, events, cfg.dataset.fps)
 
     finally:

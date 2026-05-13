@@ -121,6 +121,7 @@ class AgilexCobot(AgilexCobotBase):
     def __init__(self, config: AgilexCobotConfig):
         super().__init__(config)
         self._calibration_status = False
+        self._last_call_eef_time = None
     
     @property
     def is_connected(self) -> bool:
@@ -236,9 +237,6 @@ class AgilexCobot(AgilexCobotBase):
                 "delta_x" in action
             and "delta_y" in action
             and "delta_z" in action
-            and "delta_roll" in action
-            and "delta_pitch" in action
-            and "delta_yaw" in action
         ):
             return self.send_action_from_eef(action)
         
@@ -273,7 +271,7 @@ class AgilexCobot(AgilexCobotBase):
     
     def send_action_from_eef(self, ee_command: Dict[str, np.ndarray]) -> Dict[str, float]:
         """Send action commands to robot based on end-effector command."""
-    
+          
         # Extract delta commands
         delta_x = ee_command.get("delta_x", 0.0)
         delta_y = ee_command.get("delta_y", 0.0)
@@ -282,36 +280,35 @@ class AgilexCobot(AgilexCobotBase):
         delta_pitch = ee_command.get("delta_pitch", 0.0)
         delta_yaw = ee_command.get("delta_yaw", 0.0)
         gripper = ee_command.get("gripper", 1.0) # default to stay
-        
-    
+
         # get current joint positions,noly consider left arm for now 
         # todo: add left arm as well
         q_raw = self.ros_manager._get_current_arm_position('right')
-        q = np.array(q_raw[:-1], dtype=np.float32) # exclude gripper joint
+        q = np.array(q_raw[:-1], dtype=np.float64) # exclude gripper joint
         
         # compute current end-effector pose
         current_ee_pose = self.kinematics.forward_kinematics(q)
         
         # compute desired end-effector pose
         ref = current_ee_pose.copy()
-        delta_p = np.array([delta_x, delta_y, delta_z], dtype=np.float32)
+        delta_p = np.array([delta_x, delta_y, delta_z], dtype=np.float64)
         # r_abs = Rotation.from_rotvec([delta_roll, delta_pitch, delta_yaw]).as_matrix()
         r_abs = t3d.euler.euler2mat(delta_roll, delta_pitch, delta_yaw)
         desired = np.eye(4, dtype=float)
         desired[:3, :3] = ref[:3, :3] @ r_abs
         desired[:3, 3] = ref[:3, 3] + delta_p
-         
+      
         # compute IK to get desired joint positions
         q_target = np.zeros(7)
         q_target[:-1] = self.kinematics.inverse_kinematics(q, desired)
-        
+      
         # add gripper command to q_target if applicable
         if gripper == 0.0: # close
             q_target[-1] = 0.0
         elif gripper == 1.0: # stay
             q_target[-1] = q_raw[-1]
         elif gripper == 2.0: # open
-            q_target[-1] = 0.08
+            q_target[-1] = 0.03
         else:
             q_target[-1] = q_raw[-1]
         
@@ -324,7 +321,7 @@ class AgilexCobot(AgilexCobotBase):
             action[name] = float(q_target[i])
     
         return action
-     
+    
     
     def reset_to_default_positions(self) -> None:
         """Reset robot to default positions."""
@@ -368,3 +365,5 @@ class AgilexCobot(AgilexCobotBase):
             self.ros_manager = None
             self._connected = False
             logger.info(f"{self.name} disconnected")
+            
+        

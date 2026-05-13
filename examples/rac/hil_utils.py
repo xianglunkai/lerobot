@@ -201,11 +201,12 @@ def reset_loop(robot: Robot, teleop: Teleoperator, events: dict, fps: int):
     teleop_disable_torque(teleop)
     logger.info("Teleop enabled - press any key to start episode")
 
-    while not events["start_next_episode"] and not events["stop_recording"]:
-        loop_start = time.perf_counter()
-        action = teleop.get_action()
-        robot.send_action(action)
-        precise_sleep(1 / fps - (time.perf_counter() - loop_start))
+    if teleop.name not in ['spacemouse', 'gamepad']:
+        while not events["start_next_episode"] and not events["stop_recording"]:
+            loop_start = time.perf_counter()
+            action = teleop.get_action()
+            robot.send_action(action)
+            precise_sleep(1 / fps - (time.perf_counter() - loop_start))
 
     events["in_reset"] = False
     events["start_next_episode"] = False

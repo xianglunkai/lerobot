@@ -16,6 +16,7 @@
 
 import sys
 from enum import IntEnum
+from turtle import home
 from typing import Any
 
 import numpy as np
@@ -27,7 +28,8 @@ from .configuration_spacemouse import SpacemouseTeleopConfig
 
 import pyspacemouse
 import threading
-import time
+import time 
+import math
 
 class GripperAction(IntEnum):
     CLOSE = 0
@@ -53,7 +55,7 @@ class SpacemouseTeleop(Teleoperator):
         # Underlying pyspacemouse device object (returned by pyspacemouse.open())
         self._device = None
         # Gripper toggle state: assume starts OPEN
-        self._gripper_state: int = GripperAction.CLOSE.value
+        self._gripper_state: int = GripperAction.STAY.value
         self._prev_button_state: int = 0
 
         # Background reader thread vars (used to keep only the latest state)
@@ -61,7 +63,7 @@ class SpacemouseTeleop(Teleoperator):
         self._reader_thread = None
         self._stop_reader = False
         self.state_lock = threading.Lock()
-
+        self._last_call_ms = None
     @property
     def action_features(self) -> dict:
         if self.config.use_gripper:
@@ -138,37 +140,48 @@ class SpacemouseTeleop(Teleoperator):
                     raise RuntimeError("SpaceMouse device not ready and no read() method available")
 
         deltas = [
-            state.y ** 3,
-            -state.x ** 3,
-            state.z ** 3,
-            state.roll*0,
-            state.pitch*0,
-            -state.yaw*0,
+            state.y,
+            -state.x,
+            state.z,
+            state.roll,
+            state.pitch,
+            -state.yaw,
         ]
+        
+        # clamp deltas to [-1, 1] just in case (pyspacemouse docs say values are already normalized but we add this as a safety measure)
+        deltas = np.array([max(-1.0, min(1.0, d)) for d in deltas])
+        
+        # apply deadzone & scaling
+        for i, axis in enumerate(["x", "y", "z", "roll", "pitch", "yaw"]):
+            step_size = self.config.end_effector_step_sizes.get(axis, 0.01)  # Default to 0.01 if not specified
+            delta = deltas[i] * step_size
+            
+            if abs(delta) < self.config.deadzone:
+                delta = 0
 
-        # Clamp, apply deadzone & scaling
-        for i in range(6):
-            # Clamp to [-1, 1]
-            if deltas[i] > 1.0:
-                deltas[i] = 1.0
-            elif deltas[i] < -1.0:
-                deltas[i] = -1.0
-
-            # Deadzone
-            if abs(deltas[i]) < self.config.deadzone:
-                deltas[i] = 0.0
-
-            # Scale translation vs rotation
-            if i < 3:
-                deltas[i] *= self.config.translation_scale
-            else:
-                deltas[i] *= self.config.rotation_scale
-
-        # Additional yaw scaling
-        deltas[5] *= self.config.yaw_scale
+            deltas[i] = delta
 
         spacemouse_action = np.array(deltas, dtype=np.float32)
-
+        
+        # apply cutoff frequency (simple low-pass filter); alpha uses measured interval when available
+        rc = 1.0 / (2 * math.pi * self.config.eef_cutoff_freq)
+        now = time.perf_counter()
+     
+        if not hasattr(self, "_prev_action"):
+            self._prev_action = np.zeros_like(spacemouse_action)
+            
+        if self._last_call_ms is not None:
+            take_time = now - self._last_call_ms
+            if take_time > 1.0:
+                self._last_call_ms = None
+            else:
+                dt_lp = min(max(take_time, 1e-3), 2./self.config.fps) # 2/fps is the maximum time step for consistent behaviour when using fixed-dt helpers
+                # dt_lp = 1/self.config.fps
+                alpha = dt_lp / (dt_lp + rc)
+                spacemouse_action = alpha * spacemouse_action.copy() + (1 - alpha) * self._prev_action.copy()
+        
+        self._prev_action = spacemouse_action    
+        
         action_dict = {
             "delta_x": spacemouse_action[0],
             "delta_y": spacemouse_action[1],
@@ -176,27 +189,46 @@ class SpacemouseTeleop(Teleoperator):
             "delta_roll": spacemouse_action[3],
             "delta_pitch": spacemouse_action[4],
             "delta_yaw": spacemouse_action[5],
+            "home": False,
         }
 
         # Simple gripper control: right button (index 1) toggles open/close.
         # Assumption: the physical gripper starts in the OPEN state when the teleop script boots.
         # Each button press switches the command between OPEN and CLOSE accordingly.
+       
         if self.config.use_gripper and hasattr(state, "buttons") and len(state.buttons) >= 2:
-            btn = state.buttons[1]
-            print(f"btn: {btn}, self._prev_button_state: {self._prev_button_state}")
-            if btn and not self._prev_button_state:
-                self._gripper_state = (
-                    GripperAction.CLOSE.value
-                    if self._gripper_state == GripperAction.OPEN.value
-                    else GripperAction.OPEN.value
-                )
-            self._prev_button_state = btn
 
+            if self._last_call_ms is None:
+                self._gripper_state=  GripperAction.STAY.value
+            else:
+                # Normalize button value to boolean (some drivers return 0/1, others may return truthy values)
+                try:
+                    current_btn = bool(state.buttons[1])
+                except Exception:
+                    current_btn = False
+
+                # Toggle on rising edge: pressed now but was not pressed previously
+                if current_btn and not bool(self._prev_button_state):
+                    self._gripper_state = (
+                        GripperAction.CLOSE.value
+                        if self._gripper_state == GripperAction.OPEN.value
+                        else GripperAction.OPEN.value
+                    )
+
+                # Always update prev state to the normalized boolean
+                self._prev_button_state = current_btn
+                
             action_dict["gripper"] = self._gripper_state
 
-            home_btn = state.buttons[0]
-            if home_btn:
-                action_dict["home"] = True
+        # Home (left) button: independent of use_gripper so reset still works without gripper mapping.
+        if hasattr(state, "buttons") and len(state.buttons) >= 2:
+            try:
+                home_btn = bool(state.buttons[0])
+            except Exception:
+                home_btn = False
+            action_dict["home"] = home_btn
+
+        self._last_call_ms = now
       
         return action_dict
 

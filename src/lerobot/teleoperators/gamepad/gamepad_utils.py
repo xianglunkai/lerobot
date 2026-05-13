@@ -216,8 +216,26 @@ class GamepadController(InputController):
             self.running = False
             return
 
-        self.joystick = pygame.joystick.Joystick(0)
-        self.joystick.init()
+        selected = None
+        for i in range(pygame.joystick.get_count()):
+            j = pygame.joystick.Joystick(i)
+            j.init()
+            name = j.get_name().lower()
+            if "logitech" in name or "f310" in name:
+                selected = j
+                break
+        # fallback to first joystick if no name match
+        if selected is None and pygame.joystick.get_count() > 0:
+            selected = pygame.joystick.Joystick(0)
+            selected.init()
+
+        if selected is None:
+            logging.error("No suitable gamepad found after enumeration")
+            self.running = False
+            return
+
+        self.joystick = selected
+
         logging.info(f"Initialized gamepad: {self.joystick.get_name()}")
 
         print("Gamepad controls:")
@@ -289,7 +307,7 @@ class GamepadController(InputController):
             x_input = self.joystick.get_axis(1)  # Left/Right
 
             # Right stick Y (typically axis 3 or 4)
-            z_input = self.joystick.get_axis(3)  # Up/Down for Z
+            z_input = self.joystick.get_axis(4)  # Up/Down for Z
 
             # Apply deadzone to avoid drift
             x_input = 0 if abs(x_input) < self.deadzone else x_input

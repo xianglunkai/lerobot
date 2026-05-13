@@ -46,7 +46,6 @@ class AgilexCobotConfig(RobotConfig):
     
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
-
     def __post_init__(self):
         
         if self.ros_config.with_front_camera:

@@ -23,3 +23,6 @@ from ..config import TeleoperatorConfig
 @dataclass
 class GamepadTeleopConfig(TeleoperatorConfig):
     use_gripper: bool = True
+    x_step_size: float = 0.02
+    y_step_size: float = 0.02
+    z_step_size: float = 0.02

@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ..config import TeleoperatorConfig
 
@@ -25,7 +25,21 @@ class SpacemouseTeleopConfig(TeleoperatorConfig):
     use_gripper: bool = True
     mock: bool = False
     device: str = "" # "e":SpacePilot Enterprise"  "p":SpaceMouse Pro"
-    translation_scale: float = 0.01
-    rotation_scale: float = 0.08
-    deadzone: float = 0.005
-    yaw_scale: float = 2.0
+    # Optional per-axis step sizes for end-effector control (keys: "x", "y", "z", "roll", "pitch", "yaw")
+    end_effector_step_sizes: dict[str, float] = field(
+        default_factory=lambda: {
+            "x": 0.01,
+             "y": 0.01, 
+             "z": 0.01, 
+             "roll": 0.0, 
+             "pitch": 0.0, 
+             "yaw": 0.0
+        }
+    )
+    
+    fps: float = 30.0  # Hz; should match lerobot-teleoperate --fps for consistent behaviour when using fixed-dt helpers
+    eef_cutoff_freq: float = 3  # Hz
+    deadzone: float=0.0005
+
+  
+    

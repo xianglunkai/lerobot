@@ -83,7 +83,7 @@ class GamepadTeleop(Teleoperator):
         else:
             from .gamepad_utils import GamepadController as Gamepad
 
-        self.gamepad = Gamepad()
+        self.gamepad = Gamepad(self.config.x_step_size, self.config.y_step_size, self.config.z_step_size)
         self.gamepad.start()
 
     @check_if_not_connected
