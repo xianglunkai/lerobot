@@ -35,6 +35,11 @@ from lerobot.robots import Robot
 from lerobot.teleoperators import Teleoperator
 from lerobot.utils.control_utils import is_headless
 from lerobot.utils.robot_utils import precise_sleep
+from lerobot.utils.recording_annotations import (
+    EPISODE_FAILURE,
+    EPISODE_SUCCESS,
+    resolve_episode_success_label
+)
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +106,10 @@ def teleop_smooth_move_to(teleop: Teleoperator, target_pos: dict, duration_s: fl
         time.sleep(1 / fps)
 
 
-def init_keyboard_listener():
+def init_keyboard_listener(
+    episode_success_key: str | None = None,
+    episode_failure_key: str | None = None,
+):
     """Initialize keyboard listener with HIL controls."""
     events = {
         "exit_early": False,
@@ -112,6 +120,7 @@ def init_keyboard_listener():
         "resume_policy": False,
         "in_reset": False,
         "start_next_episode": False,
+        "episode_outcome": None,
     }
 
     if is_headless():
@@ -124,7 +133,12 @@ def init_keyboard_listener():
         try:
             if events["in_reset"]:
                 if key in [keyboard.Key.space, keyboard.Key.right]:
-                    logger.info("[HIL] Starting next episode...")
+                    logger.info("[HIL] Keep episode and start next...")
+                    events["rerecord_episode"] = False
+                    events["start_next_episode"] = True
+                elif key == keyboard.Key.left:
+                    logger.info("[HIL] Re-record previous episode and start next...")
+                    events["rerecord_episode"] = True
                     events["start_next_episode"] = True
                 elif hasattr(key, "char") and key.char == "c":
                     events["start_next_episode"] = True
@@ -149,12 +163,29 @@ def init_keyboard_listener():
                     logger.info("[HIL] End episode")
                     events["exit_early"] = True
                 elif key == keyboard.Key.left:
-                    logger.info("[HIL] Re-record episode")
-                    events["rerecord_episode"] = True
+                    logger.info("[HIL] End episode (choose keep/re-record during reset with →/←)")
                     events["exit_early"] = True
                 elif key == keyboard.Key.esc:
                     logger.info("[HIL] ESC - Stop recording...")
                     events["stop_recording"] = True
+                    events["exit_early"] = True
+                elif (
+                    episode_success_key
+                    and hasattr(key, "char")
+                    and key.char
+                    and key.char.lower() == episode_success_key.lower()
+                ):
+                    print(f"'{episode_success_key}' key pressed. Marking episode as success and exiting loop...")
+                    events["episode_outcome"] = EPISODE_SUCCESS
+                    events["exit_early"] = True
+                elif (
+                    episode_failure_key
+                    and hasattr(key, "char")
+                    and key.char
+                    and key.char.lower() == episode_failure_key.lower()
+                ):
+                    print(f"'{episode_failure_key}' key pressed. Marking episode as failure and exiting loop...")
+                    events["episode_outcome"] = EPISODE_FAILURE
                     events["exit_early"] = True
         except Exception as e:
             logger.info(f"Key error: {e}")
@@ -191,7 +222,7 @@ def reset_loop(robot: Robot, teleop: Teleoperator, events: dict, fps: int):
     teleop_smooth_move_to(teleop, robot_pos, duration_s=2.0, fps=50)
 
     logger.info("Press any key to enable teleoperation")
-    while not events["start_next_episode"] and not events["stop_recording"]:
+    while (not events["start_next_episode"]) and (not events["stop_recording"]):
         precise_sleep(0.05)
 
     if events["stop_recording"]:
@@ -224,7 +255,8 @@ def print_controls(rtc: bool = False):
         "    SPACE  - Pause policy\n"
         "    c      - Take control\n"
         "    p      - Resume policy after pause/correction\n"
-        "    →      - End episode\n"
+        "    →      - End episode (then keep in reset)\n"
+        "    ←      - End episode (choose re-record in reset)\n"
         "    ESC    - Stop and push to hub",
         mode,
     )

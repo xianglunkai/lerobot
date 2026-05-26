@@ -100,6 +100,7 @@ from dataclasses import dataclass, field
 from pprint import pformat
 from threading import Event, Lock, Thread
 from typing import Any
+import numpy as np
 
 import torch
 from hil_utils import (
@@ -152,9 +153,22 @@ from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import init_logging, log_say
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
+from lerobot.utils.recording_annotations import (
+    infer_collector_policy_id,
+    normalize_episode_success_label,
+    resolve_episode_success_label,
+)
+
+from lerobot.rl.acp_tags import build_acp_tagged_task
 
 logger = logging.getLogger(__name__)
 
+
+@dataclass
+class ACPInferenceConfig:
+    enable: bool = False
+    use_cfg: bool = False
+    cfg_beta: float = 1.0
 
 # RTC helpers
 
@@ -193,6 +207,86 @@ class ThreadSafeRobot:
     @property
     def cameras(self):
         return getattr(self._robot, "cameras", {})
+
+
+# Main HIL configuration dataclass
+@dataclass
+class HILConfig:
+    robot: RobotConfig
+    teleop: TeleoperatorConfig
+    dataset: HILDatasetConfig
+    policy: PreTrainedConfig | None = None
+    rtc: RTCConfig = field(default_factory=RTCConfig)
+    interpolation_multiplier: int = 2
+    record_interpolated_actions: bool = False
+    display_data: bool = True
+    play_sounds: bool = True
+    resume: bool = False
+    device: str = "cuda"
+    use_torch_compile: bool = False
+    compile_warmup_inferences: int = 2
+    calibrate: bool = False
+    log_hz: bool = True
+    hz_log_interval_s: float = 2.0
+    action_queue_size_to_get_new_actions: int = 30
+
+    # Whether to capture episode-level success/failure labels from keyboard.
+    enable_episode_outcome_labeling: bool = False
+
+    # Keyboard key to mark the current episode as success and end it.
+    episode_success_key: str = "s"
+
+    # Keyboard key to mark the current episode as failure and end it.
+    episode_failure_key: str = "f"
+
+    # Optional fallback label used when no explicit success/failure key was pressed.
+    default_episode_success: str | None = None
+
+    # If True, require explicit or default episode labels before saving.
+    require_episode_success_label: bool = False
+    
+    # ACP inference controls for policy-driven recording.
+    acp_inference: ACPInferenceConfig = field(default_factory=ACPInferenceConfig)
+
+    def __post_init__(self):
+        policy_path = parser.get_path_arg("policy")
+        if policy_path:
+            cli_overrides = parser.get_cli_overrides("policy")
+            self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
+            self.policy.pretrained_path = policy_path
+        if self.policy is None:
+            raise ValueError("policy.path is required")
+
+        if self.enable_episode_outcome_labeling:
+            label_key_bindings = {
+                "episode_success_key": self.episode_success_key,
+                "episode_failure_key": self.episode_failure_key,
+            }
+            for key_name, key_value in label_key_bindings.items():
+                if not key_value or len(key_value) != 1:
+                    raise ValueError(f"`{key_name}` must be a single character.")
+
+            normalized_keys = [
+                self.episode_success_key.lower(),
+                self.episode_failure_key.lower(),
+            ]
+            if len(set(normalized_keys)) != len(normalized_keys):
+                raise ValueError(
+                    "`episode_success_key`, and `episode_failure_key` must be distinct."
+                )
+
+        if self.default_episode_success is not None:
+            self.default_episode_success = normalize_episode_success_label(self.default_episode_success)
+            
+        if self.acp_inference.use_cfg and not self.acp_inference.enable:
+            raise ValueError("`acp_inference.use_cfg=true` requires `acp_inference.enable=true`.")
+        if self.acp_inference.cfg_beta < 0:
+            raise ValueError("`acp_inference.cfg_beta` must be >= 0.")
+      
+
+    @classmethod
+    def __get_path_fields__(cls) -> list[str]:
+        return ["policy"]
 
 
 def _set_openarm_max_relative_target_if_missing(
@@ -369,7 +463,7 @@ def _rtc_inference_thread(
     shutdown_event: Event,
     policy_active: Event,
     compile_warmup_done: Event,
-    cfg,
+    cfg: HILConfig,
 ):
     """Background thread for RTC action chunk generation."""
     latency_tracker = LatencyTracker()
@@ -434,7 +528,11 @@ def _rtc_inference_thread(
                         obs_batch[name] = obs_batch[name].permute(2, 0, 1).contiguous()
                     obs_batch[name] = obs_batch[name].unsqueeze(0).to(policy_device)
 
-                obs_batch["task"] = [cfg.dataset.single_task]
+                task = cfg.dataset.single_task
+                if cfg.acp_inference.enable:
+                    task = build_acp_tagged_task(task, is_positive=True)
+
+                obs_batch["task"] = [task]
                 obs_batch["robot_type"] = obs_holder.get("robot_type", "unknown")
 
                 preprocessed = preprocessor(obs_batch)
@@ -507,42 +605,17 @@ def _rtc_inference_thread(
             latency_sum_s = 0.0
 
 
-# Config
-
-
-@dataclass
-class HILConfig:
-    robot: RobotConfig
-    teleop: TeleoperatorConfig
-    dataset: HILDatasetConfig
-    policy: PreTrainedConfig | None = None
-    rtc: RTCConfig = field(default_factory=RTCConfig)
-    interpolation_multiplier: int = 2
-    record_interpolated_actions: bool = False
-    display_data: bool = True
-    play_sounds: bool = True
-    resume: bool = False
-    device: str = "cuda"
-    use_torch_compile: bool = False
-    compile_warmup_inferences: int = 2
-    calibrate: bool = False
-    log_hz: bool = True
-    hz_log_interval_s: float = 2.0
-    action_queue_size_to_get_new_actions: int = 30
-
-    def __post_init__(self):
-        policy_path = parser.get_path_arg("policy")
-        if policy_path:
-            cli_overrides = parser.get_cli_overrides("policy")
-            self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
-            self.policy.pretrained_path = policy_path
-        if self.policy is None:
-            raise ValueError("policy.path is required")
-
-    @classmethod
-    def __get_path_fields__(cls) -> list[str]:
-        return ["policy"]
-
+def _ensure_human_inloop_compatible_features(
+    dataset_features: dict[str, dict],
+    *,
+    action_feature_names: list[str],
+) -> None:
+    # Keep human-in-loop datasets schema-stable across teleop-only and policy-assisted phases so they can merge.
+    dataset_features["complementary_info.is_intervention"] = {
+        "dtype": "float32",
+        "shape": (1,),
+        "names": ["is_intervention"],
+    }
 
 # Rollout loops
 
@@ -647,6 +720,11 @@ def _rollout_sync(
             action_frame = build_dataset_frame(dataset.features, robot_action, prefix=ACTION)
             if record_tick % record_stride == 0:
                 frame = {**obs_frame, **action_frame, "task": cfg.dataset.single_task}
+                
+                 # For human-in-loop datasets, we also include RTC policy action and intervention flag in the recorded data for better downstream analysis and modeling.
+                if "complementary_info.is_intervention" in dataset.features:
+                    frame["complementary_info.is_intervention"] = np.array([1.0], dtype=np.float32)
+                    
                 if stream_online:
                     dataset.add_frame(frame)
                 else:
@@ -684,6 +762,11 @@ def _rollout_sync(
                 action_frame = build_dataset_frame(dataset.features, robot_action, prefix=ACTION)
                 if record_tick % record_stride == 0:
                     frame = {**obs_frame, **action_frame, "task": cfg.dataset.single_task}
+                    
+                     # For human-in-loop datasets, we also include RTC policy action and intervention flag in the recorded data for better downstream analysis and modeling.
+                    if "complementary_info.is_intervention" in dataset.features:
+                        frame["complementary_info.is_intervention"] = np.array([0.0], dtype=np.float32)
+                        
                     if stream_online:
                         dataset.add_frame(frame)
                     else:
@@ -835,6 +918,10 @@ def _rollout_rtc(
             or waiting_for_takeover
             or events["policy_paused"]
         )
+        
+        # To keep the RTC policy's observation up-to-date and responsive to teleop corrections and pauses, 
+        # we poll the robot observation at a fixed interval or when certain events occur. 
+        # The background RTC inference thread will read the latest observation from obs_holder when generating new action chunks.        
         if should_poll_obs:
             obs = robot.get_observation()
             obs_filtered = {k: obs[k] for k in obs_state_names if k in obs}
@@ -849,8 +936,13 @@ def _rollout_rtc(
             robot_action = robot.send_action(robot_action)
             robot_command_count += 1
             action_frame = build_dataset_frame(dataset.features, robot_action, prefix=ACTION)
+            # In human-in-loop correction mode, we can optionally record every teleop action (including interpolated ones)
             if record_tick % record_stride == 0:
                 frame = {**obs_frame, **action_frame, "task": cfg.dataset.single_task}
+                # For human-in-loop datasets, we also include RTC policy action and intervention flag in the recorded data for better downstream analysis and modeling.
+                if "complementary_info.is_intervention" in dataset.features:
+                    frame["complementary_info.is_intervention"] = np.array([1.0], dtype=np.float32)
+                    
                 if stream_online:
                     dataset.add_frame(frame)
                 else:
@@ -897,9 +989,17 @@ def _rollout_rtc(
                     robot.send_action(robot_action)
                     robot_command_count += 1
                     last_action = robot_action
+                    # Even though the RTC policy is generating action chunks, we only record at the same stride as the non-RTC case to keep the dataset size manageable. 
+                    # This means we may skip some interpolated actions in the recording,
+                    # but it allows us to capture the overall policy behavior while keeping the data volume reasonable.
                     action_frame = build_dataset_frame(dataset.features, robot_action, prefix=ACTION)
                     if record_tick % record_stride == 0:
                         frame = {**obs_frame, **action_frame, "task": cfg.dataset.single_task}
+                        
+                         # For human-in-loop datasets, we mark these frames as non-intervention since they are generated by the RTC policy, not the teleop corrections.
+                        if "complementary_info.is_intervention" in dataset.features:
+                            frame["complementary_info.is_intervention"] = np.array([0.0], dtype=np.float32)
+                            
                         if stream_online:
                             dataset.add_frame(frame)
                         else:
@@ -943,6 +1043,10 @@ def _rollout_rtc(
 def hil_collect(cfg: HILConfig) -> LeRobotDataset:
     """Main HIL data collection function (supports both sync and RTC modes)."""
     init_logging()
+    if cfg.require_episode_success_label and not cfg.enable_episode_outcome_labeling:
+        raise ValueError(
+            "`require_episode_success_label=true` requires `enable_episode_outcome_labeling=true`."
+        )
     logger.info(pformat(cfg.__dict__))
 
     use_rtc = cfg.rtc.enabled
@@ -986,6 +1090,11 @@ def hil_collect(cfg: HILConfig) -> LeRobotDataset:
             use_videos=cfg.dataset.video,
         ),
     )
+    
+    if cfg.teleop is not None:
+        action_names = dataset_features[ACTION]["names"]
+        action_names = list(action_features_hw) if action_names is None else list(action_names)
+        _ensure_human_inloop_compatible_features(dataset_features, action_feature_names=action_names)
 
     dataset = None
     listener = None
@@ -1068,7 +1177,10 @@ def hil_collect(cfg: HILConfig) -> LeRobotDataset:
 
         robot = ThreadSafeRobot(robot_raw) if use_rtc else robot_raw
         teleop.connect()
-        listener, events = init_keyboard_listener()
+        listener, events = init_keyboard_listener(
+            episode_success_key=cfg.episode_success_key if cfg.enable_episode_outcome_labeling else None,
+            episode_failure_key=cfg.episode_failure_key if cfg.enable_episode_outcome_labeling else None,
+        )
 
         # RTC-specific setup
         queue_holder = None
@@ -1114,6 +1226,8 @@ def hil_collect(cfg: HILConfig) -> LeRobotDataset:
         with VideoEncodingManager(dataset):
             recorded = 0
             while recorded < cfg.dataset.num_episodes and not events["stop_recording"]:
+                events["episode_outcome"] = None
+                events["rerecord_episode"] = False
                 log_say(f"Episode {dataset.num_episodes}", cfg.play_sounds)
                 
                 if policy is not None:
@@ -1149,19 +1263,46 @@ def hil_collect(cfg: HILConfig) -> LeRobotDataset:
                         cfg=cfg,
                     )
 
+                episode_success = None
+                if cfg.enable_episode_outcome_labeling:
+                    episode_success = resolve_episode_success_label(
+                        explicit_label=events.get("episode_outcome"),
+                        default_label=cfg.default_episode_success,
+                        require_label=cfg.require_episode_success_label,
+                    )
+                    if events.get("episode_outcome") is None and episode_success is not None:
+                        logging.warning(
+                            "Episode %s has no explicit success/failure label, defaulting to '%s'.",
+                            dataset.num_episodes,
+                            episode_success,
+                        )
+
+                # Execute a few seconds without recording to give time to manually reset the environment
+                if not events["stop_recording"] and (
+                    (recorded < cfg.dataset.num_episodes)
+                ):
+                    log_say("Reset the environment", cfg.play_sounds)
+                    reset_loop(robot, teleop, events, cfg.dataset.fps)
+
+                # Re-record episode
                 if events["rerecord_episode"]:
                     log_say("Re-recording", cfg.play_sounds)
                     events["rerecord_episode"] = False
                     events["exit_early"] = False
+                    events["episode_outcome"] = None
                     dataset.clear_episode_buffer()
                     continue
 
-                dataset.save_episode()
-                recorded += 1
-
-                if recorded < cfg.dataset.num_episodes and not events["stop_recording"]:
-                    log_say("Reset the environment", cfg.play_sounds)
-                    reset_loop(robot, teleop, events, cfg.dataset.fps)
+                # ensure episode have data before save
+                if dataset.has_pending_frames():
+                    extra_episode_metadata = (
+                        {"episode_success": episode_success} if cfg.enable_episode_outcome_labeling else None
+                    )
+                    dataset.save_episode(extra_episode_metadata=extra_episode_metadata)
+                    recorded += 1
+                else:
+                    log_say("Episode buffer is empty, skipping save_episode().")
+                    dataset.clear_episode_buffer()  
 
     finally:
         log_say("Stop recording", cfg.play_sounds, blocking=True)

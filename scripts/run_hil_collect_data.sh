@@ -23,7 +23,7 @@ echo "Selected model: $SELECT"
 case "$SELECT" in
     s)
         python examples/rac/hil_data_collection.py \
-            --policy.path=/home/xlk/work/lerobot/checkpoints/pi05_delta_act_screw_sorting/020000/pretrained_model \
+            --policy.path=/home/xlk/work/lerobot/checkpoints/pi05_delta_act_screw_sorting/030000/pretrained_model \
             --robot.type=agilex_cobot \
             --robot.use_external_commands=false \
             --robot.ros_config.with_mobile_base=false \
@@ -48,6 +48,11 @@ case "$SELECT" in
             --calibrate=true \
             --device=cuda \
             --action_queue_size_to_get_new_actions=30 \
+            --enable_episode_outcome_labeling=true \
+            --default_episode_success="success" \
+            --require_episode_success_label=true \
+            --acp_inference.enable=false \
+        
         ;;
 
     g)
