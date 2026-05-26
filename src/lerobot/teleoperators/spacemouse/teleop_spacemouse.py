@@ -14,10 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import sys
 from enum import IntEnum
-from turtle import home
-from typing import Any
 
 import numpy as np
 from lerobot.types import RobotAction
@@ -28,8 +25,7 @@ from .configuration_spacemouse import SpacemouseTeleopConfig
 
 import pyspacemouse
 import threading
-import time 
-import math
+import time
 
 class GripperAction(IntEnum):
     CLOSE = 0
@@ -154,34 +150,28 @@ class SpacemouseTeleop(Teleoperator):
         # convert deltas to spacemouse_action
         spacemouse_action = np.array(deltas, dtype=np.float32)
         
-        # apply cutoff frequency (simple low-pass filter); alpha uses measured interval when available
-        rc = 1.0 / (2 * math.pi * self.config.eef_cutoff_freq)
         now = time.perf_counter()
-        if not hasattr(self, "_prev_action"):
-            self._prev_action = np.zeros_like(spacemouse_action)
-        if self._last_call_ms is not None:
-            take_time = now - self._last_call_ms
-            if take_time > 1.0:
-                self._last_call_ms = None
-            else:
-                dt_lp = min(max(take_time, 1e-3), 2./self.config.fps) # 2/fps is the maximum time step for consistent behaviour when using fixed-dt helpers
-                # dt_lp = 1/self.config.fps
-                alpha = dt_lp / (dt_lp + rc)
-                spacemouse_action = alpha * spacemouse_action.copy() + (1 - alpha) * self._prev_action.copy()
+        # Intentionally avoid input-side low-pass filtering here.
+        # We now smooth on the robot side (v*dt + IK + trajectory smoothing), so
+        # filtering again at the teleop layer adds avoidable control lag.
         
-        self._prev_action = spacemouse_action.copy() 
-        
-        # apply deadzone & scaling
+        # apply deadzone on raw normalized axis, then map to velocity command
         for i, axis in enumerate(["x", "y", "z", "roll", "pitch", "yaw"]):
-            step_size = self.config.end_effector_step_sizes.get(axis, 0.01)  # Default to 0.01 if not specified
-            delta_scaled   = spacemouse_action[i] * step_size
-            
-            if abs(delta_scaled) < self.config.deadzone:
-                delta_scaled = 0
+            # Keep backward compatibility: if a caller still uses legacy per-cycle
+            # scaling, axis_max_speeds can be overridden in config.
+            limit = self.config.end_effector_step_sizes.get(axis, 0.01)
+        
+            raw_axis = spacemouse_action[i]
+            if abs(raw_axis) < self.config.deadzone:
+                raw_axis = 0.0
 
-            spacemouse_action[i] = delta_scaled
+            cmd = raw_axis * limit
+
+            spacemouse_action[i] = cmd
 
         action_dict = {
+            # Historical key names kept for compatibility with downstream robot
+            # adapters. Values now represent velocity commands.
             "delta_x": spacemouse_action[0],
             "delta_y": spacemouse_action[1],
             "delta_z": spacemouse_action[2],

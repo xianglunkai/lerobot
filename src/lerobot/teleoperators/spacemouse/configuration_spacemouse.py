@@ -25,21 +25,21 @@ class SpacemouseTeleopConfig(TeleoperatorConfig):
     use_gripper: bool = True
     mock: bool = False
     device: str = "" # "e":SpacePilot Enterprise"  "p":SpaceMouse Pro"
-    # Optional per-axis step sizes for end-effector control (keys: "x", "y", "z", "roll", "pitch", "yaw")
+    # Legacy per-axis per-cycle delta scales (kept for backward compatibility).
+    # Prefer `axis_max_speeds` for direct velocity semantics.
     end_effector_step_sizes: dict[str, float] = field(
         default_factory=lambda: {
-            "x": 0.01,
-             "y": 0.01, 
-             "z": 0.01, 
+            "x": 0.02,
+             "y": 0.02, 
+             "z": 0.02, 
              "roll": 0.0, 
              "pitch": 0.0, 
              "yaw": 0.0
         }
     )
     
-    fps: float = 30.0  # Hz; should match lerobot-teleoperate --fps for consistent behaviour when using fixed-dt helpers
-    eef_cutoff_freq: float = 3  # Hz
-    deadzone: float=0.0005
+    # Deadzone on raw normalized SpaceMouse axis input (before scaling), typical range [0.0, 1.0].
+    deadzone: float = 0.05
 
   
     

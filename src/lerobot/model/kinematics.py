@@ -90,7 +90,7 @@ class RobotKinematics:
         current_joint_pos: np.ndarray,
         desired_ee_pose: np.ndarray,
         position_weight: float = 1.0,
-        orientation_weight: float = 0.01,
+        orientation_weight: float = 0.5,
     ) -> np.ndarray:
         """
         Compute inverse kinematics using placo solver.

@@ -43,6 +43,16 @@ class AgilexCobotConfig(RobotConfig):
             "right_joint3", "right_joint4", "right_joint5"
         ]
     )
+
+    # EEF smoothing (single-thread path, no background servo thread).
+    eef_input_fps: float = 30.0
+    # If no fresh teleop command arrives for longer than this, force a brake/re-anchor.
+    eef_command_timeout_s: float = 0.2
+   
+    # Joint smoothing limits (for right arm 6 dof, gripper excluded).
+    joint_velocity_limits: list[float] = field(default_factory=lambda: [0.785] * 6)
+    joint_acceleration_limits: list[float] = field(default_factory=lambda: [1.57] * 6)
+    joint_jerk_limits: list[float] = field(default_factory=lambda: [6.28] * 6)
     
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
@@ -74,6 +84,16 @@ class AgilexCobotConfig(RobotConfig):
                     height=480,
                     color_mode=ColorMode.RGB,
                 )
+
+        # Keep list dimensions consistent for right arm servoing.
+        if len(self.joint_velocity_limits) != 6:
+            raise ValueError("joint_velocity_limits must have exactly 6 values")
+        if len(self.joint_acceleration_limits) != 6:
+            raise ValueError("joint_acceleration_limits must have exactly 6 values")
+        if len(self.joint_jerk_limits) != 6:
+            raise ValueError("joint_jerk_limits must have exactly 6 values")
+        if self.eef_command_timeout_s <= 0:
+            raise ValueError("eef_command_timeout_s must be > 0")
         super().__post_init__()
     
         
