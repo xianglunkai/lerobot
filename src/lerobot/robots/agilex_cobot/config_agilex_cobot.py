@@ -51,7 +51,7 @@ class AgilexCobotConfig(RobotConfig):
    
     # Joint smoothing limits (for right arm 6 dof, gripper excluded).
     joint_velocity_limits: list[float] = field(default_factory=lambda: [0.785] * 6)
-    joint_acceleration_limits: list[float] = field(default_factory=lambda: [1.57] * 6)
+    joint_acceleration_limits: list[float] = field(default_factory=lambda: [3.14] * 6)
     joint_jerk_limits: list[float] = field(default_factory=lambda: [6.28] * 6)
     
     cameras: dict[str, CameraConfig] = field(default_factory=dict)

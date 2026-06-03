@@ -39,7 +39,7 @@ class SpacemouseTeleopConfig(TeleoperatorConfig):
     )
     
     # Deadzone on raw normalized SpaceMouse axis input (before scaling), typical range [0.0, 1.0].
-    deadzone: float = 0.05
+    deadzone: float = 0.00
 
   
     

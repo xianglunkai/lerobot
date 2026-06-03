@@ -23,7 +23,7 @@ echo "Selected model: $SELECT"
 case "$SELECT" in
     s)
         python examples/rac/hil_data_collection.py \
-            --policy.path=/home/xlk/work/lerobot/checkpoints/pi05_delta_act_screw_sorting/030000/pretrained_model \
+            --policy.path=/home/xlk/work/lerobot/checkpoints/pi05_delta_act_screw_sorting/iter1/pretrained_model \
             --robot.type=agilex_cobot \
             --robot.use_external_commands=false \
             --robot.ros_config.with_mobile_base=false \

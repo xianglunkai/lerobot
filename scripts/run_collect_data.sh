@@ -52,9 +52,9 @@ python3 -m lerobot.scripts.lerobot_record \
     --robot.ros_config.with_l_arm=False \
     --robot.ros_config.with_r_arm=True \
     --robot.ros_config.with_left_camera=False \
-    --dataset.repo_id=lerobot/screw_sorting_$(date +%Y%m%d_%H%M%S) \
+    --dataset.repo_id=lerobot/screw_sorting_single_$(date +%Y%m%d_%H%M%S) \
     --dataset.single_task="Please sort and return the silver screws in the grey box to their proper places." \
-    --dataset.num_episodes=30 \
+    --dataset.num_episodes=100 \
     --dataset.fps=30 \
     --dataset.video=True \
     --dataset.push_to_hub=false \
