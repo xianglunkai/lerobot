@@ -154,6 +154,19 @@ def _extract_hidden_size(model: nn.Module) -> int:
     raise ValueError(f"Cannot infer hidden size for model config type {type(config)}.")
 
 
+def _extract_vision_features(output: Any) -> Tensor:
+    if isinstance(output, Tensor):
+        return output
+    if hasattr(output, "pooler_output") and output.pooler_output is not None:
+        return output.pooler_output
+    if hasattr(output, "last_hidden_state") and output.last_hidden_state is not None:
+        return output.last_hidden_state.mean(dim=1)
+    raise ValueError(
+        f"Unsupported vision encoder output type {type(output)}. "
+        "Expected a tensor or an output with pooler_output / last_hidden_state."
+    )
+
+
 def _extract_vision_feature_size(model: nn.Module) -> int:
     config = getattr(model, "config", None)
     if config is None:
@@ -323,14 +336,11 @@ class Pistar06Model(nn.Module):
 
     def _encode_images(self, flat_images: Tensor) -> Tensor:
         if hasattr(self.vision_encoder, "get_image_features"):
-            return self.vision_encoder.get_image_features(pixel_values=flat_images)
+            vision_output = self.vision_encoder.get_image_features(pixel_values=flat_images)
+            return _extract_vision_features(vision_output)
 
         vision_outputs = self.vision_encoder(pixel_values=flat_images, return_dict=True)
-        if hasattr(vision_outputs, "pooler_output") and vision_outputs.pooler_output is not None:
-            return vision_outputs.pooler_output
-        if hasattr(vision_outputs, "last_hidden_state"):
-            return vision_outputs.last_hidden_state.mean(dim=1)
-        raise ValueError("Unsupported vision encoder output. Expected pooler_output or last_hidden_state.")
+        return _extract_vision_features(vision_outputs)
 
     def _encode_language(self, input_ids: Tensor, attention_mask: Tensor) -> Tensor:
         outputs = self.language_model(

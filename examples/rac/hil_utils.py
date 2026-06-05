@@ -59,8 +59,13 @@ class HILDatasetConfig:
     num_image_writer_processes: int = 0
     num_image_writer_threads_per_camera: int = 4
     video_encoding_batch_size: int = 1
-    vcodec: str = "auto"
-    streaming_encoding: bool = True
+    # Video codec for encoding videos. Options: 'h264', 'hevc', 'libsvtav1', 'auto',
+    # or hardware-specific: 'h264_videotoolbox', 'h264_nvenc', 'h264_vaapi', 'h264_qsv'.
+    # Use 'auto' to auto-detect the best available hardware encoder.
+    vcodec: str = "libsvtav1"
+    # Enable streaming video encoding: encode frames in real-time during capture instead
+    # of writing PNG images first. Makes save_episode() near-instant. More info in the documentation: https://huggingface.co/docs/lerobot/streaming_video_encoding
+    streaming_encoding: bool = False
     encoder_queue_maxsize: int = 30
     encoder_threads: int | None = None
     rename_map: dict[str, str] = field(default_factory=dict)

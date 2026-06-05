@@ -37,7 +37,9 @@ case "$SELECT" in
             --dataset.video=True \
             --dataset.episode_time_s=240 \
             --dataset.push_to_hub=false \
-            --dataset.num_episodes=30 \
+            --dataset.num_episodes=50 \
+            --dataset.vcodec=libsvtav1 \
+            --dataset.streaming_encoding=false \
             --display_data=false \
             --rtc.enabled=true \
             --rtc.execution_horizon=20 \
@@ -72,6 +74,8 @@ case "$SELECT" in
             --dataset.episode_time_s=240 \
             --dataset.push_to_hub=false \
             --dataset.num_episodes=10 \
+            --dataset.vcodec=libsvtav1 \
+            --dataset.streaming_encoding=false \
             --display_data=false \
             --rtc.enabled=true \
             --rtc.execution_horizon=16 \

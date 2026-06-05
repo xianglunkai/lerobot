@@ -10,6 +10,7 @@ import torch
 from accelerate import Accelerator
 from termcolor import colored
 from torch.optim import Optimizer
+from tqdm import tqdm
 
 from lerobot.configs import parser
 from lerobot.configs.value_train import ValueTrainPipelineConfig
@@ -18,7 +19,7 @@ from lerobot.datasets.utils import cycle
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.rl.wandb_utils import make_logger
+from lerobot.rl.wandb_utils import WandBLogger
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
@@ -28,7 +29,7 @@ from lerobot.utils.train_utils import (
     save_checkpoint,
     update_last_checkpoint,
 )
-from lerobot.utils.utils import format_big_number, has_method, init_logging
+from lerobot.utils.utils import format_big_number, has_method, init_logging, inside_slurm
 
 
 def update_policy(
@@ -84,7 +85,9 @@ def value_train(
     if accelerator is None:
         from accelerate.utils import DistributedDataParallelKwargs
 
-        ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=False)
+        # Pistar06 uses SigLIP get_image_features(), which only touches the vision
+        # tower; DDP must tolerate unused parameters (same as lerobot_train.py).
+        ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
         force_cpu = cfg.value.device == "cpu"
         accelerator = Accelerator(
             step_scheduler_with_optimizer=False,
@@ -98,7 +101,7 @@ def value_train(
     if is_main_process:
         logging.info(pformat(cfg.to_dict()))
 
-    wandb_logger = make_logger(cfg) if is_main_process else None
+    wandb_logger = WandBLogger(cfg) if is_main_process else None
     if wandb_logger is None and is_main_process:
         logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
 
@@ -233,6 +236,14 @@ def value_train(
     )
 
     if is_main_process:
+        progbar = tqdm(
+            total=cfg.steps - step,
+            desc="Value training",
+            unit="step",
+            disable=inside_slurm(),
+            position=0,
+            leave=True,
+        )
         logging.info(
             f"Start value training on a fixed dataset, with effective batch size: {effective_batch_size}"
         )
@@ -271,6 +282,8 @@ def value_train(
         )
 
         step += 1
+        if is_main_process:
+            progbar.update(1)
         train_tracker.step()
         is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0 and is_main_process
         is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
@@ -303,6 +316,9 @@ def value_train(
                     wandb_logger.log_policy(checkpoint_dir)
 
             accelerator.wait_for_everyone()
+
+    if is_main_process:
+        progbar.close()
 
     if is_main_process:
         logging.info("End of value training")
