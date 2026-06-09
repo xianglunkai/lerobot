@@ -2,9 +2,9 @@
 
 # ==================== 选择性执行开关 ====================
 # 设置为 true 表示执行该步骤，设置为 false 表示跳过
-RUN_VALUE_FUNCTION_TRAINING=true
+RUN_VALUE_FUNCTION_TRAINING=false
 RUN_VALUE_FUNCTION_INFER=false
-RUN_RECOMPUTE_STATS=false
+RUN_RECOMPUTE_STATS=true
 RUN_VLA_TRAIN=false
 
 # ======================================================
@@ -26,23 +26,6 @@ export HF_HOME=/workspace/huggingface
 
 export repo_id=screw_sorting_v30
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PRETRAIN_DIR="${PRETRAIN_DIR:-${SCRIPT_DIR}/../pretrain_model}"
-if [[ -f "${PRETRAIN_DIR}/.model_paths.env" ]]; then
-    # shellcheck disable=SC1090
-    source "${PRETRAIN_DIR}/.model_paths.env"
-fi
-
-VALUE_VISION_REPO_ID="${VALUE_VISION_REPO_ID:-google/siglip-so400m-patch14-384}"
-VALUE_LANGUAGE_REPO_ID="${VALUE_LANGUAGE_REPO_ID:-google/gemma-3-270m}"
-if [[ -f "${PRETRAIN_DIR}/siglip-so400m-patch14-384/config.json" ]]; then
-    VALUE_VISION_REPO_ID="${PRETRAIN_DIR}/siglip-so400m-patch14-384"
-fi
-if [[ -f "${PRETRAIN_DIR}/gemma-3-270m/config.json" ]]; then
-    VALUE_LANGUAGE_REPO_ID="${PRETRAIN_DIR}/gemma-3-270m"
-fi
-PI05_PRETRAINED_PATH="${PI05_PRETRAINED_PATH:-${PRETRAIN_DIR}/pi05_base}"
-
 # Step 1： Value Function Training
 
 if [ "$RUN_VALUE_FUNCTION_TRAINING" = true ]; then
@@ -50,21 +33,18 @@ if [ "$RUN_VALUE_FUNCTION_TRAINING" = true ]; then
     accelerate launch \
         --multi_gpu \
         --num_processes=4 \
-        --gpu_ids=0,1,2,3 \
+        --gpu_ids=4,5,6,7 \
         --mixed_precision=bf16 \
         $(which lerobot-value-train) \
         --batch_size=32 \
         --num_workers=4 \
-        --steps=10000 \
+        --steps=15000 \
         --log_freq=200 \
         --save_freq=5000 \
         --rename_map='{"observation.images.cam_high":"observation.images.high","observation.images.cam_left_wrist":"observation.images.left","observation.images.cam_right_wrist":"observation.images.right","observation.state":"observation.state","action":"action"}' \
         --dataset.repo_id=${HF_LEROBOT_HOME}/${repo_id} \
         --value.type=pistar06 \
-        --value.vision_repo_id="${VALUE_VISION_REPO_ID}" \
-        --value.language_repo_id="${VALUE_LANGUAGE_REPO_ID}" \
         --value.push_to_hub=false \
-        # --value.normalization_mapping='{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}' \
         --value.input_features='{
                 "observation.images.high": {"type": "VISUAL", "shape": [480, 640, 3]},
                 "observation.images.right": {"type": "VISUAL", "shape": [480, 640, 3]},
@@ -97,8 +77,14 @@ if [ "$RUN_VALUE_FUNCTION_INFER" = true ]; then
         --acp.enable=true \
         --acp.n_step=50 \
         --acp.positive_ratio=0.3 \
+        --viz.enable=true \
+        --viz.episodes=0-10 \
+        --viz.video_keys=observation.images.high,observation.images.right \
+        --viz.overwrite=true \
+        --viz.smooth_window=5 \
         --output_dir=outputs/pi06star_value_infer_$repo_id \
         --job_name=pi06star_value_infer_$repo_id 
+
 else
     echo ">>> 跳过步骤2"
 fi
@@ -142,11 +128,10 @@ if [ "$RUN_VLA_TRAIN" = true ]; then
         --policy.dtype="bfloat16" \
         --policy.chunk_size=50 \
         --policy.n_action_steps=50 \
-        --policy.pretrained_path="${PI05_PRETRAINED_PATH}" \
+        --policy.pretrained_path=/workspace/lerobot/pretrain_model/pi05_base \
         --policy.push_to_hub=false \
         --policy.compile_model=true \
         --policy.gradient_checkpointing=true \
-        --policy.normalization_mapping='{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}' \
         --policy.input_features='{
             "observation.images.high": {"type": "VISUAL", "shape": [480, 640, 3]},
             "observation.images.right": {"type": "VISUAL", "shape": [480, 640, 3]},

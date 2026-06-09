@@ -33,7 +33,7 @@ from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.value import ValueInferencePipelineConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import load_info, write_info
+from lerobot.datasets.io_utils import load_info, write_info
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.scripts.value_infer_viz import (
     _export_overlay_videos,
@@ -672,11 +672,15 @@ def run_value_inference_pipeline(
 
         logging.info("Wrote value annotations to dataset root: %s", dataset.root)
 
-        # Sync computed columns into the in-memory hf_dataset so viz can read them
+        # Sync computed columns into the in-memory hf_dataset so viz can read them.
+        # hf_dataset is a read-only property on LeRobotDataset; update reader directly.
+        hf_dataset = dataset.reader.hf_dataset
         for field, values in columns.items():
-            if field in dataset.hf_dataset.column_names:
-                dataset.hf_dataset = dataset.hf_dataset.remove_columns([field])
-            dataset.hf_dataset = dataset.hf_dataset.add_column(field, values.tolist())
+            if field in hf_dataset.column_names:
+                hf_dataset = hf_dataset.remove_columns([field])
+            hf_dataset = hf_dataset.add_column(field, values.tolist())
+        dataset.reader.hf_dataset = hf_dataset
+        dataset.meta.info = load_info(Path(dataset.root))
 
         viz_outputs: list[str] = []
         if cfg.viz.enable:

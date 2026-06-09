@@ -332,6 +332,7 @@ class AgilexCobot(AgilexCobotBase):
         q_target = np.zeros(7)
         # todo: remaining work to debug 
         # q_target[:-1] = self._maybe_apply_ruckig(q, desired_q, dt=self.config.eef_input_fps)
+        q_target[:-1] = desired_q
 
         # add gripper command to q_target if applicable
         if gripper == 0.0:      # close
