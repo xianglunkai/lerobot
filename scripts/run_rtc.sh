@@ -47,7 +47,7 @@ export LD_LIBRARY_PATH=/opt/ros/noetic/lib:$LD_LIBRARY_PATH
 
 # training rtc test
 python examples/rtc/eval_with_real_robot.py \
-    --policy.path=/home/xlk/work/lerobot/checkpoints/pi05_delta_act_screw_sorting/020000/pretrained_model  \
+    --policy.path=/home/xlk/work/lerobot/checkpoints/pi06_policy_screw_sorting_single_v30/checkpoints/030000/pretrained_model  \
     --policy.device=cuda \
     --robot.type=agilex_cobot \
     --robot.use_external_commands=false \
@@ -56,7 +56,7 @@ python examples/rtc/eval_with_real_robot.py \
     --robot.ros_config.with_r_arm=True \
     --robot.ros_config.with_left_camera=False \
     --rtc.enabled=True \
-    --rtc.execution_horizon=20 \
+    --rtc.execution_horizon=25 \
     --rtc.max_guidance_weight=10.0 \
     --rtc.prefix_attention_schedule=EXP \
     --rtc.sigma_d=0.2 \
@@ -64,7 +64,7 @@ python examples/rtc/eval_with_real_robot.py \
     --duration=120 \
     --fps=30 \
     --device=cuda \
-    --action_queue_size_to_get_new_actions=30 \
+    --action_queue_size_to_get_new_actions=25 \
     --use_torch_compile=False \
     --enable_visualization=true \
     --interpolation_multiplier=2 \

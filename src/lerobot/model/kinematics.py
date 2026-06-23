@@ -48,11 +48,14 @@ class RobotKinematics:
 
         self.target_frame_name = target_frame_name
 
-        # Set joint names
+        # Set joint names: last entry is the gripper and is excluded from IK / Jacobian.
         self.with_gripper_joint_names = list(self.robot.joint_names()) if joint_names is None else joint_names
-        # deafult setting: last joint is gripper
+        if len(self.with_gripper_joint_names) < 2:
+            raise ValueError(
+                "joint_names must list arm joints plus the gripper as the last element "
+                "(e.g. right_joint0..5 + fr_joint7)."
+            )
         self.joint_names = self.with_gripper_joint_names[:-1]
-        print(f"[RobotKinematics.joint_names] : {self.joint_names}")
 
         # Initialize frame task for IK
         self.tip_frame = self.solver.add_frame_task(self.target_frame_name, np.eye(4))
@@ -146,3 +149,36 @@ class RobotKinematics:
             return result
         else:
             return joint_pos_deg
+    def _arm_jacobian(self) -> np.ndarray:
+        """6×n Jacobian for the controlled arm joints at the target frame."""
+        try:
+            j_full = self.robot.frame_jacobian(self.target_frame_name, "world")
+            j_cols = [self.robot.get_joint_v_offset(joint_name) for joint_name in self.joint_names]
+            return j_full[:, j_cols]
+        except (TypeError, AttributeError, RuntimeError):
+            # Older placo: joint_jacobian(joint) returns the chain Jacobian at that joint.
+            return self.robot.joint_jacobian(self.joint_names[-1], "world")
+
+    def get_damped_pinv(self, joint_pos_rad: np.ndarray, damping: float = 0.1) -> np.ndarray:
+        """
+        给定关节角(弧度)，返回当前构型的阻尼最小二乘伪逆 (6×n)。
+        用于速度级遥操作。
+        """
+        # 更新 robot 到当前关节角
+        if len(joint_pos_rad) != len(self.joint_names):
+            raise ValueError(
+                f"Expected {len(self.joint_names)} arm joint values, got {len(joint_pos_rad)}. "
+                f"Arm joints: {self.joint_names}. "
+                f"If you passed only arm names to joint_names, append the gripper "
+                f"(e.g. fr_joint7) as the last element — RobotKinematics always excludes it."
+            )
+        for i, joint_name in enumerate(self.joint_names):
+            self.robot.set_joint(joint_name, float(joint_pos_rad[i]))
+        self.robot.update_kinematics()
+
+        j = self._arm_jacobian()
+
+        # 阻尼伪逆
+        jj_t = j @ j.T
+        damped_inv = j.T @ np.linalg.inv(jj_t + damping**2 * np.eye(6))
+        return damped_inv

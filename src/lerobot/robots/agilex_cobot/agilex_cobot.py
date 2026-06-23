@@ -121,32 +121,9 @@ class AgilexCobot(AgilexCobotBase):
         super().__init__(config)
         self._calibration_status = False
         self._last_call_eef_time = None
-
-        # MoveIt2-like online smoothing (Ruckig). Fallback is direct target command.
-        self._ruckig_otg = None
-        self._ruckig_input = None
-        self._ruckig_output = None
-        self._ruckig_result_working = None
-        self._ruckig_result_finished = None
-        self._ruckig_active = False
-        self._servo_joint_state_initialized = False
-        self._fallback_qd = np.zeros(6, dtype=np.float64)
-        self._fallback_qdd = np.zeros(6, dtype=np.float64)
-
-        try:
-            from ruckig import InputParameter, OutputParameter, Result, Ruckig  # type: ignore[import-not-found]
-
-            dof = 6
-            self._ruckig_otg = Ruckig(dof, 1.0 / max(self.config.eef_input_fps, 1.0))
-            self._ruckig_input = InputParameter(dof)
-            self._ruckig_output = OutputParameter(dof)
-            self._ruckig_result_working = Result.Working
-            self._ruckig_result_finished = Result.Finished
-            self._ruckig_active = True
-        except Exception as exc:
-            logger.warning("Ruckig unavailable, using internal rate-limited smoother: %s", exc)
-
-    
+        self._filtered_vel = np.zeros(6, dtype=np.float64)
+        self._integrated_q = None
+ 
     @property
     def is_connected(self) -> bool:
         """Check if robot is connected via ROS."""
@@ -262,7 +239,7 @@ class AgilexCobot(AgilexCobotBase):
             and "delta_y" in action
             and "delta_z" in action
         ):
-            return self.send_action_from_eef(action)
+            return self.send_action_from_eef_vel(action)
         
         # Extract arm commands
         left_arm_positions = [
@@ -330,8 +307,7 @@ class AgilexCobot(AgilexCobotBase):
         desired_q = self.kinematics.inverse_kinematics(q, desired)
 
         q_target = np.zeros(7)
-        # todo: remaining work to debug 
-        # q_target[:-1] = self._maybe_apply_ruckig(q, desired_q, dt=self.config.eef_input_fps)
+  
         q_target[:-1] = desired_q
 
         # add gripper command to q_target if applicable
@@ -354,64 +330,75 @@ class AgilexCobot(AgilexCobotBase):
 
         return action
 
-    def _apply_internal_smoother(self, q_current: np.ndarray, q_target: np.ndarray, dt: float) -> np.ndarray:
-        """Fallback smoother with velocity/acceleration/jerk limits.
+    def send_action_from_eef_vel(self, ee_command: Dict[str, np.ndarray]) -> Dict[str, float]:
+        """Send action commands to robot based on end-effector command (velocity-level)."""
+        now = time.time()
+        if self._last_call_eef_time is not None:
+            if now - self._last_call_eef_time > self.config.eef_command_timeout_s:
+                self._servo_joint_state_initialized = False
+                self._integrated_q = None
+                self._filtered_vel.fill(0.0)
+        self._last_call_eef_time = now
 
-        This is used when ruckig is not installed, to keep joint commands continuous.
-        """
-        dt = max(float(dt), 1e-3)
-        v_lim = np.asarray(self.config.joint_velocity_limits, dtype=np.float64)
-        a_lim = np.asarray(self.config.joint_acceleration_limits, dtype=np.float64)
-        j_lim = np.asarray(self.config.joint_jerk_limits, dtype=np.float64)
+        dt = 1.0 / self.config.eef_input_fps
+        delta_x = ee_command.get("delta_x", 0.0)
+        delta_y = ee_command.get("delta_y", 0.0)
+        delta_z = ee_command.get("delta_z", 0.0)
+        delta_roll = ee_command.get("delta_roll", 0.0)
+        delta_pitch = ee_command.get("delta_pitch", 0.0)
+        delta_yaw = ee_command.get("delta_yaw", 0.0)
+        gripper = ee_command.get("gripper", 1.0)
 
-        # Desired velocity to move toward target in current control step.
-        v_des = np.clip((q_target - q_current) / dt, -v_lim, v_lim)
-        a_des = np.clip((v_des - self._fallback_qd) / dt, -a_lim, a_lim)
+        raw_vel = np.array([delta_x, delta_y, delta_z, delta_roll, delta_pitch, delta_yaw],
+                        dtype=np.float64)
+        
+        fc = getattr(self.config, 'velocity_filter_cutoff_hz', 5.0)
+        alpha = 2.0 * np.pi * fc * dt
+        alpha = np.clip(alpha, 0.0, 1.0)
+        self._filtered_vel = (1.0 - alpha) * self._filtered_vel + alpha * raw_vel
+        v_filt = self._filtered_vel
 
-        # Jerk-limit the acceleration update.
-        da = a_des - self._fallback_qdd
-        da_lim = j_lim * dt
-        a_cmd = self._fallback_qdd + np.clip(da, -da_lim, da_lim)
 
-        # Integrate with limits.
-        v_cmd = self._fallback_qd + a_cmd * dt
-        v_cmd = np.clip(v_cmd, -v_lim, v_lim)
-        q_cmd = q_current + v_cmd * dt
-
-        self._fallback_qdd = a_cmd
-        self._fallback_qd = v_cmd
-        return q_cmd
-
-    def _maybe_apply_ruckig(self, q_current: np.ndarray, q_target: np.ndarray, dt: float) -> np.ndarray:
-        """Apply Ruckig online trajectory generation if available."""
-        if not self._ruckig_active:
-            print("1. rucking is not active,use internal smoother")
-            return self._apply_internal_smoother(q_current, q_target, dt)
-        if self._ruckig_input is None or self._ruckig_output is None or self._ruckig_otg is None:
-            print("2. rucking is not active,use internal smoother")
-            return self._apply_internal_smoother(q_current, q_target, dt)
-
-        if not self._servo_joint_state_initialized:
-            self._ruckig_input.current_position = q_current.tolist()
-            self._ruckig_input.current_velocity = [0.0] * 6
-            self._ruckig_input.current_acceleration = [0.0] * 6
+        q_raw = self.ros_manager._get_current_arm_position('right')
+        q = np.array(q_raw[:-1], dtype=np.float64)  
+        if self._integrated_q is None or not self._servo_joint_state_initialized:
+            if self.kinematics.use_rad:
+                self._integrated_q = q.copy()
+            else:
+                self._integrated_q = np.deg2rad(q.copy())
             self._servo_joint_state_initialized = True
 
-        self._ruckig_input.target_position = q_target.tolist()
-        self._ruckig_input.target_velocity = [0.0] * 6
-        self._ruckig_input.target_acceleration = [0.0] * 6
-        self._ruckig_input.max_velocity = [float(v) for v in self.config.joint_velocity_limits]
-        self._ruckig_input.max_acceleration = [float(a) for a in self.config.joint_acceleration_limits]
-        self._ruckig_input.max_jerk = [float(j) for j in self.config.joint_jerk_limits]
+        lambda_dls = getattr(self.config, 'dls_damping', 0.1)
+        J_pinv = self.kinematics.get_damped_pinv(self._integrated_q, damping=lambda_dls)
+        q_dot = J_pinv @ v_filt
+        self._integrated_q = self._integrated_q + q_dot * dt
 
-        result = self._ruckig_otg.update(self._ruckig_input, self._ruckig_output)
-        if result in (self._ruckig_result_working, self._ruckig_result_finished):
-            q_cmd = np.array(self._ruckig_output.new_position, dtype=np.float64)
-            self._ruckig_output.pass_to_input(self._ruckig_input)
-            return q_cmd
+        if self.kinematics.use_rad:
+            desired_q = self._integrated_q
+        else:
+            desired_q = np.rad2deg(self._integrated_q)
 
-        print("3. rucking is not active,use internal smoother")
-        return self._apply_internal_smoother(q_current, q_target, dt)
+        q_target = np.zeros(7)
+        q_target[:-1] = desired_q
+
+        if gripper == 0.0:
+            q_target[-1] = 0.0
+        elif gripper == 1.0:
+            q_target[-1] = q_raw[-1]
+        elif gripper == 2.0:
+            q_target[-1] = 0.03
+        else:
+            q_target[-1] = q_raw[-1]
+
+        if self.config.ros_config.with_r_arm:
+            self.ros_manager.publish_right_arm_command(q_target.tolist())
+
+        action = {}
+        for i, name in enumerate(self.motors_features.keys()):
+            action[name] = float(q_target[i])
+        return action
+
+
 
     def reset_to_default_positions(self) -> None:
         """Reset robot to default positions."""
@@ -456,8 +443,6 @@ class AgilexCobot(AgilexCobotBase):
             self._connected = False
             self._last_call_eef_time = None
             self._servo_joint_state_initialized = False
-            self._fallback_qd[:] = 0.0
-            self._fallback_qdd[:] = 0.0
             logger.info(f"{self.name} disconnected")
             
         

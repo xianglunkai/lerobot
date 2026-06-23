@@ -37,10 +37,12 @@ class AgilexCobotConfig(RobotConfig):
     
     urdf_path: str = "/home/xlk/work/lerobot/examples/hil-serl/aloha_new_description/urdf"
     ik_target_frame_name: str = "gripper_frame_link"
+    # Arm joints + gripper (last). RobotKinematics excludes the last name from IK/Jacobian.
     ik_joint_names: list[str] = field(
         default_factory=lambda: [
             "right_joint0", "right_joint1", "right_joint2",
-            "right_joint3", "right_joint4", "right_joint5"
+            "right_joint3", "right_joint4", "right_joint5",
+            "gripper_frame_joint",
         ]
     )
 
@@ -48,12 +50,9 @@ class AgilexCobotConfig(RobotConfig):
     eef_input_fps: float = 30.0
     # If no fresh teleop command arrives for longer than this, force a brake/re-anchor.
     eef_command_timeout_s: float = 0.2
-   
-    # Joint smoothing limits (for right arm 6 dof, gripper excluded).
-    joint_velocity_limits: list[float] = field(default_factory=lambda: [0.785] * 6)
-    joint_acceleration_limits: list[float] = field(default_factory=lambda: [3.14] * 6)
-    joint_jerk_limits: list[float] = field(default_factory=lambda: [6.28] * 6)
     
+    velocity_filter_cutoff_hz: float = 5
+   
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
     def __post_init__(self):
@@ -86,12 +85,6 @@ class AgilexCobotConfig(RobotConfig):
                 )
 
         # Keep list dimensions consistent for right arm servoing.
-        if len(self.joint_velocity_limits) != 6:
-            raise ValueError("joint_velocity_limits must have exactly 6 values")
-        if len(self.joint_acceleration_limits) != 6:
-            raise ValueError("joint_acceleration_limits must have exactly 6 values")
-        if len(self.joint_jerk_limits) != 6:
-            raise ValueError("joint_jerk_limits must have exactly 6 values")
         if self.eef_command_timeout_s <= 0:
             raise ValueError("eef_command_timeout_s must be > 0")
         super().__post_init__()

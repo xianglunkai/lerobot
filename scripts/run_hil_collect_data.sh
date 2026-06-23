@@ -23,7 +23,7 @@ echo "Selected model: $SELECT"
 case "$SELECT" in
     s)
         python examples/rac/hil_data_collection.py \
-            --policy.path=/home/xlk/work/lerobot/checkpoints/pi06star_policy_screw_sorting_v30/checkpoints/030000/pretrained_model \
+            --policy.path=/home/xlk/work/lerobot/checkpoints/pi06_policy_screw_sorting_single_v30/checkpoints/030000/pretrained_model \
             --robot.type=agilex_cobot \
             --robot.use_external_commands=false \
             --robot.ros_config.with_mobile_base=false \
@@ -42,18 +42,18 @@ case "$SELECT" in
             --dataset.streaming_encoding=true \
             --display_data=false \
             --rtc.enabled=true \
-            --rtc.execution_horizon=20 \
+            --rtc.execution_horizon=25 \
             --rtc.max_guidance_weight=10.0 \
             --rtc.prefix_attention_schedule=EXP \
             --rtc.sigma_d=0.2 \
             --interpolation_multiplier=1 \
             --calibrate=true \
             --device=cuda \
-            --action_queue_size_to_get_new_actions=30 \
+            --action_queue_size_to_get_new_actions=25 \
             --enable_episode_outcome_labeling=true \
             --default_episode_success="success" \
             --require_episode_success_label=true \
-            --acp_inference.enable=true \
+            --acp_inference.enable=false \
         
         ;;
 

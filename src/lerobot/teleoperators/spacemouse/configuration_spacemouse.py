@@ -29,9 +29,9 @@ class SpacemouseTeleopConfig(TeleoperatorConfig):
     # Prefer `axis_max_speeds` for direct velocity semantics.
     end_effector_step_sizes: dict[str, float] = field(
         default_factory=lambda: {
-            "x": 0.02,
-             "y": 0.02, 
-             "z": 0.02, 
+            "x": 0.2,
+             "y": 0.2, 
+             "z": 0.2, 
              "roll": 0.0, 
              "pitch": 0.0, 
              "yaw": 0.0
@@ -39,7 +39,7 @@ class SpacemouseTeleopConfig(TeleoperatorConfig):
     )
     
     # Deadzone on raw normalized SpaceMouse axis input (before scaling), typical range [0.0, 1.0].
-    deadzone: float = 0.00
+    deadzone: float = 0.005
 
   
     
