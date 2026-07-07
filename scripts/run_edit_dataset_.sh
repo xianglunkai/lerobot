@@ -1,9 +1,8 @@
-export HF_DATASETS_CACHE=/workspace/huggingface/.cache
-export HF_LEROBOT_HOME=/workspace/huggingface/lerobot
-export HF_HOME=/workspace/huggingface
+export HF_LEROBOT_HOME=/data/huggingface/lerobot
+export HF_HOME=/data/huggingface
 
 
-export repo_id=take_me_tissues_v30_new
+export repo_id=lerobot-data-collection/hil_screw_sorting_20260706_162216
 
 # S1. Remove specific episodes from a dataset. This is useful for filtering out undesired data.
 # Delete episodes and modifies original dataset
@@ -17,8 +16,8 @@ lerobot-edit-dataset \
     --repo_id ${HF_LEROBOT_HOME}/${repo_id} \
     --new_repo_id ${HF_LEROBOT_HOME}/${repo_id}_after_deletion \
     --operation.type delete_episodes \
-    --operation.episode_indices "[28]" \
-    --push_to_hub true
+    --operation.episode_indices "[34]" \
+    --push_to_hub False
 
 # S2. Combine multiple datasets into a single dataset.
 # Merge train and validation splits back into one dataset

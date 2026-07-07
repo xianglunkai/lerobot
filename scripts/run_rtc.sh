@@ -56,7 +56,7 @@ python examples/rtc/eval_with_real_robot.py \
     --robot.ros_config.with_r_arm=True \
     --robot.ros_config.with_left_camera=False \
     --rtc.enabled=True \
-    --rtc.execution_horizon=25 \
+    --rtc.execution_horizon=15 \
     --rtc.max_guidance_weight=10.0 \
     --rtc.prefix_attention_schedule=EXP \
     --rtc.sigma_d=0.2 \

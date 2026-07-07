@@ -565,6 +565,7 @@ def _rtc_inference_thread(
                 is_warmup_inference = cfg.use_torch_compile and inference_count <= warmup_required
                 if is_warmup_inference:
                     latency_tracker.reset()
+                    continue
                 else:
                     latency_tracker.add(new_latency)
                 queue.merge(original, processed, new_delay, idx_before)
@@ -584,7 +585,7 @@ def _rtc_inference_thread(
                 logger.debug("[RTC] Inference latency=%.2fs, queue=%d", new_latency, queue.qsize())
             except Exception as e:
                 logger.error("[RTC] Error: %s", e)
-                time.sleep(0.5)
+                time.sleep(time_per_chunk)
         else:
             time.sleep(0.01)
 
@@ -692,11 +693,12 @@ def _rollout_sync(
             postprocessor.reset()
 
         if events["policy_paused"] and not was_paused:
-            obs = robot.get_observation()
-            robot_pos = {
-                k: v for k, v in obs.items() if k.endswith(".pos") and k in robot.observation_features
-            }
-            teleop_smooth_move_to(teleop, robot_pos, duration_s=2.0, fps=50)
+            if teleop.name not in ['spacemouse', 'gamepad']:
+                obs = robot.get_observation()
+                robot_pos = {
+                    k: v for k, v in obs.items() if k.endswith(".pos") and k in robot.observation_features
+                }
+                teleop_smooth_move_to(teleop, robot_pos, duration_s=2.0, fps=50)
             events["start_next_episode"] = False
             waiting_for_takeover = True
             was_paused = True
@@ -893,11 +895,12 @@ def _rollout_rtc(
 
         if events["policy_paused"] and not was_paused:
             policy_active.clear()
-            obs = robot.get_observation()
-            robot_pos = {
-                k: v for k, v in obs.items() if k.endswith(".pos") and k in robot.observation_features
-            }
-            teleop_smooth_move_to(teleop, robot_pos, duration_s=2.0, fps=50)
+            if teleop.name not in ['spacemouse', 'gamepad']:
+                obs = robot.get_observation()
+                robot_pos = {
+                    k: v for k, v in obs.items() if k.endswith(".pos") and k in robot.observation_features
+                }
+                teleop_smooth_move_to(teleop, robot_pos, duration_s=2.0, fps=50)
             events["start_next_episode"] = False
             waiting_for_takeover = True
             was_paused = True

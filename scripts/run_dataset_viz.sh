@@ -10,6 +10,6 @@ export HF_HOME=/data/huggingface
 
 
 python3 -m lerobot.scripts.lerobot_dataset_viz \
-    --repo-id=lerobot/screw_sorting_v30/ \
-    --root=/data/huggingface/lerobot/lerobot/screw_sorting_v30/ \
-    --episode-index=12 \
+    --repo-id=lerobot-data-collection/hil_screw_sorting_20260706_162216_after_deletion/ \
+    --root=/data/huggingface/lerobot/lerobot-data-collection/hil_screw_sorting_20260706_162216_after_deletion/ \
+    --episode-index=34 \

@@ -1,0 +1,1 @@
+python add_coloums_for_recap.py /workspace/huggingface/lerobot/screw_sorting_single_rl_tmp_v30

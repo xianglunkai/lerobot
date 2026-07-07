@@ -222,9 +222,11 @@ def reset_loop(robot: Robot, teleop: Teleoperator, events: dict, fps: int):
     events["in_reset"] = True
     events["start_next_episode"] = False
 
-    obs = robot.get_observation()
-    robot_pos = {k: v for k, v in obs.items() if k.endswith(".pos") and k in robot.observation_features}
-    teleop_smooth_move_to(teleop, robot_pos, duration_s=2.0, fps=50)
+    # Mirror robot position to teleop if supported
+    if teleop.name not in ['spacemouse', 'gamepad']:
+        obs = robot.get_observation()
+        robot_pos = {k: v for k, v in obs.items() if k.endswith(".pos") and k in robot.observation_features}
+        teleop_smooth_move_to(teleop, robot_pos, duration_s=2.0, fps=50)
 
     logger.info("Press any key to enable teleoperation")
     while (not events["start_next_episode"]) and (not events["stop_recording"]):
