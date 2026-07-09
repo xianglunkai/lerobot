@@ -217,6 +217,7 @@ class DatasetWriter:
         self,
         episode_data: dict | None = None,
         parallel_encoding: bool = True,
+        extra_episode_metadata: dict | None = None,
     ) -> None:
         """Save the current episode in self.episode_buffer to disk."""
         episode_buffer = episode_data if episode_data is not None else self.episode_buffer
@@ -262,6 +263,8 @@ class DatasetWriter:
             ep_stats = compute_episode_stats(episode_buffer, self._meta.features)
 
         ep_metadata = self._save_episode_data(episode_buffer)
+        if extra_episode_metadata:
+            ep_metadata.update(extra_episode_metadata)
 
         if use_streaming:
             streaming_results = self._streaming_encoder.finish_episode()

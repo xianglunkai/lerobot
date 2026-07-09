@@ -32,6 +32,11 @@ from .policies import PreTrainedConfig
 
 TRAIN_CONFIG_NAME = "train_config.json"
 
+@dataclass
+class ACPConfig:
+    enable: bool = False
+    indicator_field: str = "complementary_info.acp_indicator"
+    indicator_dropout_prob: float = 0.0
 
 @dataclass
 class TrainPipelineConfig(HubMixin):
@@ -71,6 +76,7 @@ class TrainPipelineConfig(HubMixin):
     eval: EvalConfig = field(default_factory=EvalConfig)
     wandb: WandBConfig = field(default_factory=WandBConfig)
     peft: PeftConfig | None = None
+    acp: ACPConfig = field(default_factory=ACPConfig)
 
     # RA-BC (Reward-Aligned Behavior Cloning) parameters
     use_rabc: bool = False  # Enable reward-weighted training
@@ -144,6 +150,11 @@ class TrainPipelineConfig(HubMixin):
             raise ValueError(
                 "'policy.repo_id' argument missing. Please specify it to push the model to the hub."
             )
+            
+        if not 0.0 <= self.acp.indicator_dropout_prob <= 1.0:
+            raise ValueError("'acp.indicator_dropout_prob' must be within [0, 1].")
+        if self.acp.enable and not self.acp.indicator_field:
+            raise ValueError("'acp.indicator_field' must be set when 'acp.enable=true'.")
 
         if self.use_rabc and not self.rabc_progress_path:
             # Auto-detect from dataset path

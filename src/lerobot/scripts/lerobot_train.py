@@ -59,7 +59,8 @@ from lerobot.utils.utils import (
 )
 
 from .lerobot_eval import eval_policy_all
-
+from lerobot.rl.acp_dataset_stats import compute_acp_indicator_stats
+from lerobot.rl.acp_hook import build_acp_raw_batch_hook
 
 def update_policy(
     train_metrics: MetricsTracker,
@@ -178,6 +179,8 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     from accelerate import Accelerator
 
     cfg.validate()
+    
+    acp_raw_batch_hook = build_acp_raw_batch_hook(cfg.acp, cfg.seed)
 
     # Create Accelerator if not provided
     # It will automatically detect if running in distributed mode or single-process mode
@@ -230,6 +233,39 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     if is_main_process:
         logging.info("Creating dataset")
         dataset = make_dataset(cfg)
+        
+        # If ACP is enabled, compute and log indicator statistics before training. 
+        # This can help verify that the indicator field is correctly recognized and has reasonable values, which is important for the effectiveness of ACP.
+        if cfg.acp.enable:
+            indicator_stats = compute_acp_indicator_stats(dataset, cfg.acp.indicator_field)
+            if indicator_stats is None:
+                logging.warning(
+                    "ACP is enabled but indicator statistics are unavailable for field '%s'.",
+                    cfg.acp.indicator_field,
+                )
+            else:
+                if indicator_stats.total_count >= 0:
+                    logging.info(
+                        "ACP indicator stats (%s): field='%s' ratio=%.6f positive=%d total=%d",
+                        indicator_stats.source,
+                        indicator_stats.indicator_field,
+                        indicator_stats.positive_ratio,
+                        indicator_stats.positive_count,
+                        indicator_stats.total_count,
+                    )
+                else:
+                    logging.info(
+                        "ACP indicator stats (%s): field='%s' ratio=%.6f",
+                        indicator_stats.source,
+                        indicator_stats.indicator_field,
+                        indicator_stats.positive_ratio,
+                    )
+                if indicator_stats.invalid_count > 0:
+                    logging.warning(
+                        "ACP indicator field '%s' contains %d non-binary values (expected only 0/1).",
+                        indicator_stats.indicator_field,
+                        indicator_stats.invalid_count,
+                    )
 
     accelerator.wait_for_everyone()
 
@@ -434,6 +470,12 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)
+        
+        # Apply ACP raw batch hook if enabled, before any processing. 
+        # This allows us to condition the raw input data based on the ACP indicators, which is crucial for the effectiveness of ACP.
+        if acp_raw_batch_hook is not None:
+            batch = acp_raw_batch_hook(batch, step)
+        
         for cam_key in dataset.meta.camera_keys:
             if cam_key in batch and batch[cam_key].dtype == torch.uint8:
                 batch[cam_key] = batch[cam_key].to(dtype=torch.float32) / 255.0
