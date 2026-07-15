@@ -20,6 +20,7 @@ from safetensors.torch import save_file
 from torch import Tensor, nn
 
 from lerobot.policies.pretrained import ActionSelectKwargs, PreTrainedPolicy
+from lerobot.rl.recap_returns import EpisodeTargetInfo
 from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
 from lerobot.utils.import_utils import _transformers_available
 from lerobot.utils.recording_annotations import EPISODE_SUCCESS, resolve_episode_success_label
@@ -36,14 +37,6 @@ else:
 
 
 PISTAR06_SAVE_INFO = "pistar06_save_info.json"
-
-
-@dataclass
-class EpisodeTargetInfo:
-    episode_index: int
-    task_index: int
-    length: int
-    success: bool
 
 
 def build_bin_centers(
@@ -692,15 +685,34 @@ class Pistar06Policy(PreTrainedPolicy):
             )
             task_max_length[task_index] = max(task_max_length.get(task_index, 0), ep_length)
 
-        value_targets = compute_normalized_value_targets(
-            episode_indices=episode_indices,
-            frame_indices=frame_indices,
-            episode_info=episode_info,
-            task_max_lengths=task_max_length,
-            c_fail_coef=targets_cfg.c_fail_coef,
-            clip_min=self.config.bin_min,
-            clip_max=self.config.bin_max,
-        )
+        target_mode = getattr(targets_cfg, "target_mode", "recap_returns")
+        if target_mode == "recap_returns":
+            from lerobot.rl.recap_returns import (
+                build_episode_return_tables,
+                compute_recap_normalized_value_targets,
+            )
+
+            episode_returns, _, return_stats = build_episode_return_tables(
+                episode_info,
+                gamma=getattr(targets_cfg, "gamma", 1.0),
+                failure_reward=getattr(targets_cfg, "failure_reward", -300.0),
+            )
+            value_targets = compute_recap_normalized_value_targets(
+                episode_indices=episode_indices,
+                frame_indices=frame_indices,
+                episode_returns=episode_returns,
+                return_stats=return_stats,
+            )
+        else:
+            value_targets = compute_normalized_value_targets(
+                episode_indices=episode_indices,
+                frame_indices=frame_indices,
+                episode_info=episode_info,
+                task_max_lengths=task_max_length,
+                c_fail_coef=targets_cfg.c_fail_coef,
+                clip_min=self.config.bin_min,
+                clip_max=self.config.bin_max,
+            )
 
         max_index = int(np.max(absolute_indices))
         value_target_lookup = np.zeros(max_index + 1, dtype=np.float32)

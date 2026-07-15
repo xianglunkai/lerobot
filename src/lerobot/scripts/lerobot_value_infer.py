@@ -47,9 +47,14 @@ from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.recording_annotations import EPISODE_SUCCESS, resolve_episode_success_label
 from lerobot.utils.utils import init_logging, inside_slurm
+from lerobot.rl.recap_returns import (
+    EpisodeTargetInfo,
+    build_episode_return_tables,
+    compute_recap_n_step_advantages,
+    compute_recap_normalized_value_targets,
+)
 from lerobot.values.pistar06.configuration_pistar06 import Pistar06Config
 from lerobot.values.pistar06.modeling_pistar06 import (
-    EpisodeTargetInfo,
     compute_normalized_value_targets,
 )
 
@@ -620,23 +625,53 @@ def run_value_inference_pipeline(
                 default_success=cfg.dataset.default_success,
             )
 
-            value_targets = compute_normalized_value_targets(
-                episode_indices=episode_indices,
-                frame_indices=frame_indices,
-                episode_info=episode_info,
-                task_max_lengths=task_max_lengths,
-                c_fail_coef=cfg.acp.c_fail_coef,
-                clip_min=value_cfg.bin_min,
-                clip_max=value_cfg.bin_max,
-            )
-            rewards = _compute_dense_rewards_from_targets(value_targets, episode_indices, frame_indices)
-            advantages = _compute_n_step_advantages(
-                rewards=rewards,
-                values=predicted_values,
-                episode_indices=episode_indices,
-                frame_indices=frame_indices,
-                n_step=cfg.acp.n_step,
-            )
+            if cfg.acp.target_mode == "recap_returns":
+                episode_returns, episode_rewards, return_stats = build_episode_return_tables(
+                    episode_info,
+                    gamma=cfg.acp.gamma,
+                    failure_reward=cfg.acp.failure_reward,
+                )
+                episode_lengths = {ep_idx: ep.length for ep_idx, ep in episode_info.items()}
+                advantages = compute_recap_n_step_advantages(
+                    values=predicted_values,
+                    episode_indices=episode_indices,
+                    frame_indices=frame_indices,
+                    episode_returns=episode_returns,
+                    episode_rewards=episode_rewards,
+                    episode_lengths=episode_lengths,
+                    n_step=cfg.acp.n_step,
+                    gamma=cfg.acp.gamma,
+                    return_stats=return_stats,
+                    discount_next_value=cfg.acp.discount_next_value,
+                )
+                logging.info(
+                    "ACP recap_returns | gamma=%.4f failure_reward=%.2f return_range=[%.4f, %.4f]",
+                    cfg.acp.gamma,
+                    cfg.acp.failure_reward,
+                    return_stats.ret_min,
+                    return_stats.ret_max,
+                )
+            else:
+                value_targets = compute_normalized_value_targets(
+                    episode_indices=episode_indices,
+                    frame_indices=frame_indices,
+                    episode_info=episode_info,
+                    task_max_lengths=task_max_lengths,
+                    c_fail_coef=cfg.acp.c_fail_coef,
+                    clip_min=value_cfg.bin_min,
+                    clip_max=value_cfg.bin_max,
+                )
+                rewards = _compute_dense_rewards_from_targets(
+                    value_targets, episode_indices, frame_indices
+                )
+                advantages = _compute_n_step_advantages(
+                    rewards=rewards,
+                    values=predicted_values,
+                    episode_indices=episode_indices,
+                    frame_indices=frame_indices,
+                    n_step=cfg.acp.n_step,
+                )
+                logging.info("ACP remaining_steps | legacy target_mode without gamma normalization")
             thresholds = _compute_task_thresholds(
                 task_indices=task_indices,
                 advantages=advantages,

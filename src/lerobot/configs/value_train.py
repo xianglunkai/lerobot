@@ -29,6 +29,11 @@ class ValueTargetsConfig:
     default_success: str = "failure"
     c_fail_coef: float = 1.0
     target_field: str = "observation.value_target"
+    # recap_returns: RLinf-style discounted returns mapped to [-1, 0].
+    # remaining_steps: legacy closed-form target used before this change.
+    target_mode: str = "recap_returns"
+    gamma: float = 1.0
+    failure_reward: float = -300.0
 
     def validate(self) -> None:
         normalized_default = normalize_episode_success_label(self.default_success)
@@ -40,6 +45,13 @@ class ValueTargetsConfig:
             raise ValueError("'targets.success_field' must be non-empty.")
         if self.c_fail_coef < 0:
             raise ValueError("'targets.c_fail_coef' must be non-negative.")
+        if self.target_mode not in ("recap_returns", "remaining_steps"):
+            raise ValueError(
+                "'targets.target_mode' must be 'recap_returns' or 'remaining_steps', "
+                f"got {self.target_mode!r}."
+            )
+        if self.gamma < 0:
+            raise ValueError("'targets.gamma' must be >= 0.")
         if not self.target_field.startswith("observation."):
             raise ValueError(
                 "'targets.target_field' must start with 'observation.' to survive processor conversion."

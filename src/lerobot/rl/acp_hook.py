@@ -21,7 +21,7 @@ from typing import Any
 import torch
 
 from lerobot.configs.train import ACPConfig
-from lerobot.rl.acp_tags import build_acp_tagged_task
+from lerobot.rl.acp_prompt import resolve_acp_conditioned_task
 
 
 def _extract_indicators(values: Any, batch_size: int) -> list[bool]:
@@ -47,7 +47,8 @@ def _extract_indicators(values: Any, batch_size: int) -> list[bool]:
 class ACPPromptHook:
     def __init__(self, cfg: ACPConfig, seed: int | None):
         self.indicator_field = cfg.indicator_field
-        self.dropout = cfg.indicator_dropout_prob
+        self.positive_only_conditional = cfg.positive_only_conditional
+        self.unconditional_prob = cfg.indicator_dropout_prob
         self.rng = random.Random(seed if seed is not None else 0)
 
     def _resolve_indicators(self, batch: dict[str, Any], batch_size: int) -> list[bool]:
@@ -71,10 +72,15 @@ class ACPPromptHook:
 
         conditioned_tasks: list[str] = []
         for task, is_positive in zip(tasks, indicators, strict=True):
-            if self.dropout > 0.0 and self.rng.random() < self.dropout:
-                conditioned_tasks.append(task)
-                continue
-            conditioned_tasks.append(build_acp_tagged_task(task, is_positive=is_positive))
+            conditioned_tasks.append(
+                resolve_acp_conditioned_task(
+                    task,
+                    is_positive,
+                    positive_only_conditional=self.positive_only_conditional,
+                    unconditional_prob=self.unconditional_prob,
+                    rng=self.rng,
+                )
+            )
         batch["task"] = conditioned_tasks
         return batch
 

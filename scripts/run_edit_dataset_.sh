@@ -2,7 +2,7 @@ export HF_LEROBOT_HOME=/data/huggingface/lerobot
 export HF_HOME=/data/huggingface
 
 
-export repo_id=lerobot-data-collection/hil_screw_sorting_20260706_162216
+export repo_id=lerobot-data-collection/hil_screw_sorting_20260710_172937
 
 # S1. Remove specific episodes from a dataset. This is useful for filtering out undesired data.
 # Delete episodes and modifies original dataset
@@ -16,7 +16,7 @@ lerobot-edit-dataset \
     --repo_id ${HF_LEROBOT_HOME}/${repo_id} \
     --new_repo_id ${HF_LEROBOT_HOME}/${repo_id}_after_deletion \
     --operation.type delete_episodes \
-    --operation.episode_indices "[34]" \
+    --operation.episode_indices "[55]" \
     --push_to_hub False
 
 # S2. Combine multiple datasets into a single dataset.

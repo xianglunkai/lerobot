@@ -690,6 +690,40 @@ def test_delete_episodes_preserves_tasks(sample_dataset, tmp_path):
     assert len(tasks_in_dataset) > 0
 
 
+def test_delete_episodes_preserves_episode_success(sample_dataset, tmp_path):
+    """Test that custom episode metadata such as episode_success survives deletion."""
+    import pandas as pd
+
+    from lerobot.datasets.utils import DEFAULT_EPISODES_PATH
+
+    output_dir = tmp_path / "filtered"
+
+    episodes_path = sample_dataset.root / DEFAULT_EPISODES_PATH.format(chunk_index=0, file_index=0)
+    episodes_df = pd.read_parquet(episodes_path)
+    labels = ["success", "success", "failure", "success", "failure"]
+    episodes_df["episode_success"] = labels
+    episodes_df.to_parquet(episodes_path, index=False)
+    sample_dataset.meta.episodes = None
+
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(output_dir)
+
+        new_dataset = delete_episodes(
+            sample_dataset,
+            episode_indices=[2],
+            output_dir=output_dir,
+        )
+
+    dst_episodes_path = new_dataset.root / DEFAULT_EPISODES_PATH.format(chunk_index=0, file_index=0)
+    dst_episodes_df = pd.read_parquet(dst_episodes_path)
+    assert "episode_success" in dst_episodes_df.columns
+    assert dst_episodes_df["episode_success"].tolist() == ["success", "success", "success", "failure"]
+
+
 def test_split_three_ways(sample_dataset, tmp_path):
     """Test splitting dataset into three splits."""
     splits = {

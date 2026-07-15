@@ -63,6 +63,35 @@ from lerobot.datasets.video_utils import encode_video_frames, get_video_info
 from lerobot.utils.constants import ACTION, HF_LEROBOT_HOME, OBS_IMAGE, OBS_STATE
 
 
+# Episode parquet columns rebuilt during copy/split/delete operations.
+_EPISODE_METADATA_SKIP_EXACT = frozenset(
+    {
+        "episode_index",
+        "tasks",
+        "length",
+        "dataset_from_index",
+        "dataset_to_index",
+        "data/chunk_index",
+        "data/file_index",
+        "meta/episodes/chunk_index",
+        "meta/episodes/file_index",
+    }
+)
+_EPISODE_METADATA_SKIP_PREFIXES = ("stats/", "videos/")
+
+
+def _extract_preserved_episode_fields(episode_row: dict) -> dict:
+    """Copy custom episode-level metadata (e.g. episode_success) for reindexing ops."""
+    preserved: dict = {}
+    for key, value in episode_row.items():
+        if key in _EPISODE_METADATA_SKIP_EXACT:
+            continue
+        if key.startswith(_EPISODE_METADATA_SKIP_PREFIXES):
+            continue
+        preserved[key] = value
+    return preserved
+
+
 def _load_episode_with_stats(src_dataset: LeRobotDataset, episode_idx: int) -> dict:
     """Load a single episode's metadata including stats from parquet file.
 
@@ -889,6 +918,7 @@ def _copy_and_reindex_episodes_metadata(
             "tasks": src_episode["tasks"],
             "length": src_episode["length"],
         }
+        episode_dict.update(_extract_preserved_episode_fields(src_episode_full))
         episode_dict.update(episode_meta)
         episode_dict.update(flatten_dict({"stats": episode_stats}))
         dst_meta._save_episode_metadata(episode_dict)

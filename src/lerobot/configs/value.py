@@ -71,6 +71,12 @@ class ValueInferenceACPConfig:
     advantage_field: str = "complementary_info.advantage"
     indicator_field: str = "complementary_info.acp_indicator"
 
+    # RECAP return schedule (RLinf-aligned).
+    gamma: float = 1.0
+    failure_reward: float = -300.0
+    discount_next_value: bool = True
+    # Legacy remaining-steps target mode (pre-RECAP). Prefer recap_returns.
+    target_mode: str = "recap_returns"
     c_fail_coef: float = 1.0
 
     def validate(self) -> None:
@@ -78,6 +84,13 @@ class ValueInferenceACPConfig:
             raise ValueError("'acp.n_step' must be > 0.")
         if not 0.0 <= self.positive_ratio <= 1.0:
             raise ValueError("'acp.positive_ratio' must be within [0, 1].")
+        if self.gamma < 0:
+            raise ValueError("'acp.gamma' must be >= 0.")
+        if self.target_mode not in ("recap_returns", "remaining_steps"):
+            raise ValueError(
+                "'acp.target_mode' must be 'recap_returns' or 'remaining_steps', "
+                f"got {self.target_mode!r}."
+            )
         if self.c_fail_coef < 0:
             raise ValueError("'acp.c_fail_coef' must be non-negative.")
         if not self.value_field:

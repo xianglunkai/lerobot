@@ -37,7 +37,7 @@ case "$SELECT" in
             --dataset.video=True \
             --dataset.episode_time_s=240 \
             --dataset.push_to_hub=false \
-            --dataset.num_episodes=35 \
+            --dataset.num_episodes=60 \
             --dataset.vcodec=libsvtav1 \
             --dataset.streaming_encoding=true \
             --display_data=false \

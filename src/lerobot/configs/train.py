@@ -36,7 +36,11 @@ TRAIN_CONFIG_NAME = "train_config.json"
 class ACPConfig:
     enable: bool = False
     indicator_field: str = "complementary_info.acp_indicator"
+    # Probability of using the plain task prompt instead of an ACP tag (RLinf ``unconditional_prob``).
     indicator_dropout_prob: float = 0.0
+    # When True (RLinf RECAP default): only high-advantage frames get ``Advantage: positive``;
+    # low-advantage frames keep the plain task (no ``Advantage: negative`` tag).
+    positive_only_conditional: bool = True
 
 @dataclass
 class TrainPipelineConfig(HubMixin):
