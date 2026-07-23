@@ -438,8 +438,8 @@ def _export_visualization_outputs(
     viz_output_dir = output_dir / "viz"
     written_videos = _export_overlay_videos(
         dataset=dataset,
-        value_field=cfg.acp.value_field,
-        advantage_field=cfg.acp.advantage_field,
+        value_field=cfg.acp.advantage_field, # 价值预测值
+        advantage_field=cfg.acp.advantage_field, # 优势值
         indicator_field=cfg.acp.indicator_field,
         viz_episodes=cfg.viz.episodes,
         video_key=cfg.viz.video_key,
