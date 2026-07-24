@@ -36,6 +36,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.io_utils import load_info, write_info
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.scripts.value_infer_viz import (
+    _export_indicator_curves,
     _export_overlay_videos,
 )
 from lerobot.utils.constants import (
@@ -436,10 +437,12 @@ def _export_visualization_outputs(
     output_dir: Path,
 ) -> list[str]:
     viz_output_dir = output_dir / "viz"
+    written_paths: list[Path] = []
+
     written_videos = _export_overlay_videos(
         dataset=dataset,
-        value_field=cfg.acp.advantage_field, # 价值预测值
-        advantage_field=cfg.acp.advantage_field, # 优势值
+        value_field=cfg.acp.value_field,  # 价值预测值
+        advantage_field=cfg.acp.advantage_field,  # 优势值
         indicator_field=cfg.acp.indicator_field,
         viz_episodes=cfg.viz.episodes,
         video_key=cfg.viz.video_key,
@@ -450,8 +453,31 @@ def _export_visualization_outputs(
         frame_storage_mode=cfg.viz.frame_storage_mode,
         smooth_window=cfg.viz.smooth_window,
     )
+    written_paths.extend(written_videos)
     logging.info("Exported %d overlay videos to %s", len(written_videos), viz_output_dir)
-    return [str(path) for path in written_videos]
+
+    if cfg.viz.plot_curves:
+        raw_columns = set(dataset.hf_dataset.with_format(None).column_names)
+        if cfg.acp.indicator_field not in raw_columns:
+            logging.warning(
+                "Skipping indicator curve plots: field '%s' not found in dataset.",
+                cfg.acp.indicator_field,
+            )
+        else:
+            curve_dir = viz_output_dir / "curves"
+            written_curves = _export_indicator_curves(
+                dataset=dataset,
+                indicator_field=cfg.acp.indicator_field,
+                viz_episodes=cfg.viz.episodes,
+                output_dir=curve_dir,
+                overwrite=cfg.viz.overwrite,
+                value_field=cfg.acp.value_field,
+                advantage_field=cfg.acp.advantage_field,
+            )
+            written_paths.extend(written_curves)
+            logging.info("Exported %d indicator curves to %s", len(written_curves), curve_dir)
+
+    return [str(path) for path in written_paths]
 
 
 def run_value_inference_pipeline(

@@ -544,6 +544,131 @@ def _export_single_episode_multiview(
     return dst_video_path
 
 
+def _resolve_viz_episodes(dataset: LeRobotDataset, viz_episodes: str) -> list[int]:
+    if dataset.episodes is not None:
+        available_episodes = sorted(dataset.episodes)
+    else:
+        available_episodes = list(range(dataset.meta.total_episodes))
+
+    if viz_episodes.strip().lower() == "all":
+        return available_episodes
+
+    requested = _parse_episodes_arg(viz_episodes, dataset.meta.total_episodes)
+    return [ep for ep in requested if ep in set(available_episodes)]
+
+
+def _episode_frame_positions(
+    episode_indices_all: np.ndarray,
+    frame_indices_all: np.ndarray,
+    episode_index: int,
+) -> np.ndarray:
+    ep_positions = np.flatnonzero(episode_indices_all == episode_index)
+    if ep_positions.shape[0] <= 1:
+        return ep_positions
+
+    ep_frame_indices = frame_indices_all[ep_positions]
+    if bool(np.any(np.diff(ep_frame_indices) < 0)):
+        ep_positions = ep_positions[np.argsort(ep_frame_indices, kind="stable")]
+    return ep_positions
+
+
+def _build_output_curve_path(output_dir: Path, repo_id: str, episode_index: int, field_tag: str) -> Path:
+    repo_tag = repo_id.replace("/", "_")
+    field_slug = field_tag.replace(".", "_")
+    return output_dir / f"{repo_tag}_episode_{episode_index:04d}_{field_slug}_curve.png"
+
+
+def _export_indicator_curves(
+    dataset: LeRobotDataset,
+    indicator_field: str,
+    viz_episodes: str,
+    output_dir: Path,
+    overwrite: bool,
+    value_field: str | None = None,
+    advantage_field: str | None = None,
+) -> list[Path]:
+    """Export per-episode indicator (and optional value/advantage) curve plots."""
+    import matplotlib.pyplot as plt
+
+    raw_dataset = dataset.hf_dataset.with_format(None)
+    column_names = set(raw_dataset.column_names)
+
+    if indicator_field not in column_names:
+        raise KeyError(f"Missing indicator field '{indicator_field}' in dataset.")
+
+    indicators_all = _to_1d_int(raw_dataset[indicator_field])
+    episode_indices_all = np.asarray(raw_dataset["episode_index"], dtype=np.int64).reshape(-1)
+    frame_indices_all = np.asarray(raw_dataset["frame_index"], dtype=np.int64).reshape(-1)
+
+    values_all = None
+    if value_field is not None and value_field in column_names:
+        values_all = _to_1d_float(raw_dataset[value_field])
+
+    advantages_all = None
+    if advantage_field is not None and advantage_field in column_names:
+        advantages_all = _to_1d_float(raw_dataset[advantage_field])
+
+    episodes = _resolve_viz_episodes(dataset, viz_episodes)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    written_paths: list[Path] = []
+
+    for ep in tqdm(episodes, desc="Export indicator curves", leave=False):
+        ep_positions = _episode_frame_positions(episode_indices_all, frame_indices_all, ep)
+        if ep_positions.shape[0] == 0:
+            continue
+
+        dst_path = _build_output_curve_path(output_dir, dataset.repo_id, ep, indicator_field)
+        if dst_path.exists() and not overwrite:
+            continue
+
+        frames = frame_indices_all[ep_positions]
+        indicators = indicators_all[ep_positions].astype(np.float32)
+
+        n_panels = 1 + int(values_all is not None) + int(advantages_all is not None)
+        fig, axes = plt.subplots(
+            n_panels,
+            1,
+            figsize=(12, 2.8 * n_panels),
+            sharex=True,
+            squeeze=False,
+        )
+        ax_idx = 0
+
+        if values_all is not None:
+            axes[ax_idx, 0].plot(frames, values_all[ep_positions], color="#2E86AB", linewidth=1.5)
+            axes[ax_idx, 0].set_ylabel("value")
+            axes[ax_idx, 0].grid(True, alpha=0.3)
+            ax_idx += 1
+
+        if advantages_all is not None:
+            axes[ax_idx, 0].plot(frames, advantages_all[ep_positions], color="#A23B72", linewidth=1.5)
+            axes[ax_idx, 0].axhline(0.0, color="gray", linestyle="--", linewidth=1.0, alpha=0.7)
+            axes[ax_idx, 0].set_ylabel("advantage")
+            axes[ax_idx, 0].grid(True, alpha=0.3)
+            ax_idx += 1
+
+        ax_ind = axes[ax_idx, 0]
+        ax_ind.step(frames, indicators, where="post", color="#F18F01", linewidth=1.8)
+        ax_ind.fill_between(frames, indicators, step="post", alpha=0.25, color="#F18F01")
+        ax_ind.set_ylabel("indicator")
+        ax_ind.set_ylim(-0.05, 1.05)
+        ax_ind.set_yticks([0, 1])
+        ax_ind.grid(True, alpha=0.3)
+        ax_ind.set_xlabel("frame_index")
+
+        positive_ratio = float(np.mean(indicators)) if indicators.size > 0 else 0.0
+        fig.suptitle(
+            f"episode {ep} | {indicator_field} | positive_ratio={positive_ratio:.3f}",
+            fontsize=12,
+        )
+        fig.tight_layout()
+        fig.savefig(dst_path, dpi=150)
+        plt.close(fig)
+        written_paths.append(dst_path)
+
+    return written_paths
+
+
 def _export_overlay_videos(
     dataset: LeRobotDataset,
     value_field: str,
@@ -589,16 +714,7 @@ def _export_overlay_videos(
     else:
         timestamps_all = frame_indices_all.astype(np.float64) / float(dataset.fps)
 
-    if dataset.episodes is not None:
-        available_episodes = sorted(dataset.episodes)
-    else:
-        available_episodes = list(range(dataset.meta.total_episodes))
-
-    if viz_episodes.strip().lower() == "all":
-        episodes = available_episodes
-    else:
-        requested = _parse_episodes_arg(viz_episodes, dataset.meta.total_episodes)
-        episodes = [ep for ep in requested if ep in set(available_episodes)]
+    episodes = _resolve_viz_episodes(dataset, viz_episodes)
 
     output_dir.mkdir(parents=True, exist_ok=True)
 

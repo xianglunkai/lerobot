@@ -3,8 +3,10 @@ set -euo pipefail
 
 # Download source: auto (try HF then ModelScope), hf, modelscope
 DOWNLOAD_SOURCE="${DOWNLOAD_SOURCE:-auto}"
-export HF_HOME="${HF_HOME:/data/huggingface}"
+export HF_LEROBOT_HOME=/data/huggingface/lerobot
+export HF_HOME=/data/huggingface
 export HF_ENDPOINT_PUBLIC="${HF_ENDPOINT_PUBLIC:-https://hf-mirror.com}"
+
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"

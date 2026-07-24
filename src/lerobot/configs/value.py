@@ -111,6 +111,8 @@ class ValueInferenceVizConfig:
     vcodec: str = "libsvtav1"
     frame_storage_mode: str = "memory"
     smooth_window: int = 1
+    # Export per-episode indicator (and value/advantage) PNG curves alongside overlay videos.
+    plot_curves: bool = True
 
     def validate(self) -> None:
         if not self.episodes:

@@ -33,8 +33,10 @@ RECAP_POSITIVE_RATIO=0.3
 RECAP_DISCOUNT_NEXT_VALUE=true
 
 # ==================== 可视化 ====================
-VIZ_EPISODES="10,30,50,70,90"
+VIZ_EPISODES="10,30,50,70"
 VIZ_VIDEO_KEYS="observation.images.high,observation.images.right"
+# 同时导出指定 episode 的 indicator 曲线图到 outputs/.../value/viz/curves/
+VIZ_PLOT_CURVES=true
 
 echo ">>> Value Inference (single GPU) | GPU=${CUDA_VISIBLE_DEVICES}"
 echo "    dataset=${DATASET_REPO_ID}"
@@ -57,7 +59,7 @@ accelerate launch \
     --mixed_precision=bf16 \
     "${VALUE_INFER_CMD}" \
     --runtime.batch_size=32 \
-    --runtime.num_workers=4 \
+    --runtime.num_workers=1 \
     --dataset.repo_id="${DATASET_REPO_ID}" \
     --dataset.success_field=episode_success \
     --dataset.default_success=failure \
@@ -75,6 +77,7 @@ accelerate launch \
     --viz.video_keys="${VIZ_VIDEO_KEYS}" \
     --viz.overwrite=true \
     --viz.smooth_window=5 \
+    --viz.plot_curves="${VIZ_PLOT_CURVES}" \
     --output_dir="${OUTPUT_DIR}" \
     --job_name="${JOB_NAME}"
 
