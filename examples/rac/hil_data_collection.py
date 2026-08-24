@@ -337,8 +337,11 @@ def _normalize_prev_actions_length(prev_actions: torch.Tensor, target_steps: int
     if steps > target_steps:
         return prev_actions[:target_steps]
 
-    padded = torch.zeros((target_steps, action_dim), dtype=prev_actions.dtype, device=prev_actions.device)
-    padded[:steps] = prev_actions
+    # padded = torch.zeros((target_steps, action_dim), dtype=prev_actions.dtype, device=prev_actions.device)
+    # padded[:steps] = prev_actions
+
+    hold = prev_actions[-1:].expand(target_steps - steps, -1)
+    padded = torch.cat([prev_actions, hold], dim=0)
     return padded
 
 
@@ -565,7 +568,6 @@ def _rtc_inference_thread(
                 is_warmup_inference = cfg.use_torch_compile and inference_count <= warmup_required
                 if is_warmup_inference:
                     latency_tracker.reset()
-                    continue
                 else:
                     latency_tracker.add(new_latency)
                 queue.merge(original, processed, new_delay, idx_before)
