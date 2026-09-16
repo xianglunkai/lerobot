@@ -282,7 +282,14 @@ class DatasetReader:
 
         # add subtask information if available
         if "subtask_index" in self._meta.features and self._meta.subtasks is not None:
-            subtask_idx = item["subtask_index"].item()
-            item["subtask"] = self._meta.subtasks.iloc[subtask_idx].name
+            subtask_idx = int(item["subtask_index"].item())
+            subtasks = self._meta.subtasks
+            if "subtask_index" in subtasks.columns:
+                matched = subtasks[subtasks["subtask_index"] == subtask_idx]
+                if len(matched) == 0:
+                    raise KeyError(f"No subtask found for subtask_index={subtask_idx}.")
+                item["subtask"] = str(matched.iloc[0]["subtask"])
+            else:
+                item["subtask"] = str(subtasks.iloc[subtask_idx].name)
 
         return item

@@ -147,6 +147,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.policies.rtc.debug_visualizer import RTCDebugVisualizer
+from lerobot.processor.relative_action_processor import RelativeActionsProcessorStep
 from lerobot.utils.hub import HubMixin
 from lerobot.utils.utils import init_logging
 from lerobot.utils.bspline import optimize_actions_with_ccr
@@ -346,6 +347,39 @@ class RTCEvaluator:
         logging.info("  Note: Only one policy in memory at a time for efficient memory usage")
         logging.info("=" * 80)
 
+    def _relative_action_step(self) -> RelativeActionsProcessorStep | None:
+        return next(
+            (step for step in self.preprocessor.steps if isinstance(step, RelativeActionsProcessorStep)),
+            None,
+        )
+
+    def _snapshot_relative_state(self) -> torch.Tensor | None:
+        step = self._relative_action_step()
+        if step is None or step._last_state is None:
+            return None
+        return step._last_state.clone()
+
+    def _restore_relative_state(self, state: torch.Tensor | None) -> None:
+        step = self._relative_action_step()
+        if step is not None and state is not None:
+            step._last_state = state
+
+    def _disable_postprocess_smoothing(self) -> None:
+        for step in getattr(self.postprocessor, "steps", []):
+            name = type(step).__name__.lower()
+            if any(token in name for token in ("qp", "spline", "smoothing")) and getattr(
+                step, "enabled", False
+            ):
+                logging.warning(
+                    "Disabling %s for raw RTC comparison (enabled in checkpoint postprocessor)",
+                    type(step).__name__,
+                )
+                step.enabled = False
+
+    def _postprocess_actions(self, actions: torch.Tensor, relative_state: torch.Tensor | None) -> torch.Tensor:
+        self._restore_relative_state(relative_state)
+        return self.postprocessor(actions)
+
     def _init_policy(self, name: str, rtc_enabled: bool, rtc_debug: bool):
         """Initialize a single policy instance with specified RTC configuration.
 
@@ -395,7 +429,16 @@ class RTCEvaluator:
         policy.config.rtc_config = rtc_config
         policy.init_rtc_processor()
 
-        logging.info(f"  RTC enabled: {rtc_enabled}")
+        rtc_training_cfg = getattr(policy.config, "rtc_training_config", None)
+        training_rtc_on = rtc_training_cfg is not None and rtc_training_cfg.enabled
+        logging.info(f"  Guided RTC enabled: {rtc_enabled}")
+        logging.info(f"  Training-time RTC enabled: {training_rtc_on}")
+        if training_rtc_on:
+            logging.info(
+                "  Training-time RTC delay range: [%s, %s]",
+                rtc_training_cfg.min_delay,
+                rtc_training_cfg.max_delay,
+            )
         logging.info(f"  RTC debug: {rtc_debug}")
         logging.info(f"  Policy config: {config}")
 
@@ -553,7 +596,9 @@ class RTCEvaluator:
         gt_second_actions = second_sample["action"]
         
         preprocessed_first_sample = self.preprocessor(first_sample)
+        first_rel_state = self._snapshot_relative_state()
         preprocessed_second_sample = self.preprocessor(second_sample)
+        second_rel_state = self._snapshot_relative_state()
 
         # ============================================================================
         # Step 1: Generate previous chunk using policy_prev_chunk
@@ -573,10 +618,11 @@ class RTCEvaluator:
             prev_chunk_left_over = policy_prev_chunk_policy.predict_action_chunk(
                 preprocessed_first_sample,
             )
-            prev_chunk_left_over_org = prev_chunk_left_over[:, shift:, :].squeeze(0).clone()
+            prev_chunk_left_over_org = prev_chunk_left_over[:, shift:, :].clone()
             
-            # resume orignal actions
-            prev_chunk_left_over = self.postprocessor(prev_chunk_left_over)
+            # Convert leftover with the FIRST sample's state (preprocessor last ran on
+            # the second sample, which would otherwise re-anchor into the wrong frame).
+            prev_chunk_left_over = self._postprocess_actions(prev_chunk_left_over, first_rel_state)
             prev_chunk_left_over = prev_chunk_left_over[:, shift:, :].squeeze(0)
             gt_first_actions = gt_first_actions[:, shift:, :]
 
@@ -604,16 +650,14 @@ class RTCEvaluator:
         # Sample noise (use same noise for both RTC and non-RTC for fair comparison)
         noise_size = (1, policy_no_rtc_policy.config.chunk_size, policy_no_rtc_policy.config.max_action_dim)
         noise = policy_no_rtc_policy.model.sample_noise(noise_size, self.device)
-        noise_clone = noise.clone()
         policy_no_rtc_policy.rtc_processor.reset_tracker()
         t0 = time.perf_counter()
         with torch.no_grad():
             no_rtc_actions = policy_no_rtc_policy.predict_action_chunk(
                 preprocessed_second_sample,
-                noise=noise_clone,
+                noise=noise.clone(),
             )
-            # resume orignal actions
-            no_rtc_actions = self.postprocessor(no_rtc_actions)
+            no_rtc_actions = self._postprocess_actions(no_rtc_actions, second_rel_state)
             
         logging.info(f"  Generated no_rtc_actions in {time.perf_counter() - t0:.4f} seconds")
         no_rtc_tracked_steps = policy_no_rtc_policy.rtc_processor.tracker.get_all_steps()
@@ -653,26 +697,41 @@ class RTCEvaluator:
             ) 
             
         else: 
-            use_relative_actions = getattr(self.cfg.policy, "use_relative_actions", False)
+            # Re-express leftover in the current observation's action space.
+            # Relative policies predict action-state offsets, so leftover from the
+            # previous chunk must be converted with the FIRST state to absolute, then
+            # re-relativized / renormalized with the SECOND state.
+            use_relative_actions = bool(getattr(self.cfg.policy, "use_relative_actions", False))
             if use_relative_actions:
-                prev_actions = prev_chunk_left_over
-                second_sample["action"] = prev_actions
-                preprocessed_second_sample = self.preprocessor(second_sample)
-                prev_actions = preprocessed_second_sample["action"]
-                
+                leftover_abs = prev_chunk_left_over
+                if leftover_abs.ndim == 2:
+                    leftover_abs = leftover_abs.unsqueeze(0)
+                rtc_sample = dict(second_sample)
+                rtc_sample["action"] = leftover_abs
+                prev_actions = self.preprocessor(rtc_sample)["action"]
+                self._restore_relative_state(second_rel_state)
             else:
                 prev_actions = prev_chunk_left_over_org
             
             with torch.no_grad():
                 rtc_actions = policy_rtc_policy.predict_action_chunk(
                     preprocessed_second_sample,
-                    noise=noise_clone,
+                    noise=noise.clone(),
                     inference_delay=self.cfg.inference_delay,
                     prev_chunk_left_over=prev_actions,
                     execution_horizon=self.cfg.rtc.execution_horizon,
                 )
-                # resume orignal actions
-                rtc_actions = self.postprocessor(rtc_actions)
+                rtc_actions = self._postprocess_actions(rtc_actions, second_rel_state)
+
+            delay = min(self.cfg.inference_delay, rtc_actions.shape[1], prev_chunk_left_over.shape[0])
+            rtc_prefix = rtc_actions.squeeze(0)[:delay]
+            leftover_prefix = prev_chunk_left_over[:delay]
+            prefix_mae = (rtc_prefix.cpu() - leftover_prefix.cpu()).abs().mean().item()
+            logging.info(
+                "  RTC prefix vs leftover MAE (first %s steps): %.6g (should be ~0 for training-time RTC)",
+                delay,
+                prefix_mae,
+            )
 
         rtc_tracked_steps = policy_rtc_policy.rtc_processor.get_all_debug_steps()
         logging.info(f"  Generated rtc_actions in {time.perf_counter() - t0:.4f} seconds")

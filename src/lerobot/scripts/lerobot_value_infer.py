@@ -108,6 +108,11 @@ def _create_accelerator(cfg: ValueInferencePipelineConfig, accelerator: Accelera
 
 
 def _resolve_pretrained_model_dir(checkpoint_path: str, checkpoint_ref: str) -> Path:
+    if not checkpoint_path:
+        raise ValueError(
+            "'inference.checkpoint_path' must be non-empty when running value-model inference. "
+            "If continuous advantages already exist, set --acp.use_existing_advantage=true."
+        )
     path = Path(checkpoint_path)
     if not path.exists():
         raise FileNotFoundError(f"Checkpoint path not found: {path}")
@@ -324,6 +329,129 @@ def _binarize_advantages(
     return indicators
 
 
+def _column_to_1d_float(values: Any) -> np.ndarray:
+    arr = np.asarray(values, dtype=np.float32)
+    if arr.ndim > 1:
+        arr = arr.reshape(arr.shape[0], -1)[:, 0]
+    return arr.reshape(-1)
+
+
+def _sync_columns_to_hf_dataset(dataset: LeRobotDataset, columns: dict[str, np.ndarray]) -> None:
+    hf_dataset = dataset.reader.hf_dataset
+    for field, values in columns.items():
+        if field in hf_dataset.column_names:
+            hf_dataset = hf_dataset.remove_columns([field])
+        hf_dataset = hf_dataset.add_column(field, values.tolist())
+    dataset.reader.hf_dataset = hf_dataset
+    dataset.meta.info = load_info(Path(dataset.root))
+
+
+def _run_acp_from_existing_advantages(
+    cfg: ValueInferencePipelineConfig,
+    dataset: LeRobotDataset,
+    accelerator: Accelerator,
+    output_dir: Path,
+) -> dict[str, Any]:
+    """Skip value-model inference; binarize an existing continuous advantage column."""
+    raw_frames = dataset.hf_dataset.with_format(None)
+    frame_count = len(raw_frames)
+    advantage_field = cfg.acp.advantage_field
+    indicator_field = cfg.acp.indicator_field
+    task_index_feature = "task_index"
+
+    if not accelerator.is_main_process:
+        accelerator.wait_for_everyone()
+        result = {
+            "main_process": False,
+            "world_size": int(accelerator.num_processes),
+        }
+        accelerator.end_training()
+        return result
+
+    if advantage_field not in raw_frames.column_names:
+        raise KeyError(
+            f"Missing advantage field '{advantage_field}' while "
+            "'acp.use_existing_advantage=true'. Write continuous advantages first."
+        )
+    if task_index_feature not in raw_frames.column_names:
+        raise KeyError(
+            f"Missing task feature '{task_index_feature}' required for per-task quantile thresholds."
+        )
+
+    absolute_indices = np.asarray(raw_frames["index"], dtype=np.int64)
+    task_indices = np.asarray(raw_frames[task_index_feature], dtype=np.int64)
+    advantages = _column_to_1d_float(raw_frames[advantage_field])
+    if advantages.shape[0] != frame_count:
+        raise ValueError(
+            f"Advantage field '{advantage_field}' length {advantages.shape[0]} "
+            f"does not match frame count {frame_count}."
+        )
+
+    if cfg.acp.intervention_field in raw_frames.column_names:
+        interventions = _column_to_1d_float(raw_frames[cfg.acp.intervention_field])
+    else:
+        interventions = np.zeros(frame_count, dtype=np.float32)
+
+    thresholds = _compute_task_thresholds(
+        task_indices=task_indices,
+        advantages=advantages,
+        positive_ratio=cfg.acp.positive_ratio,
+    )
+    indicators = _binarize_advantages(
+        task_indices=task_indices,
+        advantages=advantages,
+        thresholds=thresholds,
+        interventions=interventions,
+        force_intervention_positive=cfg.acp.force_intervention_positive,
+    )
+    indicator_positive_ratio = float(np.mean(indicators.astype(np.float32)))
+    logging.info(
+        "ACP from existing advantages | field='%s' positive_ratio_target=%.4f "
+        "positive_ratio_observed=%.4f (skipped value-model inference)",
+        advantage_field,
+        cfg.acp.positive_ratio,
+        indicator_positive_ratio,
+    )
+
+    columns: dict[str, np.ndarray] = {
+        indicator_field: indicators.astype(np.int64),
+    }
+    feature_infos: dict[str, dict[str, Any]] = {
+        indicator_field: {"dtype": "int64", "shape": (1,), "names": None},
+    }
+    _write_columns_in_place(
+        dataset_root=Path(dataset.root),
+        absolute_indices=absolute_indices,
+        columns=columns,
+        feature_infos=feature_infos,
+    )
+    logging.info("Wrote ACP indicator '%s' to dataset root: %s", indicator_field, dataset.root)
+    _sync_columns_to_hf_dataset(dataset, columns)
+
+    viz_outputs: list[str] = []
+    if cfg.viz.enable:
+        viz_outputs = _export_visualization_outputs(dataset=dataset, cfg=cfg, output_dir=output_dir)
+
+    result = {
+        "main_process": True,
+        "world_size": int(accelerator.num_processes),
+        "num_frames": int(frame_count),
+        "checkpoint": None,
+        "value_field": cfg.acp.value_field,
+        "advantage_field": advantage_field,
+        "indicator_field": indicator_field,
+        "acp_enabled": True,
+        "value_inference_skipped": True,
+        "used_existing_advantage": True,
+        "indicator_positive_ratio": indicator_positive_ratio,
+        "thresholds": thresholds,
+        "viz_outputs": viz_outputs,
+    }
+    accelerator.wait_for_everyone()
+    accelerator.end_training()
+    return result
+
+
 def _update_feature_metadata(dataset_root: Path, feature_infos: dict[str, dict[str, Any]]) -> None:
     info = load_info(dataset_root)
     for feature_name, feature_info in feature_infos.items():
@@ -494,6 +622,14 @@ def run_value_inference_pipeline(
     frame_count = len(raw_frames)
     if frame_count == 0:
         raise ValueError("Dataset has no frames.")
+
+    if cfg.acp.enable and cfg.acp.use_existing_advantage:
+        return _run_acp_from_existing_advantages(
+            cfg=cfg,
+            dataset=dataset,
+            accelerator=accelerator,
+            output_dir=output_dir,
+        )
 
     if not cfg.acp.enable:
         viz_outputs: list[str] = []
@@ -734,14 +870,7 @@ def run_value_inference_pipeline(
         logging.info("Wrote value annotations to dataset root: %s", dataset.root)
 
         # Sync computed columns into the in-memory hf_dataset so viz can read them.
-        # hf_dataset is a read-only property on LeRobotDataset; update reader directly.
-        hf_dataset = dataset.reader.hf_dataset
-        for field, values in columns.items():
-            if field in hf_dataset.column_names:
-                hf_dataset = hf_dataset.remove_columns([field])
-            hf_dataset = hf_dataset.add_column(field, values.tolist())
-        dataset.reader.hf_dataset = hf_dataset
-        dataset.meta.info = load_info(Path(dataset.root))
+        _sync_columns_to_hf_dataset(dataset, columns)
 
         viz_outputs: list[str] = []
         if cfg.viz.enable:
@@ -755,6 +884,7 @@ def run_value_inference_pipeline(
             "value_field": cfg.acp.value_field,
             "acp_enabled": bool(cfg.acp.enable),
             "value_inference_skipped": False,
+            "used_existing_advantage": False,
             "indicator_positive_ratio": indicator_positive_ratio,
             "thresholds": thresholds,
             "viz_outputs": viz_outputs,

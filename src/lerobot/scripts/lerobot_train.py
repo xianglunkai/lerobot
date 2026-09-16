@@ -15,6 +15,7 @@
 # limitations under the License.
 import dataclasses
 import logging
+import random
 import time
 from contextlib import nullcontext
 from pprint import pformat
@@ -38,6 +39,7 @@ from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.rl.acp_dataset_stats import compute_acp_indicator_stats
 from lerobot.rl.acp_hook import build_acp_raw_batch_hook
+from lerobot.rl.subtask_prompt import apply_subtask_conditioning
 from lerobot.rl.wandb_utils import WandBLogger
 from lerobot.scripts.lerobot_eval import eval_policy_all
 from lerobot.utils.import_utils import register_third_party_plugins
@@ -171,6 +173,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     """
     cfg.validate()
     acp_raw_batch_hook = build_acp_raw_batch_hook(cfg.acp, cfg.seed)
+    condition_on_subtask = bool(getattr(cfg.policy, "condition_on_subtask", False))
+    subtask_dropout_prob = float(getattr(cfg.policy, "subtask_dropout_prob", 0.0))
+    subtask_rng = random.Random(cfg.seed if cfg.seed is not None else 0)
 
     # Create Accelerator if not provided
     # It will automatically detect if running in distributed mode or single-process mode
@@ -198,6 +203,11 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     # Only log on main process
     if is_main_process:
         logging.info(pformat(cfg.to_dict()))
+        if condition_on_subtask:
+            logging.info(
+                "Subtask conditioning enabled | dropout_prob=%.3f",
+                subtask_dropout_prob,
+            )
 
     # Initialize wandb only on main process
     if cfg.wandb.enable and cfg.wandb.project and is_main_process:
@@ -462,9 +472,13 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         
         # Apply ACP raw batch hook if enabled, before any processing. 
         # This allows us to condition the raw input data based on the ACP indicators, which is crucial for the effectiveness of ACP.
+        if condition_on_subtask:
+            batch = apply_subtask_conditioning(
+                batch, dropout_prob=subtask_dropout_prob, rng=subtask_rng
+            )
         if acp_raw_batch_hook is not None:
             batch = acp_raw_batch_hook(batch, step)
-        
+
         batch = preprocessor(batch)
         train_tracker.dataloading_s = time.perf_counter() - start_time
 

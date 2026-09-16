@@ -160,6 +160,7 @@ from lerobot.utils.recording_annotations import (
 )
 
 from lerobot.rl.acp_tags import build_acp_tagged_task
+from lerobot.rl.subtask_prompt import compose_task_with_subtask
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +170,17 @@ class ACPInferenceConfig:
     enable: bool = False
     use_cfg: bool = False
     cfg_beta: float = 1.0
+
+
+def _build_policy_task(cfg: "HILConfig") -> str:
+    """High-level task, optional Subtask line, optional ACP tag — for policy inference."""
+    task = cfg.dataset.single_task
+    if cfg.subtask and str(cfg.subtask).strip():
+        task = compose_task_with_subtask(task, str(cfg.subtask).strip())
+    if cfg.acp_inference.enable:
+        task = build_acp_tagged_task(task, is_positive=True)
+    return task
+
 
 # RTC helpers
 
@@ -247,6 +259,8 @@ class HILConfig:
     
     # ACP inference controls for policy-driven recording.
     acp_inference: ACPInferenceConfig = field(default_factory=ACPInferenceConfig)
+    # Optional atomic subtask text. If set, injected into the policy prompt as `Subtask: …`.
+    subtask: str = ""
 
     def __post_init__(self):
         policy_path = parser.get_path_arg("policy")
@@ -282,7 +296,8 @@ class HILConfig:
             raise ValueError("`acp_inference.use_cfg=true` requires `acp_inference.enable=true`.")
         if self.acp_inference.cfg_beta < 0:
             raise ValueError("`acp_inference.cfg_beta` must be >= 0.")
-      
+
+        self.subtask = str(self.subtask).strip() if self.subtask else ""
 
     @classmethod
     def __get_path_fields__(cls) -> list[str]:
@@ -531,9 +546,7 @@ def _rtc_inference_thread(
                         obs_batch[name] = obs_batch[name].permute(2, 0, 1).contiguous()
                     obs_batch[name] = obs_batch[name].unsqueeze(0).to(policy_device)
 
-                task = cfg.dataset.single_task
-                if cfg.acp_inference.enable:
-                    task = build_acp_tagged_task(task, is_positive=True)
+                task = _build_policy_task(cfg)
 
                 obs_batch["task"] = [task]
                 obs_batch["robot_type"] = obs_holder.get("robot_type", "unknown")
@@ -749,7 +762,7 @@ def _rollout_sync(
                     preprocessor=preprocessor,
                     postprocessor=postprocessor,
                     use_amp=policy.config.use_amp,
-                    task=cfg.dataset.single_task,
+                    task=_build_policy_task(cfg),
                     robot_type=robot.robot_type,
                 )
                 policy_inference_count += 1
@@ -1224,6 +1237,8 @@ def hil_collect(cfg: HILConfig) -> LeRobotDataset:
         print_controls(rtc=use_rtc)
         logger.info(f"  Policy: {cfg.policy.pretrained_path}")
         logger.info(f"  Task: {cfg.dataset.single_task}")
+        if cfg.subtask:
+            logger.info(f"  Subtask: {cfg.subtask}")
         logger.info(f"  Interpolation: {cfg.interpolation_multiplier}x")
         if use_rtc:
             logger.info(f"  RTC: enabled (execution_horizon={cfg.rtc.execution_horizon})")

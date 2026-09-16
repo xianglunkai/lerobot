@@ -84,4 +84,3 @@ class RTCTrainingConfig:
             raise ValueError(f"max_delay ({self.max_delay}) must be >= min_delay ({self.min_delay})")
         if self.exp_decay <= 0:
             raise ValueError(f"exp_decay must be positive, got {self.exp_decay}")
-            raise ValueError(f"debug_maxlen must be positive, got {self.debug_maxlen}")

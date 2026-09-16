@@ -1,9 +1,9 @@
 export HF_LEROBOT_HOME=/data/huggingface/lerobot
 export HF_HOME=/data/huggingface
-export repo_id=lerobot/screw_sorting_v30  
+export repo_id=lerobot/screw_sorting_single_sft_ep279_annotated_v30  
 
 
-read -p "Please input model name (pi05_abs or smolvla or pi05_delta): " SELECT_MODEL
+read -p "Please input model name (pi05_abs, smolvla, pi05_delta, or pi05_train_rtc): " SELECT_MODEL
 SELECT_MODEL=$(echo "$SELECT_MODEL" | tr '[:upper:]' '[:lower:]')
 
 if [ -z "$SELECT_MODEL" ]; then
@@ -62,8 +62,25 @@ case "$SELECT_MODEL" in
             --use_torch_compile=False \
             --next_inference_after=16
         ;;
+    pi05_train_rtc)
+        # Checkpoint was trained with rtc_training_config.max_delay=8.
+        # Keep --rtc.enabled=False so eval uses hard-prefix training-time RTC,
+        # not Jacobian-guided RTC.
+        python examples/rtc/eval_dataset.py \
+            --policy.path=/home/xlk/work/lerobot/checkpoints/pi05_policy_screw_sorting_single_sft_ep279_annotated_v30/checkpoints/030000/pretrained_model \
+            --dataset.repo_id="$repo_id" \
+            --rtc.enabled=False \
+            --rtc.debug=True \
+            --use_ccr=False \
+            --rtc.execution_horizon=16 \
+            --inference_delay=8 \
+            --num_inference_steps=10 \
+            --device=cuda \
+            --use_torch_compile=False \
+            --next_inference_after=16
+        ;;
         *)
-        echo "错误：不支持的模型名称 '$SELECT_MODEL'，请使用 pi05_abs、 smolvla 或 pi05_delta。"
+        echo "错误：不支持的模型名称 '$SELECT_MODEL'，请使用 pi05_abs、 smolvla、 pi05_delta 或 pi05_train_rtc。"
         exit 1
         ;;
 esac

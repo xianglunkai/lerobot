@@ -693,10 +693,17 @@ def _export_overlay_videos(
     raw_dataset = dataset.hf_dataset.with_format(None)
     column_names = set(raw_dataset.column_names)
 
-    if value_field not in column_names:
-        raise KeyError(f"Missing value field '{value_field}' in dataset.")
+    # Value predictions are optional: use_existing_advantage mode never writes them.
+    # Fall back to the continuous advantage curve so overlays still render.
+    if value_field in column_names:
+        values_all = _to_1d_float(raw_dataset[value_field])
+    elif advantage_field in column_names:
+        values_all = _to_1d_float(raw_dataset[advantage_field])
+    else:
+        raise KeyError(
+            f"Missing both value field '{value_field}' and advantage field '{advantage_field}' in dataset."
+        )
 
-    values_all = _to_1d_float(raw_dataset[value_field])
     if advantage_field in column_names:
         advantages_all = _to_1d_float(raw_dataset[advantage_field])
     else:

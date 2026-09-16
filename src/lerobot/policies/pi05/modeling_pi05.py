@@ -25,7 +25,7 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 from typing_extensions import Unpack
-from einops import rearrange, repeat
+from einops import rearrange
 
 from lerobot.utils.import_utils import _transformers_available
 
@@ -33,13 +33,58 @@ from lerobot.utils.import_utils import _transformers_available
 if TYPE_CHECKING or _transformers_available:
     from transformers.models.auto import CONFIG_MAPPING
     from transformers.models.gemma import modeling_gemma
-    from transformers.models.gemma.modeling_gemma import GemmaForCausalLM
+    from transformers.models.gemma.modeling_gemma import GemmaForCausalLM, GemmaRMSNorm
     from transformers.models.paligemma.modeling_paligemma import PaliGemmaForConditionalGeneration
 else:
     CONFIG_MAPPING = None
     modeling_gemma = None
     GemmaForCausalLM = None
+    GemmaRMSNorm = None
     PaliGemmaForConditionalGeneration = None
+
+
+def _patch_gemma_rmsnorm_per_token_cond() -> None:
+    """Fix AdaRMS broadcasting for per-action timesteps (training-time RTC).
+
+    The openpi/transformers GemmaRMSNorm always does ``modulation.unsqueeze(1)`` when
+    ``x`` is 3-D, which is correct for scalar-per-sample cond ``(B, C)`` -> ``(B, 1, C)``.
+    With training-time RTC, cond is already ``(B, T, C)``; the extra unsqueeze broadcasts
+    ``(B, T, H) * (B, 1, T, H)`` into ``(B, T, T, H)`` and breaks attention ``torch.cat``.
+    """
+    if GemmaRMSNorm is None or getattr(GemmaRMSNorm, "_lerobot_per_token_cond_patched", False):
+        return
+
+    def forward(self, x, cond=None):
+        dtype = x.dtype
+        normed_inputs = self._norm(x)
+
+        if cond is None or self.dense is None:
+            normed_inputs = normed_inputs * (1.0 + self.weight.float())
+            return normed_inputs.to(dtype), None
+
+        if cond.shape[-1] != self.cond_dim:
+            raise ValueError(f"Expected cond dimension {self.cond_dim}, got {cond.shape[-1]}")
+        if cond.ndim not in (2, 3):
+            raise ValueError(f"cond must be (B, C) or (B, T, C), got {tuple(cond.shape)}")
+        if x.ndim == 3 and cond.ndim == 3 and cond.shape[1] != x.shape[1]:
+            raise ValueError(
+                f"Per-token cond has {cond.shape[1]} tokens but x has {x.shape[1]}; shapes must match."
+            )
+
+        modulation = self.dense(cond)
+        # Only expand scalar-per-sample cond over the sequence axis.
+        if x.ndim == 3 and modulation.ndim == 2:
+            modulation = modulation.unsqueeze(1)
+
+        scale, shift, gate = torch.chunk(modulation, 3, dim=-1)
+        normed_inputs = normed_inputs * (1 + scale.to(torch.float32)) + shift.to(torch.float32)
+        return normed_inputs.to(dtype), gate.to(dtype)
+
+    GemmaRMSNorm.forward = forward
+    GemmaRMSNorm._lerobot_per_token_cond_patched = True
+
+
+_patch_gemma_rmsnorm_per_token_cond()
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.pi05.configuration_pi05 import DEFAULT_IMAGE_SIZE, PI05Config
@@ -96,12 +141,8 @@ def create_sinusoidal_pos_embedding(  # see openpi `create_sinusoidal_pos_embedd
 
     # Compute the outer product
     scaling_factor = 1.0 / period * 2 * math.pi
-    if time.ndim == 1:
-        sin_input = scaling_factor[None, :] * time[:, None]
-        return torch.cat([torch.sin(sin_input), torch.cos(sin_input)], dim=1)
-    else:
-        sin_input = rearrange(scaling_factor, "d -> 1 1 d") * rearrange(time, "b c -> b c 1")
-        return torch.cat([torch.sin(sin_input), torch.cos(sin_input)], dim=2)
+    sin_input = time[..., None] * scaling_factor
+    return torch.cat([torch.sin(sin_input), torch.cos(sin_input)], dim=-1)
 
 
 def sample_beta(alpha, beta, bsize, device):  # see openpi `sample_beta` (exact copy)
@@ -738,30 +779,23 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         return embs, pad_masks, att_masks, adarms_cond
 
     def forward(self, images, img_masks, tokens, masks, actions, noise=None, time=None) -> Tensor:
-        """Do a full training forward pass and compute the loss."""
+        """Do a full training forward pass and compute the loss.
+
+        ``time`` may be ``(B,)`` (standard flow matching) or ``(B, T)`` (training-time RTC
+        with a clean action prefix forced to time 0).
+        """
         if noise is None:
             noise = self.sample_noise(actions.shape, actions.device)
 
         if time is None:
             time = self.sample_time(actions.shape[0], actions.device)
 
-        rtc_cfg = self.config.rtc_training_config
-        prefix_mask = None
-        time_expanded = time[:, None, None]
-        if rtc_cfg is not None and rtc_cfg.enabled and self.training:
-            batch_size = actions.shape[0]
-           
-            # handle real time inference delay
-            delay = torch.randint(0, self.config.rtc_training_config.max_delay + 1, (batch_size,))
-            prefix_mask = rearrange(torch.arange(self.config.chunk_size), "c -> 1 c") < rearrange(
-                delay, "b -> b 1"
-            )
-            prefix_mask = prefix_mask.to(device=actions.device)
-            time = torch.where(
-                prefix_mask, 0, rearrange(time, "b -> b 1")
-            )  # using diffusion time 0 instead of flow matching time 1
-
-            time_expanded = rearrange(time, "b c -> b c 1")
+        if time.ndim == 1:
+            time_expanded = time[:, None, None]
+        elif time.ndim == 2:
+            time_expanded = time[:, :, None]
+        else:
+            raise ValueError(f"Expected time shape (B,) or (B, T), got {tuple(time.shape)}")
 
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
@@ -859,6 +893,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         use_training_time_rtc = self._training_time_rtc_inference_enabled()
 
         x_t = noise
+        prev_chunk_left_over_ext = None
         for step in range(num_steps):
             time = 1.0 + step * dt
             time_tensor = torch.tensor(time, dtype=torch.float32, device=device).expand(bsize)
@@ -872,11 +907,11 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                 )
 
             if use_training_time_rtc:
-                x_t_cond, time_tensor, prev_chunk_left_over_ext = apply_training_time_rtc_inference(
+                # Hard-inpaint prefix and use per-token times (prefix time = 0), matching training.
+                x_t, time_tensor, prev_chunk_left_over_ext = apply_training_time_rtc_inference(
                     x_t, time, inference_delay, prev_chunk_left_over, self.config.chunk_size
                 )
-                v_t = denoise_step_partial_call(input_x_t=x_t_cond, current_timestep=time_tensor)
-                
+                v_t = denoise_step_partial_call(input_x_t=x_t, current_timestep=time_tensor)
             elif self._rtc_enabled():
                 v_t = self.rtc_processor.denoise_step(
                     x_t=x_t,
@@ -892,16 +927,14 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
             x_t = x_t + dt * v_t
 
+            # Keep the committed prefix fixed after the Euler update (devel trained-RTC semantics).
+            if use_training_time_rtc and prev_chunk_left_over_ext is not None:
+                if inference_delay is not None and inference_delay > 0:
+                    delay = min(inference_delay, prev_chunk_left_over_ext.shape[1], x_t.shape[1])
+                    x_t[:, :delay, :] = prev_chunk_left_over_ext[:, :delay, :]
+
             if self.rtc_processor is not None and self.rtc_processor.is_debug_enabled():
                 self.rtc_processor.track(time=time, x_t=x_t, v_t=v_t)
-
-
-        # hold the previous inference_delay steps
-        if use_training_time_rtc and (prev_chunk_left_over_ext is not None):
-            if inference_delay is not None and inference_delay > 0:
-                delay = min(inference_delay, prev_chunk_left_over.shape[1])
-                x_t[:, :delay, :] = prev_chunk_left_over_ext[:, :delay, :]
-       
 
         # Optional smoothing:'poly5', and 'mpc' methods
         smoothing_method = kwargs.get("smoothing_method")
@@ -1344,29 +1377,43 @@ class PI05Policy(PreTrainedPolicy):
 
         actions = self.prepare_action(batch)
 
-        # Compute loss (no separate state needed for PI05)
+        # Optional training-time RTC: sample a clean prefix length and keep only postfix in the loss.
         postfix_mask = None
-       
-        losses = self.model.forward(images, img_masks, tokens, masks, actions)
+        rtc_cfg = self.config.rtc_training_config
+        if rtc_cfg is not None and rtc_cfg.enabled and self.training:
+            batch_size = actions.shape[0]
+            time = self.model.sample_time(batch_size, actions.device)
+            noise = self.model.sample_noise(actions.shape, actions.device)
+            delay = sample_rtc_delay(rtc_cfg, batch_size, actions.device)
+            time, postfix_mask = apply_rtc_training_time(time, delay, actions.shape[1])
+            losses = self.model.forward(
+                images, img_masks, tokens, masks, actions, noise=noise, time=time
+            )
+        else:
+            losses = self.model.forward(images, img_masks, tokens, masks, actions)
 
         # Truncate losses to actual action dimensions
         original_action_dim = self.config.output_features[ACTION].shape[0]
         losses = losses[:, :, :original_action_dim]
 
-        loss_dict = {
-            "loss_per_dim": losses.mean(dim=[0, 1]).detach().cpu().numpy().tolist(),
-        }
+        if postfix_mask is None:
+            loss_per_dim = losses.mean(dim=(0, 1))
+        else:
+            postfix_expanded = postfix_mask.unsqueeze(-1).expand_as(losses)
+            loss_per_dim = (losses * postfix_expanded).sum(dim=(0, 1)) / postfix_expanded.sum(
+                dim=(0, 1)
+            ).clamp(min=1)
+        loss_dict = {"loss_per_dim": loss_per_dim.detach().cpu().numpy().tolist()}
 
         if reduction == "none":
             # Return per-sample losses (B,) by averaging over time and action dims
             per_sample_loss = masked_mean(losses, postfix_mask, reduce_dims=(1, 2))
             loss_dict["loss"] = per_sample_loss.mean().item()
             return per_sample_loss, loss_dict
-        else:
-            # Default: return scalar mean loss
-            loss = masked_mean(losses, postfix_mask, reduce_dims=(0, 1, 2))
-            loss_dict["loss"] = loss.item()
-            return loss, loss_dict
+
+        loss = masked_mean(losses, postfix_mask, reduce_dims=(0, 1, 2))
+        loss_dict["loss"] = loss.item()
+        return loss, loss_dict
 
     def _get_default_peft_targets(self) -> dict[str, any]:
         """Return default PEFT target modules for PI0.5 fine-tuning."""
@@ -1378,6 +1425,8 @@ class PI05Policy(PreTrainedPolicy):
             "target_modules": target_modules,
             "modules_to_save": [],
         }
+
+
 def intra_chunk_smoothing_vla_rail(
     actions: torch.Tensor,
     polynomial_order: int = 3,

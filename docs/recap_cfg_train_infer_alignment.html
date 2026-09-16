@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CFG-RECAP 训练–推理对齐分析：RLinf vs LeRobot</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body, {
+    delimiters: [
+      {left: '$$', right: '$$', display: true},
+      {left: '$', right: '$', display: false}
+    ],
+    throwOnError: false
+  });"></script>
+<style>
+  :root {
+    --ink: #1a1a1a;
+    --muted: #4a4a4a;
+    --rule: #c8c8c8;
+    --bg: #f4f4f4;
+    --paper: #ffffff;
+    --accent: #0b3d5c;
+    --warn-bg: #fff6eb;
+    --ok-bg: #eef6f0;
+    --bad-bg: #f8eeee;
+    --code-bg: #f3f3f3;
+    --loc: #0b3d5c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Source Han Serif SC", "Noto Serif SC", "Songti SC", "SimSun", Georgia, serif;
+    line-height: 1.7;
+    font-size: 16px;
+  }
+  .page {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 40px 36px 72px;
+    background: var(--paper);
+    border-left: 1px solid var(--rule);
+    border-right: 1px solid var(--rule);
+  }
+  header.meta {
+    text-align: center;
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 24px;
+    margin-bottom: 24px;
+  }
+  .venue {
+    font-family: "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+    font-size: 0.78rem;
+    letter-spacing: 0.12em;
+    color: var(--muted);
+    margin-bottom: 12px;
+  }
+  h1.title {
+    font-family: "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+    font-weight: 650;
+    font-size: 1.45rem;
+    line-height: 1.35;
+    margin: 0 0 12px;
+    color: var(--accent);
+  }
+  .sub { color: var(--muted); font-size: 0.9rem; }
+  h2 {
+    font-family: "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+    font-size: 1.15rem;
+    color: var(--accent);
+    margin: 2em 0 0.7em;
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 0.25em;
+  }
+  h3 {
+    font-family: "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+    font-size: 1.02rem;
+    margin: 1.4em 0 0.5em;
+  }
+  h4 {
+    font-family: "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+    font-size: 0.95rem;
+    margin: 1.1em 0 0.4em;
+    color: var(--loc);
+  }
+  p, li { margin: 0.55em 0; }
+  .abstract {
+    margin: 1.1em 0 1.4em;
+    padding: 1em 1.1em;
+    background: #f6f8fa;
+    border: 1px solid var(--rule);
+  }
+  .abstract .label {
+    font-family: "PingFang SC", Arial, sans-serif;
+    font-weight: 700;
+    font-size: 0.85rem;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+    margin: 1em 0 1.3em;
+  }
+  th, td {
+    border: 1px solid var(--rule);
+    padding: 0.45em 0.55em;
+    vertical-align: top;
+    text-align: left;
+  }
+  th {
+    background: #f0f3f5;
+    font-family: "PingFang SC", Arial, sans-serif;
+    font-weight: 600;
+  }
+  code, .mono {
+    font-family: "IBM Plex Mono", Consolas, Menlo, monospace;
+    font-size: 0.84em;
+    background: var(--code-bg);
+    padding: 0.05em 0.28em;
+  }
+  pre {
+    font-family: "IBM Plex Mono", Consolas, Menlo, monospace;
+    font-size: 0.76rem;
+    background: var(--code-bg);
+    border: 1px solid var(--rule);
+    padding: 0.85em 1em;
+    overflow-x: auto;
+    line-height: 1.45;
+    white-space: pre;
+  }
+  .eq {
+    margin: 1em 0;
+    text-align: center;
+    overflow-x: auto;
+  }
+  .callout {
+    border: 1px solid var(--rule);
+    padding: 0.85em 1em;
+    margin: 1em 0;
+  }
+  .callout.warn { background: var(--warn-bg); }
+  .callout.ok { background: var(--ok-bg); }
+  .callout.bad { background: var(--bad-bg); }
+  .callout .ttl {
+    font-family: "PingFang SC", Arial, sans-serif;
+    font-weight: 700;
+    font-size: 0.9rem;
+    margin-bottom: 0.35em;
+  }
+  .loc-box {
+    border-left: 3px solid var(--accent);
+    background: #f7fafc;
+    padding: 0.7em 0.9em;
+    margin: 0.8em 0 0.4em;
+    font-family: "PingFang SC", Arial, sans-serif;
+    font-size: 0.88rem;
+  }
+  .loc-box strong { color: var(--accent); }
+  .why {
+    color: var(--muted);
+    font-size: 0.92rem;
+    margin: 0.3em 0 0.8em;
+  }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .footer {
+    margin-top: 2.2em;
+    padding-top: 1em;
+    border-top: 1px solid var(--rule);
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  .katex-display { margin: 0.6em 0; }
+</style>
+</head>
+<body>
+<article class="page">
+<header class="meta">
+  <div class="venue">技术报告 · 具身离线强化学习 · CFG-RECAP 对齐</div>
+  <h1 class="title">优势条件 CFG-RL 的训练–推理对齐分析<br/>RLinf 与 LeRobot 对比及落地改造方案</h1>
+  <div class="sub">范围：RECAP 打标 → ACP/CFG 策略训练 → HIL / 在线推理</div>
+</header>
+
+<section class="abstract">
+  <div class="label">摘要</div>
+  <p>
+    优势条件策略（ACP）配合无分类器引导（CFG）时，训练阶段对语言提示做路由，
+    推理阶段用无条件速度场与带 <code>Advantage: positive</code> 的条件速度场做线性混合。
+    对比 RLinf 官方栈与当前 LeRobot 实现后发现：
+    <strong>打标与训练路由基本对齐</strong>；
+    <strong>推理差距最大</strong>——RLinf 执行双前缀 CFG 混合，LeRobot HIL 仅单路注入（或关闭）positive 标签，
+    <code>use_cfg / cfg_beta</code> 目前只有配置校验、没有真正生效。
+    本文给出中文说明、正确渲染公式，以及可落地的文件位置与改造代码草稿。
+  </p>
+</section>
+
+<nav class="toc">
+  <h2>目录</h2>
+  <ul>
+    <li><a href="#sec1">1. 背景与符号</a></li>
+    <li><a href="#sec2">2. RLinf vs LeRobot 对比</a></li>
+    <li><a href="#sec3">3. 训练–推理差异分析</a></li>
+    <li><a href="#sec4">4. 具体改进位置与代码</a></li>
+    <li><a href="#sec5">5. 推荐实验矩阵与验收清单</a></li>
+  </ul>
+</nav>
+
+<h2 id="sec1">1. 背景与符号</h2>
+
+<h3>1.1 正样本打标（positive_ratio = 0.3）</h3>
+<p>
+  对连续优势 $A_t$，在分组内取分位数阈值（LeRobot 按 <code>task_index</code>；RLinf 多用全局混合）：
+</p>
+<div class="eq">
+  $$\tau = Q_{1-\rho}(A),\qquad \mathbb{I}_t=\mathbf{1}[A_t \ge \tau],\qquad \rho=0.3.$$
+</div>
+<p>
+  含义：大约 <strong>优势最高的 30%</strong> 帧标为 positive，不是随机抽 30%。
+  这是在构造“更好行为 vs 普通行为”的对比，而不是要求数据集 50/50。
+</p>
+
+<h3>1.2 训练时语言路由（positive_only）</h3>
+<p>设无条件 dropout 概率为 $p_u$（RLinf: <code>unconditional_prob</code>；LeRobot: <code>indicator_dropout_prob</code>，常用 0.1）：</p>
+<table>
+  <thead>
+    <tr><th>标签</th><th>概率 $1-p_u$</th><th>概率 $p_u$</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>$\mathbb{I}=1$</td>
+      <td><code>task + "\nAdvantage: positive"</code></td>
+      <td>纯 <code>task</code>（无条件）</td>
+    </tr>
+    <tr>
+      <td>$\mathbb{I}=0$</td>
+      <td colspan="2">始终纯 <code>task</code>（不挂 negative）</td>
+    </tr>
+  </tbody>
+</table>
+<p>训练只对<strong>当前路由到的那一条</strong>语言做 flow-matching 损失，<strong>不做</strong> CFG 线性混合。</p>
+
+<h3>1.3 推理时 CFG（RLinf 规范）</h3>
+<div class="eq">
+  $$v=(1-\beta)\,v_{\mathrm{uncond}}(x_t\mid \mathrm{task})+\beta\,v_{\mathrm{cond}}(x_t\mid \mathrm{task},\ \texttt{Advantage: positive}).$$
+</div>
+<p>
+  其中 $\beta=$ <code>cfgrl_guidance_scale</code>（LeRobot 计划用 <code>cfg_beta</code>）。
+  $\beta=1$ 等价于纯条件；$\beta=0$ 或 <code>no_guide</code> 等价于纯无条件。
+</p>
+
+<h2 id="sec2">2. RLinf vs LeRobot 对比</h2>
+<table>
+  <thead>
+    <tr><th>环节</th><th>RLinf</th><th>LeRobot（现状）</th><th>是否对齐</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>正样本比例</td>
+      <td><code>positive_quantile=0.3</code></td>
+      <td><code>acp.positive_ratio=0.3</code></td>
+      <td>对齐（命名不同）</td>
+    </tr>
+    <tr>
+      <td>训练路由</td>
+      <td><code>compute_cfg_routing_masks</code></td>
+      <td><code>resolve_acp_conditioned_task</code> + ACP hook</td>
+      <td>对齐</td>
+    </tr>
+    <tr>
+      <td>训练损失</td>
+      <td>单路 FM</td>
+      <td>单路 policy loss</td>
+      <td>对齐</td>
+    </tr>
+    <tr>
+      <td>子任务语言</td>
+      <td>RECAP/CFG 路径无</td>
+      <td>Scheme A：<code>Subtask:</code>，训练有 dropout</td>
+      <td>LeRobot 扩展</td>
+    </tr>
+    <tr>
+      <td><strong>推理提示</strong></td>
+      <td>始终双前缀：纯 task + positive</td>
+      <td>默认关 ACP；开启则<strong>单路 always positive</strong></td>
+      <td><strong>不对齐</strong></td>
+    </tr>
+    <tr>
+      <td><strong>CFG 混合</strong></td>
+      <td>$(1-\beta)v_u+\beta v_c$</td>
+      <td><code>use_cfg/cfg_beta</code> 仅校验，未接入采样</td>
+      <td><strong>不对齐</strong></td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="sec3">3. 训练–推理差异分析</h2>
+
+<div class="callout bad">
+  <div class="ttl">高优先级 G1：LeRobot 推理缺少双前缀 CFG 速度混合</div>
+  <p>
+    RLinf 在每个去噪步同时算 $v_u$ 与 $v_c$ 再混合。
+    LeRobot 的 <code>PI05Policy.sample_actions</code> 只有一套 <code>tokens/masks</code> 与一套 KV cache，
+    HIL 即使写了 <code>Advantage: positive</code>，也只是硬条件（相当于 $\beta=1$ 的单路），无法调引导强度。
+  </p>
+</div>
+
+<div class="callout warn">
+  <div class="ttl">中优先级 G2：部署默认与训练契约不一致</div>
+  <p>
+    训练开了 ACP；<code>run_hil_collect_data.sh</code> 默认 <code>acp_inference.enable=false</code>。
+    结果是“训练见过标签，上线却从不给标签”，与 RLinf 默认 positive guidance 相反。
+  </p>
+</div>
+
+<div class="callout warn">
+  <div class="ttl">中优先级 G3：Subtask 训练 dropout vs 推理固定 CLI</div>
+  <p>
+    训练以概率丢掉 <code>Subtask:</code>；HIL 用固定 <code>--subtask</code> 或空。
+    只要模式明确并打日志即可，但当前缺少统一的 inference mode 枚举。
+  </p>
+</div>
+
+<div class="callout ok">
+  <div class="ttl">低优先级：不必担心 ρ=0.3“正样本太少导致映射学坏”</div>
+  <p>
+    top-30% 是对比构造。帧级数据量通常足够。
+    推理挂 positive 是在把生成推向高优势条件分布；真正危险的是<strong>绝对帧数极少</strong>或<strong>部署提示与训练完全脱节</strong>。
+  </p>
+</div>
+
+<pre>
+训练（两边，positive_only）
+  I=1 ──(1-p_u)──► lang = task ⊕ Advantage:positive ──► 单路损失
+      └─(p_u)────► lang = task
+  I=0 ───────────► lang = task
+
+推理 RLinf
+  v_u ← denoise(· | task)
+  v_c ← denoise(· | task ⊕ Advantage:positive)
+  v   ← (1-β) v_u + β v_c
+
+推理 LeRobot HIL（现状）
+  enable=false → 单路 task
+  enable=true  → 单路 task⊕positive
+  use_cfg/cfg_beta → 未进入采样循环
+</pre>
+
+<h2 id="sec4">4. 具体改进位置与代码</h2>
+<p>按依赖顺序改造：先策略采样内核，再 HIL/脚本接线，最后评估对齐。</p>
+
+<!-- ========== P1 ========== -->
+<h3>P1（阻塞）在 Pi05 采样中实现 CFG 双前缀混合</h3>
+<div class="loc-box">
+  <strong>改哪里：</strong>
+  <code>src/lerobot/policies/pi05/modeling_pi05.py</code>
+  → 方法 <code>sample_actions</code>（约 L847 起）及调用它的 <code>select_action</code> / <code>predict_action_chunk</code> 路径。<br/>
+  <strong>对照实现：</strong>
+  <code>/home/xlk/work/RLinf/rlinf/models/embodiment/openpi_cfg/openpi_cfg_action_model.py</code>
+  → <code>sample_actions</code>（约 L693–816）。
+</div>
+<p class="why">
+  <strong>为什么：</strong>CFG 必须发生在<strong>同一噪声轨迹</strong>的每一步去噪上。
+  只改语言字符串、跑一次 forward，得不到 $(1-\beta)v_u+\beta v_c$。
+</p>
+
+<h4>现状（LeRobot，单路）</h4>
+<pre>
+# modeling_pi05.py :: sample_actions（简化）
+prefix_embs, prefix_pad_masks, ... = self.embed_prefix(images, img_masks, tokens, masks)
+_, past_key_values = self.paligemma_with_expert.forward(... inputs_embeds=[prefix_embs, None], use_cache=True)
+
+for step in range(num_steps):
+    v_t = self.denoise_step(prefix_pad_masks, past_key_values, x_t, timestep)
+    x_t = x_t + dt * v_t
+</pre>
+
+<h4>目标（对齐 RLinf）</h4>
+<pre>
+# 伪代码：在 sample_actions 增加可选 cond tokens
+def sample_actions(self, images, img_masks, tokens, masks,
+                   cond_tokens=None, cond_masks=None,
+                   cfg_beta: float | None = None, **kwargs):
+    # 1) 无条件前缀 KV
+    ..., past_kv_u = embed_and_cache(tokens, masks)
+
+    use_cfg = cond_tokens is not None and cfg_beta is not None and cfg_beta != 1.0
+    # 注：beta==1 时可只跑条件路以省算力；beta==0 只跑无条件路
+    if cond_tokens is not None:
+        ..., past_kv_c = embed_and_cache(cond_tokens, cond_masks)
+
+    for step in range(num_steps):
+        v_u = self.denoise_step(prefix_pad_masks_u, past_kv_u, x_t, timestep)
+        if cond_tokens is None:
+            v_t = v_u
+        elif cfg_beta is None or abs(cfg_beta - 1.0) &lt; 1e-6:
+            v_t = self.denoise_step(prefix_pad_masks_c, past_kv_c, x_t, timestep)
+        else:
+            v_c = self.denoise_step(prefix_pad_masks_c, past_kv_c, x_t, timestep)
+            v_t = (1.0 - cfg_beta) * v_u + cfg_beta * v_c
+        x_t = x_t + dt * v_t
+    return x_t
+</pre>
+
+<p class="why">
+  RLinf 对应关键代码（语义一致）：
+</p>
+<pre>
+v_t_uncond = self.denoise_step(..., past_key_values_uncond, x_t, ...)
+v_t_cond   = self.denoise_step(..., past_key_values_cond,   x_t, ...)
+v_t = (1 - self.config.cfgrl_guidance_scale) * v_t_uncond \
+    + self.config.cfgrl_guidance_scale * v_t_cond
+</pre>
+
+<!-- ========== P2 ========== -->
+<h3>P2 扩展 ACP 推理配置：用 mode 取代含糊的 enable/use_cfg</h3>
+<div class="loc-box">
+  <strong>改哪里：</strong>
+  <code>examples/rac/hil_data_collection.py</code>
+  → <code>ACPInferenceConfig</code>（约 L169–172）与 <code>_build_policy_task</code>（约 L175–182）。
+</div>
+<p class="why">
+  <strong>为什么：</strong>现在 <code>enable</code> 只决定是否拼 positive；
+  <code>use_cfg</code> 有校验但下游没用。应改成与 RLinf <code>guidance_type</code> 一一对应的枚举，避免 silent mismatch。
+</p>
+
+<h4>建议配置</h4>
+<pre>
+@dataclass
+class ACPInferenceConfig:
+    # no_guide | cond_positive | cfg_positive
+    mode: str = "no_guide"
+    cfg_beta: float = 1.0   # 仅 mode=cfg_positive 时使用
+
+    def __post_init_check__(self):
+        if self.mode not in {"no_guide", "cond_positive", "cfg_positive"}:
+            raise ValueError(...)
+        if self.cfg_beta &lt; 0:
+            raise ValueError("`cfg_beta` must be &gt;= 0")
+</pre>
+
+<h4>建议任务构造</h4>
+<pre>
+def _build_policy_tasks(cfg: HILConfig) -&gt; tuple[str, str | None]:
+    """返回 (uncond_task, cond_task_or_None)。"""
+    base = cfg.dataset.single_task
+    if cfg.subtask and str(cfg.subtask).strip():
+        base = compose_task_with_subtask(base, str(cfg.subtask).strip())
+
+    mode = cfg.acp_inference.mode
+    if mode == "no_guide":
+        return base, None
+    cond = build_acp_tagged_task(base, is_positive=True)
+    if mode == "cond_positive":
+        # 单路硬条件：只跑 cond（等价 β=1）
+        return cond, None
+    # cfg_positive：双路
+    return base, cond
+</pre>
+
+<!-- ========== P3 ========== -->
+<h3>P3 接线：HIL RTC / sync 与 <code>predict_action</code></h3>
+<div class="loc-box">
+  <strong>改哪里：</strong><br/>
+  1) <code>examples/rac/hil_data_collection.py</code>
+  → <code>_rtc_inference_thread</code> 里组 <code>obs_batch["task"]</code> 处（现约调用 <code>_build_policy_task</code>）；
+  sync 路径 <code>predict_action(..., task=...)</code>。<br/>
+  2) <code>src/lerobot/utils/control_utils.py</code>
+  → <code>predict_action</code>（约 L68–116）：目前只收一个 <code>task</code>。<br/>
+  3) preprocessor / tokenizer：需要能对同一图像状态产出两套 <code>tokens/masks</code>
+  （可跑两次 preprocessor，或在 processor 支持 <code>task</code> + <code>task_cond</code>）。
+</div>
+<p class="why">
+  <strong>为什么：</strong>HIL 是部署入口；只改 modeling 不接线，线上仍走单字符串。
+  RTC 线程与 sync 都必须传齐 uncond/cond。
+</p>
+
+<h4>sync 路径改造示意</h4>
+<pre>
+# control_utils.predict_action 增加可选参数
+def predict_action(..., task=None, task_cond=None, cfg_beta=None, ...):
+    obs_u = prepare_observation_for_inference(observation, device, task, robot_type)
+    obs_u = preprocessor(obs_u)
+
+    if task_cond is None:
+        action = policy.select_action(obs_u)
+    else:
+        obs_c = prepare_observation_for_inference(observation, device, task_cond, robot_type)
+        obs_c = preprocessor(obs_c)
+        # 需要 policy.select_action / sample_actions 支持双 tokens + cfg_beta
+        action = policy.select_action_cfg(obs_u, obs_c, cfg_beta=cfg_beta)
+
+    return postprocessor(action)
+</pre>
+
+<h4>RTC 路径改造示意</h4>
+<pre>
+# _rtc_inference_thread 内
+uncond, cond = _build_policy_tasks(cfg)
+obs_batch["task"] = [uncond]
+if cond is not None:
+    obs_batch["task_cond"] = [cond]
+    # predict_action_chunk / sample_actions 读取 task_cond 与 cfg_beta
+actions = policy.predict_action_chunk(
+    preprocessed,
+    inference_delay=delay,
+    prev_chunk_left_over=prev_actions,
+    cfg_beta=cfg.acp_inference.cfg_beta if cfg.acp_inference.mode == "cfg_positive" else None,
+)
+</pre>
+
+<!-- ========== P4 ========== -->
+<h3>P4 脚本默认与训练契约对齐</h3>
+<div class="loc-box">
+  <strong>改哪里：</strong>
+  <code>scripts/run_hil_collect_data.sh</code>（现 <code>--acp_inference.enable=false</code>）；
+  以及 <code>scripts/run_finetune_recap.sh</code> 旁加一段“部署必须一致”的注释/导出变量。
+</div>
+<p class="why">
+  <strong>为什么：</strong>ACP 训练过的 ckpt，上线若关标签，等于把条件分支闲置，对比实验会把“提示漂移”误判成“RECAP 无效”。
+</p>
+<pre>
+# run_hil_collect_data.sh 建议
+ACP_MODE="${ACP_MODE:-cfg_positive}"   # no_guide | cond_positive | cfg_positive
+CFG_BETA="${CFG_BETA:-1.0}"
+SUBTASK="${SUBTASK:-}"
+
+python examples/rac/hil_data_collection.py \
+  ... \
+  --acp_inference.mode="$ACP_MODE" \
+  --acp_inference.cfg_beta="$CFG_BETA" \
+  --subtask="$SUBTASK"
+</pre>
+
+<!-- ========== P5 ========== -->
+<h3>P5 Subtask 推理模式显式化 + 打日志</h3>
+<div class="loc-box">
+  <strong>改哪里：</strong>
+  <code>hil_data_collection.py</code> 启动日志（现已有 Task/Subtask info）；
+  <code>processor_pi05.py</code> 中
+  <code>cleaned_text = text.strip().replace("_", " ").replace("\n", " ")</code>
+  （约 L97）保持不变——训练推理都靠它把多行压成一行。
+</div>
+<p class="why">
+  <strong>为什么：</strong>最终进模型的是扁平字符串。建议每个 episode 开始 log 一次
+  <code>cleaned</code> 后的完整 Task 串，便于复现与排错。
+</p>
+<pre>
+# main 启动时
+uncond, cond = _build_policy_tasks(cfg)
+logger.info("Infer mode=%s beta=%s", cfg.acp_inference.mode, cfg.acp_inference.cfg_beta)
+logger.info("Uncond task: %s", uncond.replace("\n", " | "))
+if cond:
+    logger.info("Cond task:   %s", cond.replace("\n", " | "))
+</pre>
+
+<!-- ========== P6 ========== -->
+<h3>P6 离线评估与 HIL 同一套 mode</h3>
+<div class="loc-box">
+  <strong>改哪里：</strong>
+  <code>examples/rtc/eval_dataset.py</code>（当前无 ACP/CFG/subtask 接线）。
+</div>
+<p class="why">
+  <strong>为什么：</strong>否则 RTC 曲线/离线成功率反映的是另一套提示协议，无法解释 HIL 现象。
+</p>
+
+<!-- ========== 兼容 ========== -->
+<h3>兼容说明：旧字段映射</h3>
+<table>
+  <thead><tr><th>旧 HIL 字段</th><th>新 mode</th><th>行为</th></tr></thead>
+  <tbody>
+    <tr><td><code>enable=false</code></td><td><code>no_guide</code></td><td>纯 task</td></tr>
+    <tr><td><code>enable=true, use_cfg=false</code></td><td><code>cond_positive</code></td><td>单路 positive（现状“开启 ACP”）</td></tr>
+    <tr><td><code>enable=true, use_cfg=true</code></td><td><code>cfg_positive</code></td><td>双路混合，用 <code>cfg_beta</code></td></tr>
+  </tbody>
+</table>
+
+<h2 id="sec5">5. 推荐实验矩阵与验收清单</h2>
+<table>
+  <thead>
+    <tr><th>编号</th><th>训练</th><th>推理</th><th>目的</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>A0</td>
+      <td>ACP on，$p_u=0.1$</td>
+      <td><code>no_guide</code></td>
+      <td>复现当前常见 HIL 默认（欠对齐）</td>
+    </tr>
+    <tr>
+      <td>A1</td>
+      <td>同上</td>
+      <td><code>cond_positive</code></td>
+      <td>对应现状 enable=true 单路</td>
+    </tr>
+    <tr>
+      <td>A2</td>
+      <td>同上</td>
+      <td><code>cfg_positive</code>，$\beta=1.0$</td>
+      <td>应接近 A1；验收双路实现正确性</td>
+    </tr>
+    <tr>
+      <td>A3</td>
+      <td>同上</td>
+      <td><code>cfg_positive</code>，$\beta\in\{1.5,2.0\}$</td>
+      <td>更强引导；观察抖动/过引导</td>
+    </tr>
+    <tr>
+      <td>S0/S1</td>
+      <td>subtask dropout 0.3</td>
+      <td>仅高层 / 固定 Subtask</td>
+      <td>量化子任务条件贡献</td>
+    </tr>
+  </tbody>
+</table>
+
+<table>
+  <thead>
+    <tr><th>验收项</th><th>现状</th><th>目标</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>打标 ρ 与 observed positive rate 日志</td><td>有</td><td>保持</td></tr>
+    <tr><td>训练 positive_only + dropout</td><td>有</td><td>保持</td></tr>
+    <tr><td>推理双前缀 CFG 混合</td><td>无</td><td>完成 P1–P3</td></tr>
+    <tr><td>HIL 默认与 ACP ckpt 契约一致</td><td>常关闭</td><td>完成 P4</td></tr>
+    <tr><td>Subtask/ACP 完整 prompt 日志</td><td>部分</td><td>完成 P5</td></tr>
+    <tr><td>eval 与 HIL 同 mode</td><td>无</td><td>完成 P6</td></tr>
+  </tbody>
+</table>
+
+<div class="footer">
+  文档：<code>docs/recap_cfg_train_infer_alignment.html</code>。
+  公式由 KaTeX 渲染（需联网加载 CDN；离线可改成本地 katex）。
+  代码锚点：RLinf <code>openpi_cfg_action_model.py</code>；
+  LeRobot <code>modeling_pi05.py</code>、<code>hil_data_collection.py</code>、<code>control_utils.py</code>、<code>acp_prompt.py</code>。
+</div>
+</article>
+</body>
+</html>

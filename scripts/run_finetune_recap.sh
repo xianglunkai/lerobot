@@ -24,7 +24,7 @@ export HF_DATASETS_CACHE=/workspace/huggingface/.cache
 export HF_LEROBOT_HOME=/workspace/huggingface/lerobot
 export HF_HOME=/workspace/huggingface
 
-export repo_id=screw_sorting_single_recap_v30
+export repo_id=screw_sorting_single_sft_ep280_v30_steam
 
 export k=1
 
@@ -37,6 +37,14 @@ export RECAP_FAILURE_REWARD=-300.0
 export RECAP_N_STEP=30
 export RECAP_POSITIVE_RATIO=0.3
 export RECAP_DISCOUNT_NEXT_VALUE=true
+# 若外部算法已写入连续优势列，设 true：跳过 value 模型，只按 positive_ratio 分位数打 0/1
+export RECAP_USE_EXISTING_ADVANTAGE=true
+# 数据集优势相关列名（与 parquet / info.json features 一致）
+export ACP_ADVANTAGE_FIELD=advantage_continuous
+export ACP_INDICATOR_FIELD=complementary_info.acp_indicator
+# Pi05 原子子任务条件（scheme A）：high-level + Subtask，训练时按概率丢掉 Subtask
+export CONDITION_ON_SUBTASK=true
+export SUBTASK_DROPOUT_PROB=0.3
 # ================================================================================
 
 # Step 1： Value Function Training (RLinf-aligned recap_returns labels)
@@ -79,36 +87,68 @@ fi
 
 
 # Step 2： Value Inference (RLinf-aligned n-step advantage from recap_returns)
+# RECAP_USE_EXISTING_ADVANTAGE=true 时：读 ACP_ADVANTAGE_FIELD，写出 ACP_INDICATOR_FIELD
 
 if [ "$RUN_VALUE_FUNCTION_INFER" = true ]; then
     echo ">>> STEP2: Value Inference (RECAP recap_returns advantage)"
-    accelerate launch \
-        --multi_gpu \
-        --num_processes=4 \
-        --gpu_ids=0,1,2,3 \
-        --mixed_precision=bf16 \
-        $(which lerobot-value-infer) \
-        --runtime.batch_size=32 \
-        --runtime.num_workers=4 \
-        --dataset.repo_id=${HF_LEROBOT_HOME}/${repo_id} \
-        --dataset.success_field=episode_success \
-        --dataset.default_success=failure \
-        --inference.checkpoint_path=outputs/pi06star_value_train_${repo_id}_round_${k}/checkpoints/last/pretrained_model \
-        --acp.enable=true \
-        --acp.target_mode=${RECAP_TARGET_MODE} \
-        --acp.gamma=${RECAP_GAMMA} \
-        --acp.failure_reward=${RECAP_FAILURE_REWARD} \
-        --acp.discount_next_value=${RECAP_DISCOUNT_NEXT_VALUE} \
-        --acp.n_step=${RECAP_N_STEP} \
-        --acp.positive_ratio=${RECAP_POSITIVE_RATIO} \
-        --acp.force_intervention_positive=true \
-        --viz.enable=true \
-        --viz.episodes=10,42 \
-        --viz.video_keys=observation.images.high,observation.images.right \
-        --viz.overwrite=true \
-        --viz.smooth_window=5 \
-        --output_dir=outputs/pi06star_value_infer_${repo_id}_round_${k} \
-        --job_name=pi06star_value_infer_${repo_id}_${k}
+    if [ "$RECAP_USE_EXISTING_ADVANTAGE" = true ]; then
+        echo ">>> STEP2 mode: use_existing_advantage (quantile binarize only, no value model)"
+        echo ">>> advantage_field=${ACP_ADVANTAGE_FIELD} -> indicator_field=${ACP_INDICATOR_FIELD}"
+        accelerate launch \
+            --multi_gpu \
+            --num_processes=4 \
+            --gpu_ids=0,1,2,3 \
+            --mixed_precision=bf16 \
+            $(which lerobot-value-infer) \
+            --runtime.batch_size=32 \
+            --runtime.num_workers=4 \
+            --dataset.repo_id=${HF_LEROBOT_HOME}/${repo_id} \
+            --dataset.success_field=episode_success \
+            --dataset.default_success=failure \
+            --acp.enable=true \
+            --acp.use_existing_advantage=true \
+            --acp.advantage_field=${ACP_ADVANTAGE_FIELD} \
+            --acp.indicator_field=${ACP_INDICATOR_FIELD} \
+            --acp.positive_ratio=${RECAP_POSITIVE_RATIO} \
+            --acp.force_intervention_positive=true \
+            --viz.enable=true \
+            --viz.episodes=10,42 \
+            --viz.video_keys=observation.images.high,observation.images.right \
+            --viz.overwrite=true \
+            --viz.smooth_window=5 \
+            --output_dir=outputs/pi06star_value_infer_${repo_id}_round_${k} \
+            --job_name=pi06star_value_infer_${repo_id}_${k}
+    else
+        accelerate launch \
+            --multi_gpu \
+            --num_processes=4 \
+            --gpu_ids=0,1,2,3 \
+            --mixed_precision=bf16 \
+            $(which lerobot-value-infer) \
+            --runtime.batch_size=32 \
+            --runtime.num_workers=4 \
+            --dataset.repo_id=${HF_LEROBOT_HOME}/${repo_id} \
+            --dataset.success_field=episode_success \
+            --dataset.default_success=failure \
+            --inference.checkpoint_path=outputs/pi06star_value_train_${repo_id}_round_${k}/checkpoints/last/pretrained_model \
+            --acp.enable=true \
+            --acp.target_mode=${RECAP_TARGET_MODE} \
+            --acp.gamma=${RECAP_GAMMA} \
+            --acp.failure_reward=${RECAP_FAILURE_REWARD} \
+            --acp.discount_next_value=${RECAP_DISCOUNT_NEXT_VALUE} \
+            --acp.n_step=${RECAP_N_STEP} \
+            --acp.positive_ratio=${RECAP_POSITIVE_RATIO} \
+            --acp.advantage_field=${ACP_ADVANTAGE_FIELD} \
+            --acp.indicator_field=${ACP_INDICATOR_FIELD} \
+            --acp.force_intervention_positive=true \
+            --viz.enable=true \
+            --viz.episodes=10,42 \
+            --viz.video_keys=observation.images.high,observation.images.right \
+            --viz.overwrite=true \
+            --viz.smooth_window=5 \
+            --output_dir=outputs/pi06star_value_infer_${repo_id}_round_${k} \
+            --job_name=pi06star_value_infer_${repo_id}_${k}
+    fi
 
 else
     echo ">>> 跳过步骤2"
@@ -163,8 +203,10 @@ if [ "$RUN_VLA_TRAIN" = true ]; then
         --policy.output_features='{"action": {"type": "ACTION", "shape": [7]}}' \
         --policy.use_relative_actions=true \
         --policy.relative_exclude_joints='["right_joint6.pos"]' \
+        --policy.condition_on_subtask=${CONDITION_ON_SUBTASK} \
+        --policy.subtask_dropout_prob=${SUBTASK_DROPOUT_PROB} \
         --acp.enable=true \
-        --acp.indicator_field=complementary_info.acp_indicator \
+        --acp.indicator_field=${ACP_INDICATOR_FIELD} \
         --acp.positive_only_conditional=true \
         --acp.indicator_dropout_prob=0.1 \
         --output_dir=outputs/pi06_policy_${repo_id}_round_${k} \
@@ -172,7 +214,7 @@ if [ "$RUN_VLA_TRAIN" = true ]; then
         --wandb.enable=true \
         --wandb.project=pi06_policy_${repo_id}_${k} \
         --wandb.disable_artifact=True \
-        --wandb.notes="ACP policy finetune with RECAP recap_returns advantages"
+        --wandb.notes="ACP + subtask conditioning | dropout=${SUBTASK_DROPOUT_PROB}"
 else
     echo ">>> 跳过步骤4"
 fi

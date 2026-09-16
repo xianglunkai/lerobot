@@ -75,7 +75,8 @@ def apply_training_time_rtc_inference(
 
     At each denoising step:
     1. Replace prefix positions in x_t with ground truth from previous chunk
-    2. Create per-token timesteps with 1.0 for prefix positions
+    2. Create per-token timesteps with 0.0 for prefix positions (clean actions under
+       the flow convention ``x_t = t * noise + (1 - t) * actions``)
 
     Args:
         x_t: Current noisy actions (B, T, D)
@@ -86,37 +87,44 @@ def apply_training_time_rtc_inference(
 
     Returns:
         x_t_conditioned: x_t with prefix replaced by previous actions
-        time_per_token: Per-token timesteps (B, T) with 1.0 for prefix
+        time_per_token: Per-token timesteps (B, T) with 0.0 for prefix
+        prev_chunk_padded: Padded previous chunk aligned to x_t, or None
     """
     batch_size = x_t.shape[0]
     action_chunk_size = x_t.shape[1]
     action_dim = x_t.shape[2]
     device = x_t.device
-    
-    assert chunk_size <= action_chunk_size, (
-        "Chunk size must be equal to the action chunk size"
-    )
+
+    if chunk_size > action_chunk_size:
+        raise ValueError(
+            f"chunk_size ({chunk_size}) must be <= action chunk length ({action_chunk_size})"
+        )
 
     if inference_delay is None or inference_delay <= 0 or prev_chunk_left_over is None:
         time_scalar = torch.full((batch_size,), time, device=device, dtype=torch.float32)
         return x_t, time_scalar, None
-    
-    if len(prev_chunk_left_over.shape) < 3:
-        # Add batch dimension
+
+    if prev_chunk_left_over.ndim < 3:
         prev_chunk_left_over = prev_chunk_left_over.unsqueeze(0)
 
-
-    delay = min(inference_delay, prev_chunk_left_over.shape[1])
+    delay = min(inference_delay, prev_chunk_left_over.shape[1], chunk_size)
     prefix_mask = torch.arange(chunk_size, device=device)[None, :] < delay
 
-    if prev_chunk_left_over.shape[1] < chunk_size or prev_chunk_left_over.shape[2] < action_dim:
-        padded = x_t.clone()
-        padded[:, : prev_chunk_left_over.shape[1], : prev_chunk_left_over.shape[2]] = prev_chunk_left_over
+    # Pad missing time / action dims with zeros (same as training `pad_vector`).
+    # Copying from `x_t` would inject noise into unused action dims and leak it into the
+    # clamped prefix, which AdaRMS then conditions on.
+    if prev_chunk_left_over.shape[1] != chunk_size or prev_chunk_left_over.shape[2] != action_dim:
+        padded = torch.zeros(batch_size, chunk_size, action_dim, device=device, dtype=x_t.dtype)
+        t = min(prev_chunk_left_over.shape[1], chunk_size)
+        d = min(prev_chunk_left_over.shape[2], action_dim)
+        padded[:, :t, :d] = prev_chunk_left_over[:, :t, :d].to(device=device, dtype=x_t.dtype)
         prev_chunk_left_over = padded
 
-    assert prev_chunk_left_over.shape == x_t.shape, (
-        "The padded previous chunk must be the same size as the input tensor"
-    )
+    if prev_chunk_left_over.shape != x_t.shape:
+        raise ValueError(
+            f"Padded previous chunk shape {tuple(prev_chunk_left_over.shape)} "
+            f"must match x_t shape {tuple(x_t.shape)}"
+        )
 
     x_t_conditioned = torch.where(
         prefix_mask[:, :, None].expand_as(x_t),
@@ -125,6 +133,7 @@ def apply_training_time_rtc_inference(
     )
 
     time_per_token = torch.full((batch_size, chunk_size), time, device=device, dtype=torch.float32)
-    time_per_token = time_per_token.masked_fill(prefix_mask, 1.0)
+    # Match training: clean prefix uses flow time 0.
+    time_per_token = time_per_token.masked_fill(prefix_mask, 0.0)
 
     return x_t_conditioned, time_per_token, prev_chunk_left_over.clone()

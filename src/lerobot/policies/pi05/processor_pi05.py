@@ -38,6 +38,7 @@ from lerobot.processor import (
     UnnormalizerProcessorStep,
 )
 from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
+from lerobot.rl.subtask_prompt import compose_task_with_subtask, has_subtask_marker
 from lerobot.types import EnvTransition, TransitionKey
 from lerobot.utils.constants import (
     OBS_STATE,
@@ -49,12 +50,17 @@ from lerobot.utils.constants import (
 @ProcessorStepRegistry.register(name="pi05_prepare_state_tokenizer_processor_step")
 @dataclass
 class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
-    """
-    Processor step to prepare the state and tokenize the language input.
+    """Prepare state discretization and language prompt for PI05.
+
+    If ``condition_on_subtask`` and complementary ``subtask`` is present (and the
+    task string does not already contain ``Subtask:``), appends it for inference.
+    Training-time dropout composition is done in ``lerobot_train`` before ACP.
     """
 
     max_state_dim: int = 32
     task_key: str = "task"
+    subtask_key: str = "subtask"
+    condition_on_subtask: bool = False
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         transition = transition.copy()
@@ -62,7 +68,8 @@ class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
         state = transition.get(TransitionKey.OBSERVATION, {}).get(OBS_STATE)
         if state is None:
             raise ValueError("State is required for PI05")
-        tasks = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(self.task_key)
+        complementary = transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
+        tasks = complementary.get(self.task_key)
         if tasks is None:
             raise ValueError("No task found in complementary data")
 
@@ -74,9 +81,20 @@ class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
         state_np = state.cpu().numpy()
         discretized_states = np.digitize(state_np, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
 
+        subtasks = complementary.get(self.subtask_key)
+        if isinstance(subtasks, str):
+            subtasks = [subtasks]
+        elif subtasks is None:
+            subtasks = [None] * len(tasks)
+
         full_prompts = []
         for i, task in enumerate(tasks):
-            cleaned_text = task.strip().replace("_", " ").replace("\n", " ")
+            text = task
+            if self.condition_on_subtask and not has_subtask_marker(text):
+                subtask_i = subtasks[i] if i < len(subtasks) else None
+                text = compose_task_with_subtask(text, subtask_i)
+            # Preserve "Subtask:" / "Advantage:" as space-separated clauses for the tokenizer.
+            cleaned_text = text.strip().replace("_", " ").replace("\n", " ")
             state_str = " ".join(map(str, discretized_states[i]))
             full_prompt = f"Task: {cleaned_text}, State: {state_str};\nAction: "
             full_prompts.append(full_prompt)
@@ -145,7 +163,10 @@ def make_pi05_pre_post_processors(
             norm_map=config.normalization_mapping,
             stats=dataset_stats,
         ),
-        Pi05PrepareStateTokenizerProcessorStep(max_state_dim=config.max_state_dim),
+        Pi05PrepareStateTokenizerProcessorStep(
+            max_state_dim=config.max_state_dim,
+            condition_on_subtask=config.condition_on_subtask,
+        ),
         TokenizerProcessorStep(
             tokenizer_name="google/paligemma-3b-pt-224",
             max_length=config.tokenizer_max_length,

@@ -58,6 +58,13 @@ class PI05Config(PreTrainedConfig):
     # Populated at runtime from dataset metadata by make_policy.
     action_feature_names: list[str] | None = None
 
+    # Atomic subtask language conditioning (scheme A: high-level + Subtask in one prompt).
+    # When True, training composes ``task`` with ``subtask`` (with dropout); inference can
+    # pass either a precomposed ``task`` or separate ``task`` + ``subtask`` fields.
+    condition_on_subtask: bool = False
+    # Probability of dropping the Subtask line during training (keep high-level only).
+    subtask_dropout_prob: float = 0.3
+
     # Real-Time Chunking (RTC) configuration
     rtc_config: RTCConfig | None = None
     rtc_training_config: RTCTrainingConfig | None = None
@@ -123,6 +130,19 @@ class PI05Config(PreTrainedConfig):
 
         if self.dtype not in ["bfloat16", "float32"]:
             raise ValueError(f"Invalid dtype: {self.dtype}")
+
+        if not 0.0 <= self.subtask_dropout_prob <= 1.0:
+            raise ValueError(
+                f"subtask_dropout_prob must be within [0, 1], got {self.subtask_dropout_prob}"
+            )
+
+        if self.rtc_training_config is not None and self.rtc_training_config.enabled:
+            max_delay = self.rtc_training_config.max_delay
+            if not 0 <= max_delay < self.chunk_size:
+                raise ValueError(
+                    "rtc_training_config.max_delay must satisfy "
+                    f"0 <= delay < chunk_size ({self.chunk_size}), got {max_delay}"
+                )
 
     def validate_features(self) -> None:
         """Validate and set up input/output features."""

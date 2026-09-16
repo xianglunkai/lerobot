@@ -36,11 +36,11 @@ class ValueInferenceDatasetConfig:
 
 @dataclass
 class ValueInferenceCheckpointConfig:
-    checkpoint_path: str
+    checkpoint_path: str = ""
     checkpoint_ref: str = "last"
 
-    def validate(self) -> None:
-        if not self.checkpoint_path:
+    def validate(self, *, require_checkpoint_path: bool = True) -> None:
+        if require_checkpoint_path and not self.checkpoint_path:
             raise ValueError("'inference.checkpoint_path' must be non-empty.")
         if not self.checkpoint_ref:
             raise ValueError("'inference.checkpoint_ref' must be non-empty.")
@@ -70,6 +70,9 @@ class ValueInferenceACPConfig:
     value_field: str = "complementary_info.value"
     advantage_field: str = "complementary_info.advantage"
     indicator_field: str = "complementary_info.acp_indicator"
+    # If True, skip value-model inference and only binarize an existing continuous
+    # advantage column (``advantage_field``) into ``indicator_field`` via per-task quantiles.
+    use_existing_advantage: bool = False
 
     # RECAP return schedule (RLinf-aligned).
     gamma: float = 1.0
@@ -95,6 +98,8 @@ class ValueInferenceACPConfig:
             raise ValueError("'acp.c_fail_coef' must be non-negative.")
         if not self.value_field:
             raise ValueError("'acp.value_field' must be non-empty.")
+        if self.use_existing_advantage and not self.enable:
+            raise ValueError("'acp.use_existing_advantage=true' requires 'acp.enable=true'.")
         if self.enable and (not self.advantage_field or not self.indicator_field):
             raise ValueError(
                 "'acp.advantage_field' and 'acp.indicator_field' must be non-empty when 'acp.enable=true'."
@@ -143,9 +148,10 @@ class ValueInferencePipelineConfig:
 
     def validate(self) -> None:
         self.dataset.validate()
-        self.inference.validate()
-        self.runtime.validate()
         self.acp.validate()
+        # Checkpoint is only required when running value-model inference.
+        self.inference.validate(require_checkpoint_path=not self.acp.use_existing_advantage)
+        self.runtime.validate()
         self.viz.validate()
 
         if not self.job_name:

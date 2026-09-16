@@ -218,11 +218,28 @@ def load_tasks(local_dir: Path) -> pandas.DataFrame:
 
 
 def load_subtasks(local_dir: Path) -> pandas.DataFrame | None:
-    """Load subtasks from subtasks.parquet if it exists."""
+    """Load subtasks from subtasks.parquet if it exists.
+
+    Expected columns: ``subtask_index`` (int) and ``subtask`` (str).  The returned
+    frame is sorted by ``subtask_index`` and indexed by the subtask name so that
+    ``df.iloc[i].name`` yields the text for ``subtask_index == i`` (same pattern
+    as :func:`load_tasks`).
+    """
     subtasks_path = local_dir / DEFAULT_SUBTASKS_PATH
-    if subtasks_path.exists():
-        return pd.read_parquet(subtasks_path)
-    return None
+    if not subtasks_path.exists():
+        return None
+
+    subtasks = pd.read_parquet(subtasks_path)
+    if "subtask" not in subtasks.columns:
+        raise ValueError(
+            f"'{subtasks_path}' must contain a 'subtask' column with subtask text labels."
+        )
+
+    if "subtask_index" in subtasks.columns:
+        subtasks = subtasks.sort_values("subtask_index")
+    subtasks = subtasks.set_index("subtask", drop=False)
+    subtasks.index.name = "subtask"
+    return subtasks
 
 
 def write_episodes(episodes: Dataset, local_dir: Path) -> None:

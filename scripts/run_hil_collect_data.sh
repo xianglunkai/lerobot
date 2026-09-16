@@ -20,6 +20,9 @@ echo "Selected model: $SELECT"
 
 # RTC with and pi0.5 policy
 
+# Optional atomic subtask injected into the policy prompt (leave empty to use high-level task only).
+SUBTASK="${SUBTASK:-}"
+
 case "$SELECT" in
     s)
         python examples/rac/hil_data_collection.py \
@@ -33,6 +36,7 @@ case "$SELECT" in
             --teleop.type=spacemouse \
             --dataset.repo_id=lerobot-data-collection/hil_screw_sorting_$(date +%Y%m%d_%H%M%S) \
             --dataset.single_task="Please sort and return the silver screws in the grey box to their proper places." \
+            --subtask="$SUBTASK" \
             --dataset.fps=30 \
             --dataset.video=True \
             --dataset.episode_time_s=240 \
@@ -69,6 +73,7 @@ case "$SELECT" in
             --teleop.type=gamepad \
             --dataset.repo_id=lerobot-data-collection/hil_screw_sorting_$(date +%Y%m%d_%H%M%S) \
             --dataset.single_task="Please sort and return the silver screws in the grey box to their proper places." \
+            --subtask="$SUBTASK" \
             --dataset.fps=30 \
             --dataset.video=True \
             --dataset.episode_time_s=240 \
