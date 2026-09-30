@@ -105,11 +105,16 @@ from lerobot.utils.constants import (
     OPENPI_ATTENTION_MASK_VALUE,
 )
 
+# Optional second language prefix for CFG-RL inference (RLinf-aligned).
+OBS_LANGUAGE_COND_TOKENS = "observation.language_cond.tokens"
+OBS_LANGUAGE_COND_ATTENTION_MASK = "observation.language_cond.attention_mask"
+
 
 class ActionSelectKwargs(TypedDict, total=False):
     inference_delay: int | None
     prev_chunk_left_over: Tensor | None
     execution_horizon: int | None
+    cfg_beta: float | None
 
 
 def get_safe_dtype(target_dtype, device_type):
@@ -843,6 +848,22 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         return F.mse_loss(u_t, v_t, reduction="none")
 
+    def _cache_language_prefix(self, images, img_masks, tokens, masks):
+        """Embed prefix and cache KV for flow-matching denoising."""
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, tokens, masks)
+        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+        prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
+        self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"  # noqa: SLF001
+        _, past_key_values = self.paligemma_with_expert.forward(
+            attention_mask=prefix_att_2d_masks_4d,
+            position_ids=prefix_position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, None],
+            use_cache=True,
+        )
+        return prefix_pad_masks, past_key_values
+
     @torch.no_grad()  # see openpi `sample_actions` (slightly adapted)
     def sample_actions(
         self,
@@ -852,9 +873,17 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         masks,
         noise=None,
         num_steps=None,
+        cond_tokens=None,
+        cond_masks=None,
+        cfg_beta: float | None = None,
         **kwargs: Unpack[ActionSelectKwargs],
     ) -> Tensor:
-        """Do a full inference forward and compute the action."""
+        """Do a full inference forward and compute the action.
+
+        Optional CFG-RL (RLinf-aligned): when ``cond_tokens``/``cond_masks`` are provided,
+        mix unconditional and conditional velocities as
+        ``v = (1 - β) v_uncond + β v_cond`` with ``β = cfg_beta`` (default 1.0 → pure cond).
+        """
         if num_steps is None:
             num_steps = self.config.num_inference_steps
 
@@ -870,19 +899,23 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             )  # Use config max_action_dim for internal processing
             noise = self.sample_noise(actions_shape, device)
 
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, tokens, masks)
-        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
-        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+        if (cond_tokens is None) != (cond_masks is None):
+            raise ValueError("cond_tokens and cond_masks must be provided together for CFG inference.")
 
-        prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
-        self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"  # noqa: SLF001
+        beta = 1.0 if cfg_beta is None else float(cfg_beta)
+        # β≈0 → uncond only; β≈1 → cond only; else cache both for CFG mix.
+        if cond_tokens is None or abs(beta) < 1e-8:
+            lang_tokens, lang_masks = tokens, masks
+            cond_cache = None
+        elif abs(beta - 1.0) < 1e-8:
+            lang_tokens, lang_masks = cond_tokens, cond_masks
+            cond_cache = None
+        else:
+            lang_tokens, lang_masks = tokens, masks
+            cond_cache = self._cache_language_prefix(images, img_masks, cond_tokens, cond_masks)
 
-        _, past_key_values = self.paligemma_with_expert.forward(
-            attention_mask=prefix_att_2d_masks_4d,
-            position_ids=prefix_position_ids,
-            past_key_values=None,
-            inputs_embeds=[prefix_embs, None],
-            use_cache=True,
+        prefix_pad_masks, past_key_values = self._cache_language_prefix(
+            images, img_masks, lang_tokens, lang_masks
         )
 
         dt = -1.0 / num_steps
@@ -899,12 +932,22 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             time_tensor = torch.tensor(time, dtype=torch.float32, device=device).expand(bsize)
 
             def denoise_step_partial_call(input_x_t, current_timestep=time_tensor):
-                return self.denoise_step(
+                v_t = self.denoise_step(
                     prefix_pad_masks=prefix_pad_masks,
                     past_key_values=past_key_values,
                     x_t=input_x_t,
                     timestep=current_timestep,
                 )
+                if cond_cache is None:
+                    return v_t
+                prefix_pad_masks_cond, past_key_values_cond = cond_cache
+                v_cond = self.denoise_step(
+                    prefix_pad_masks=prefix_pad_masks_cond,
+                    past_key_values=past_key_values_cond,
+                    x_t=input_x_t,
+                    timestep=current_timestep,
+                )
+                return (1.0 - beta) * v_t + beta * v_cond
 
             if use_training_time_rtc:
                 # Hard-inpaint prefix and use per-token times (prefix time = 0), matching training.
@@ -1327,7 +1370,7 @@ class PI05Policy(PreTrainedPolicy):
         return actions
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
         """Select a single action given environment observations."""
         assert not self._rtc_enabled(), (
             "RTC is not supported for select_action, use it with predict_action_chunk"
@@ -1337,7 +1380,7 @@ class PI05Policy(PreTrainedPolicy):
 
         # Action queue logic for n_action_steps > 1
         if len(self._action_queue) == 0:
-            actions = self.predict_action_chunk(batch)[:, : self.config.n_action_steps]
+            actions = self.predict_action_chunk(batch, **kwargs)[:, : self.config.n_action_steps]
             # Transpose to get shape (n_action_steps, batch_size, action_dim)
             self._action_queue.extend(actions.transpose(0, 1))
 
@@ -1351,9 +1394,21 @@ class PI05Policy(PreTrainedPolicy):
         # Prepare inputs
         images, img_masks = self._preprocess_images(batch)
         tokens, masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
+        cond_tokens = batch.get(OBS_LANGUAGE_COND_TOKENS)
+        cond_masks = batch.get(OBS_LANGUAGE_COND_ATTENTION_MASK)
+        cfg_beta = kwargs.pop("cfg_beta", None)
 
         # Sample actions using the model (pass through RTC kwargs, no separate state needed for PI05)
-        actions = self.model.sample_actions(images, img_masks, tokens, masks, **kwargs)
+        actions = self.model.sample_actions(
+            images,
+            img_masks,
+            tokens,
+            masks,
+            cond_tokens=cond_tokens,
+            cond_masks=cond_masks,
+            cfg_beta=cfg_beta,
+            **kwargs,
+        )
 
         # Unpad actions to actual action dimension
         original_action_dim = self.config.output_features[ACTION].shape[0]

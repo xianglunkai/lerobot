@@ -20,8 +20,12 @@ echo "Selected model: $SELECT"
 
 # RTC with and pi0.5 policy
 
-# Optional atomic subtask injected into the policy prompt (leave empty to use high-level task only).
+# Optional atomic subtask injected into the policy prompt (leave empty for high-level only).
 SUBTASK="${SUBTASK:-}"
+# ACP/CFG-RL inference (RLinf-aligned): no_guide | positive
+# positive + CFG_BETA=1.0 → single conditional forward (same as RLinf scale=1)
+ACP_MODE="${ACP_MODE:-positive}"
+CFG_BETA="${CFG_BETA:-1.0}"
 
 case "$SELECT" in
     s)
@@ -57,7 +61,8 @@ case "$SELECT" in
             --enable_episode_outcome_labeling=true \
             --default_episode_success="success" \
             --require_episode_success_label=true \
-            --acp_inference.enable=false \
+            --acp_inference.mode="${ACP_MODE}" \
+            --acp_inference.cfg_beta="${CFG_BETA}" \
         
         ;;
 
@@ -91,6 +96,8 @@ case "$SELECT" in
             --calibrate=true \
             --device=cuda \
             --action_queue_size_to_get_new_actions=30 \
+            --acp_inference.mode="${ACP_MODE}" \
+            --acp_inference.cfg_beta="${CFG_BETA}" \
         ;;
         *)
         echo "错误：不支持的模型名称 '$SELECT'，请使用 s or g"

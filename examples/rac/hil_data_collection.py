@@ -159,27 +159,41 @@ from lerobot.utils.recording_annotations import (
     resolve_episode_success_label,
 )
 
-from lerobot.rl.acp_tags import build_acp_tagged_task
-from lerobot.rl.subtask_prompt import compose_task_with_subtask
+from lerobot.rl.acp_inference import (
+    ACPInferenceConfig,
+    attach_cfg_language_tokens,
+    build_policy_tasks,
+    resolve_acp_inference_mode,
+)
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class ACPInferenceConfig:
-    enable: bool = False
-    use_cfg: bool = False
-    cfg_beta: float = 1.0
+def _build_policy_tasks(cfg: "HILConfig") -> tuple[str, str | None]:
+    return build_policy_tasks(
+        single_task=cfg.dataset.single_task,
+        subtask=cfg.subtask,
+        acp=cfg.acp_inference,
+    )
 
 
-def _build_policy_task(cfg: "HILConfig") -> str:
-    """High-level task, optional Subtask line, optional ACP tag — for policy inference."""
-    task = cfg.dataset.single_task
-    if cfg.subtask and str(cfg.subtask).strip():
-        task = compose_task_with_subtask(task, str(cfg.subtask).strip())
-    if cfg.acp_inference.enable:
-        task = build_acp_tagged_task(task, is_positive=True)
-    return task
+def _resolve_acp_inference_mode(acp: ACPInferenceConfig) -> str:
+    return resolve_acp_inference_mode(acp)
+
+
+def _preprocess_with_optional_cfg(
+    obs_batch: dict[str, Any],
+    preprocessor: PolicyProcessorPipeline,
+    cfg: "HILConfig",
+) -> tuple[dict[str, Any], float | None]:
+    """Preprocess obs; if mode=positive, attach conditional language tokens for Pi05 CFG."""
+    primary, cond = _build_policy_tasks(cfg)
+    preprocessed = preprocessor({**obs_batch, "task": [primary]})
+    if cond is None:
+        return preprocessed, None
+    pre_cond = preprocessor({**obs_batch, "task": [cond]})
+    attach_cfg_language_tokens(preprocessed, pre_cond)
+    return preprocessed, float(cfg.acp_inference.cfg_beta)
 
 
 # RTC helpers
@@ -292,10 +306,14 @@ class HILConfig:
         if self.default_episode_success is not None:
             self.default_episode_success = normalize_episode_success_label(self.default_episode_success)
             
-        if self.acp_inference.use_cfg and not self.acp_inference.enable:
-            raise ValueError("`acp_inference.use_cfg=true` requires `acp_inference.enable=true`.")
         if self.acp_inference.cfg_beta < 0:
             raise ValueError("`acp_inference.cfg_beta` must be >= 0.")
+        if self.acp_inference.use_cfg and not self.acp_inference.enable and self.acp_inference.mode == "no_guide":
+            raise ValueError(
+                "`acp_inference.use_cfg=true` requires `acp_inference.enable=true` "
+                "or an explicit `acp_inference.mode` other than no_guide."
+            )
+        self.acp_inference.mode = _resolve_acp_inference_mode(self.acp_inference)
 
         self.subtask = str(self.subtask).strip() if self.subtask else ""
 
@@ -546,12 +564,8 @@ def _rtc_inference_thread(
                         obs_batch[name] = obs_batch[name].permute(2, 0, 1).contiguous()
                     obs_batch[name] = obs_batch[name].unsqueeze(0).to(policy_device)
 
-                task = _build_policy_task(cfg)
-
-                obs_batch["task"] = [task]
                 obs_batch["robot_type"] = obs_holder.get("robot_type", "unknown")
-
-                preprocessed = preprocessor(obs_batch)
+                preprocessed, cfg_beta = _preprocess_with_optional_cfg(obs_batch, preprocessor, cfg)
 
                 if prev_actions is not None and relative_step is not None and OBS_STATE in obs_batch:
                     prev_actions_absolute = queue.get_processed_left_over()
@@ -569,9 +583,10 @@ def _rtc_inference_thread(
                         prev_actions, target_steps=cfg.rtc.execution_horizon
                     )
 
-                actions = policy.predict_action_chunk(
-                    preprocessed, inference_delay=delay, prev_chunk_left_over=prev_actions
-                )
+                pred_kwargs = {"inference_delay": delay, "prev_chunk_left_over": prev_actions}
+                if cfg_beta is not None:
+                    pred_kwargs["cfg_beta"] = cfg_beta
+                actions = policy.predict_action_chunk(preprocessed, **pred_kwargs)
 
                 original = actions.squeeze(0).clone()
                 processed = postprocessor(actions).squeeze(0)
@@ -755,6 +770,7 @@ def _rollout_sync(
 
         else:
             if interpolator.needs_new_action():
+                primary, cond = _build_policy_tasks(cfg)
                 action_values = predict_action(
                     observation=obs_frame,
                     policy=policy,
@@ -762,7 +778,9 @@ def _rollout_sync(
                     preprocessor=preprocessor,
                     postprocessor=postprocessor,
                     use_amp=policy.config.use_amp,
-                    task=_build_policy_task(cfg),
+                    task=primary,
+                    task_cond=cond,
+                    cfg_beta=cfg.acp_inference.cfg_beta if cond is not None else None,
                     robot_type=robot.robot_type,
                 )
                 policy_inference_count += 1
@@ -1239,6 +1257,15 @@ def hil_collect(cfg: HILConfig) -> LeRobotDataset:
         logger.info(f"  Task: {cfg.dataset.single_task}")
         if cfg.subtask:
             logger.info(f"  Subtask: {cfg.subtask}")
+        primary, cond = _build_policy_tasks(cfg)
+        logger.info(
+            "  ACP infer: mode=%s cfg_beta=%s",
+            cfg.acp_inference.mode,
+            cfg.acp_inference.cfg_beta if cond is not None else "n/a",
+        )
+        logger.info("  Uncond/primary prompt: %s", primary.replace("\n", " | "))
+        if cond is not None:
+            logger.info("  Cond prompt: %s", cond.replace("\n", " | "))
         logger.info(f"  Interpolation: {cfg.interpolation_multiplier}x")
         if use_rtc:
             logger.info(f"  RTC: enabled (execution_horizon={cfg.rtc.execution_horizon})")

@@ -33,18 +33,20 @@ def resolve_acp_conditioned_task(
 ) -> str:
     """Map one sample to the language prompt used for CFG/ACP training.
 
-    Mirrors RLinf ``OpenPi0ForCFGActionPrediction.forward`` routing:
+    Mirrors RLinf ``compute_cfg_routing_masks``:
 
-    - ``positive_only_conditional=True``: negative/low-advantage samples always use the
-      plain task; only positive samples may receive ``Advantage: positive`` (with dropout).
+    - ``positive_only_conditional=True``: negatives always plain task; only positives
+      may receive ``Advantage: positive`` (subject to ``unconditional_prob`` dropout).
     - ``positive_only_conditional=False``: both branches may receive explicit tags
       (positive or negative), each subject to dropout.
     """
-    if positive_only_conditional and not is_positive:
-        return task
+    if positive_only_conditional:
+        if not is_positive:
+            return task
+        if unconditional_prob > 0.0 and rng.random() < unconditional_prob:
+            return task
+        return build_acp_tagged_task(task, is_positive=True)
 
     if unconditional_prob > 0.0 and rng.random() < unconditional_prob:
         return task
-
-    tag_positive = True if positive_only_conditional else is_positive
-    return build_acp_tagged_task(task, is_positive=tag_positive)
+    return build_acp_tagged_task(task, is_positive=is_positive)

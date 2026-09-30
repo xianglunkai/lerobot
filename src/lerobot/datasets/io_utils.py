@@ -228,7 +228,9 @@ def load_subtasks(local_dir: Path) -> pandas.DataFrame | None:
     subtasks_path = local_dir / DEFAULT_SUBTASKS_PATH
     if not subtasks_path.exists():
         return None
-
+    # Older exports mirror tasks.parquet: subtask text lives in the index, not a column.
+    if "subtask" not in subtasks.columns and subtasks.index.name == "subtask":
+        subtasks = subtasks.reset_index()
     subtasks = pd.read_parquet(subtasks_path)
     if "subtask" not in subtasks.columns:
         raise ValueError(

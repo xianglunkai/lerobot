@@ -176,10 +176,16 @@ class RLTHILConfig:
         if self.default_episode_success is not None:
             self.default_episode_success = normalize_episode_success_label(self.default_episode_success)
 
-        if self.acp_inference.use_cfg and not self.acp_inference.enable:
-            raise ValueError("`acp_inference.use_cfg=true` requires `acp_inference.enable=true`.")
         if self.acp_inference.cfg_beta < 0:
             raise ValueError("`acp_inference.cfg_beta` must be >= 0.")
+        if self.acp_inference.use_cfg and not self.acp_inference.enable and self.acp_inference.mode == "no_guide":
+            raise ValueError(
+                "`acp_inference.use_cfg=true` requires `acp_inference.enable=true` "
+                "or an explicit `acp_inference.mode` other than no_guide."
+            )
+        from lerobot.rl.acp_inference import resolve_acp_inference_mode
+
+        self.acp_inference.mode = resolve_acp_inference_mode(self.acp_inference)
 
     @classmethod
     def __get_path_fields__(cls) -> list[str]:

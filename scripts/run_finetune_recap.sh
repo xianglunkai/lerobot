@@ -2,10 +2,10 @@
 
 # ==================== 选择性执行开关 ====================
 # 设置为 true 表示执行该步骤，设置为 false 表示跳过
-RUN_VALUE_FUNCTION_TRAINING=false
-RUN_VALUE_FUNCTION_INFER=false
-RUN_RECOMPUTE_STATS=false
-RUN_VLA_TRAIN=true
+RUN_VALUE_FUNCTION_TRAINING=true
+RUN_VALUE_FUNCTION_INFER=true
+RUN_RECOMPUTE_STATS=true
+RUN_VLA_TRAIN=false
 
 # ======================================================
 
@@ -29,28 +29,52 @@ export repo_id=screw_sorting_single_sft_ep280_v30_steam
 export k=1
 
 # ==================== RLinf RECAP 超参（训练与推理必须一致）====================
-# target_mode=recap_returns: 使用折扣回报 G_t = r_t + gamma*G_{t+1}，失败终止奖励为 failure_reward
-# failure_reward 建议: -k * L_median (k=2~3)，L_median 为数据集中位 episode 长度
-export RECAP_TARGET_MODE=recap_returns
+# 价值目标模式，可在启动前覆盖：
+#   RECAP_TARGET_MODE=recap_returns bash scripts/run_finetune_recap.sh
+#   RECAP_TARGET_MODE=remaining_steps bash scripts/run_finetune_recap.sh
+# recap_returns    : G_t = r_t + gamma*G_{t+1}，失败终止奖励为 failure_reward
+#                    failure_reward 建议 -k * L_median (k=2~3)
+# remaining_steps  : 与 Evo-RL 相同的剩余步数目标、优势与二值标签
+: "${RECAP_TARGET_MODE:=remaining_steps}"
+case "${RECAP_TARGET_MODE}" in
+    recap_returns|remaining_steps) ;;
+    *)
+        echo "错误：RECAP_TARGET_MODE='${RECAP_TARGET_MODE}'，只能是 recap_returns 或 remaining_steps"
+        exit 1
+        ;;
+esac
+export RECAP_TARGET_MODE
 export RECAP_GAMMA=1.0
 export RECAP_FAILURE_REWARD=-300.0
-export RECAP_N_STEP=30
+
+# 优势的 N 步窗口。remaining_steps 与 Evo-RL 对齐用 50。
+export RECAP_N_STEP=32
 export RECAP_POSITIVE_RATIO=0.3
 export RECAP_DISCOUNT_NEXT_VALUE=true
+
 # 若外部算法已写入连续优势列，设 true：跳过 value 模型，只按 positive_ratio 分位数打 0/1
-export RECAP_USE_EXISTING_ADVANTAGE=true
+export RECAP_USE_EXISTING_ADVANTAGE=false
+
 # 数据集优势相关列名（与 parquet / info.json features 一致）
 export ACP_ADVANTAGE_FIELD=advantage_continuous
 export ACP_INDICATOR_FIELD=complementary_info.acp_indicator
-# Pi05 原子子任务条件（scheme A）：high-level + Subtask，训练时按概率丢掉 Subtask
-export CONDITION_ON_SUBTASK=true
+export INDICATOR_DROPOUT_PROB=0.1
+export POSITIVE_ONLY_CONDITIONAL=true
+export FORCE_INTERVENTION_POSITIVE=true
+
+# 原子子任务条件（scheme A）：high-level + Subtask，训练时按概率丢掉 Subtask
+export CONDITION_ON_SUBTASK=false
 export SUBTASK_DROPOUT_PROB=0.3
+
+# 训练数据集分块大小
+export CHUNK_SIZE=32
+
 # ================================================================================
 
 # Step 1： Value Function Training (RLinf-aligned recap_returns labels)
 
 if [ "$RUN_VALUE_FUNCTION_TRAINING" = true ]; then
-    echo ">>> STEP1: Value Function Training (RECAP recap_returns)"
+    echo ">>> STEP1: Value Function Training (target_mode=${RECAP_TARGET_MODE})"
     accelerate launch \
         --multi_gpu \
         --num_processes=4 \
@@ -80,7 +104,7 @@ if [ "$RUN_VALUE_FUNCTION_TRAINING" = true ]; then
         --job_name=pi06star_value_train_${repo_id}_${k} \
         --wandb.enable=true \
         --wandb.project=pi06star_value_train_${repo_id}_${k} \
-        --wandb.notes="RECAP recap_returns | gamma=${RECAP_GAMMA} failure_reward=${RECAP_FAILURE_REWARD}"
+        --wandb.notes="target_mode=${RECAP_TARGET_MODE} | gamma=${RECAP_GAMMA} failure_reward=${RECAP_FAILURE_REWARD}"
 else
     echo ">>> 跳过步骤1"
 fi
@@ -90,7 +114,7 @@ fi
 # RECAP_USE_EXISTING_ADVANTAGE=true 时：读 ACP_ADVANTAGE_FIELD，写出 ACP_INDICATOR_FIELD
 
 if [ "$RUN_VALUE_FUNCTION_INFER" = true ]; then
-    echo ">>> STEP2: Value Inference (RECAP recap_returns advantage)"
+    echo ">>> STEP2: Value Inference (target_mode=${RECAP_TARGET_MODE})"
     if [ "$RECAP_USE_EXISTING_ADVANTAGE" = true ]; then
         echo ">>> STEP2 mode: use_existing_advantage (quantile binarize only, no value model)"
         echo ">>> advantage_field=${ACP_ADVANTAGE_FIELD} -> indicator_field=${ACP_INDICATOR_FIELD}"
@@ -110,7 +134,7 @@ if [ "$RUN_VALUE_FUNCTION_INFER" = true ]; then
             --acp.advantage_field=${ACP_ADVANTAGE_FIELD} \
             --acp.indicator_field=${ACP_INDICATOR_FIELD} \
             --acp.positive_ratio=${RECAP_POSITIVE_RATIO} \
-            --acp.force_intervention_positive=true \
+            --acp.force_intervention_positive=${FORCE_INTERVENTION_POSITIVE} \
             --viz.enable=true \
             --viz.episodes=10,42 \
             --viz.video_keys=observation.images.high,observation.images.right \
@@ -140,7 +164,7 @@ if [ "$RUN_VALUE_FUNCTION_INFER" = true ]; then
             --acp.positive_ratio=${RECAP_POSITIVE_RATIO} \
             --acp.advantage_field=${ACP_ADVANTAGE_FIELD} \
             --acp.indicator_field=${ACP_INDICATOR_FIELD} \
-            --acp.force_intervention_positive=true \
+            --acp.force_intervention_positive=${FORCE_INTERVENTION_POSITIVE} \
             --viz.enable=true \
             --viz.episodes=10,42 \
             --viz.video_keys=observation.images.high,observation.images.right \
@@ -161,7 +185,7 @@ if [ "$RUN_RECOMPUTE_STATS" = true ]; then
         --repo_id ${HF_LEROBOT_HOME}/${repo_id} \
         --operation.type recompute_stats \
         --operation.relative_action True \
-        --operation.chunk_size 30 \
+        --operation.chunk_size ${CHUNK_SIZE} \
         --operation.relative_exclude_joints "["right_joint6.pos"]" \
         --operation.overwrite True \
         --new_repo_id ${HF_LEROBOT_HOME}/${repo_id}
@@ -189,8 +213,8 @@ if [ "$RUN_VLA_TRAIN" = true ]; then
         --dataset.repo_id=${HF_LEROBOT_HOME}/${repo_id} \
         --policy.type=pi05 \
         --policy.dtype="bfloat16" \
-        --policy.chunk_size=30 \
-        --policy.n_action_steps=30 \
+        --policy.chunk_size=${CHUNK_SIZE} \
+        --policy.n_action_steps=${CHUNK_SIZE} \
         --policy.pretrained_path=/workspace/lerobot/pretrained_models/pi05_base \
         --policy.push_to_hub=false \
         --policy.compile_model=true \
@@ -207,8 +231,8 @@ if [ "$RUN_VLA_TRAIN" = true ]; then
         --policy.subtask_dropout_prob=${SUBTASK_DROPOUT_PROB} \
         --acp.enable=true \
         --acp.indicator_field=${ACP_INDICATOR_FIELD} \
-        --acp.positive_only_conditional=true \
-        --acp.indicator_dropout_prob=0.1 \
+        --acp.positive_only_conditional=${POSITIVE_ONLY_CONDITIONAL} \
+        --acp.indicator_dropout_prob=${INDICATOR_DROPOUT_PROB} \
         --output_dir=outputs/pi06_policy_${repo_id}_round_${k} \
         --job_name=pi06_policy_${repo_id}_${k} \
         --wandb.enable=true \

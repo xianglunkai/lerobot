@@ -74,6 +74,8 @@ def predict_action(
     use_amp: bool,
     task: str | None = None,
     robot_type: str | None = None,
+    task_cond: str | None = None,
+    cfg_beta: float | None = None,
 ):
     """
     Performs a single-step inference to predict a robot action from an observation.
@@ -92,8 +94,10 @@ def predict_action(
         preprocessor: The `PolicyProcessorPipeline` for preprocessing observations.
         postprocessor: The `PolicyProcessorPipeline` for postprocessing actions.
         use_amp: A boolean to enable/disable Automatic Mixed Precision for CUDA inference.
-        task: An optional string identifier for the task.
+        task: An optional string identifier for the task (unconditional / primary prompt).
         robot_type: An optional string identifier for the robot type.
+        task_cond: Optional conditional prompt for CFG-RL (e.g. task + Advantage: positive).
+        cfg_beta: CFG mix weight when ``task_cond`` is set: v=(1-β)v_u + β v_c.
 
     Returns:
         A `torch.Tensor` containing the predicted action, ready for the robot.
@@ -104,13 +108,19 @@ def predict_action(
         torch.autocast(device_type=device.type) if device.type == "cuda" and use_amp else nullcontext(),
     ):
         # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
-        observation = prepare_observation_for_inference(observation, device, task, robot_type)
-        observation = preprocessor(observation)
+        prepared = prepare_observation_for_inference(observation, device, task, robot_type)
+        prepared = preprocessor(prepared)
 
-        # Compute the next action with the policy
-        # based on the current observation
-        action = policy.select_action(observation)
+        select_kwargs: dict[str, Any] = {}
+        if task_cond is not None:
+            from lerobot.rl.acp_inference import attach_cfg_language_tokens
 
+            prepared_cond = prepare_observation_for_inference(observation, device, task_cond, robot_type)
+            prepared_cond = preprocessor(prepared_cond)
+            attach_cfg_language_tokens(prepared, prepared_cond)
+            select_kwargs["cfg_beta"] = 1.0 if cfg_beta is None else float(cfg_beta)
+
+        action = policy.select_action(prepared, **select_kwargs)
         action = postprocessor(action)
 
     return action

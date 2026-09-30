@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>RECAP 软件架构与算法实现</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],throwOnError:false});"></script>
+<style>
+  :root { --ink:#1c1c1c; --muted:#5c5c5c; --rule:#d0d0d0; --accent:#1a365d; --paper:#fff; --bg:#eceae6; --fig:#f7f6f3; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: "Noto Serif SC","Source Han Serif SC","Songti SC",Palatino,serif;
+    font-size: 16.5px; line-height: 1.65;
+  }
+  .sheet { max-width: 840px; margin: 28px auto 72px; background: var(--paper); padding: 52px 58px 72px; border: 1px solid #ddd; }
+  .kicker { font-family: "Source Sans 3","Noto Sans SC","PingFang SC",Helvetica,sans-serif; font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); text-align: center; margin-bottom: 16px; }
+  h1 { font-family: "Source Sans 3","Noto Sans SC","PingFang SC",Helvetica,sans-serif; font-weight: 650; font-size: 26px; line-height: 1.28; text-align: center; color: var(--accent); margin: 0 0 8px; }
+  .byline { text-align: center; color: var(--muted); font-size: 13.5px; margin-bottom: 22px; }
+  h2 { font-family: "Source Sans 3","Noto Sans SC","PingFang SC",Helvetica,sans-serif; font-size: 17px; font-weight: 650; color: var(--accent); margin: 1.7em 0 .5em; padding-bottom: 4px; border-bottom: 1px solid var(--ink); }
+  h3 { font-family: "Source Sans 3","Noto Sans SC","PingFang SC",Helvetica,sans-serif; font-size: 15px; font-weight: 650; margin: 1.15em 0 .35em; }
+  p { margin: .5em 0; }
+  .abs { margin: 0 0 1.2em; }
+  .abs .lab { font-family: "Source Sans 3","Noto Sans SC",Helvetica,sans-serif; font-weight: 700; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; margin: .7em 0 .3em; }
+  th, td { border-bottom: 1px solid var(--rule); padding: 6px 8px; vertical-align: top; text-align: left; }
+  th { font-family: "Source Sans 3","Noto Sans SC",Helvetica,sans-serif; font-weight: 650; font-size: 12px; border-bottom: 1.5px solid var(--ink); border-top: 1.5px solid var(--ink); }
+  tr:last-child td { border-bottom: 1.5px solid var(--ink); }
+  code, pre { font-family: "IBM Plex Mono","Source Code Pro",Consolas,monospace; }
+  code { font-size: .84em; }
+  pre { font-size: 12.5px; background: var(--fig); border: 1px solid var(--rule); padding: .75em .9em; overflow-x: auto; line-height: 1.45; }
+  .eq { margin: .65em 0; overflow-x: auto; }
+  figure { margin: 1.1em 0 1.3em; background: var(--fig); border: 1px solid var(--rule); padding: 12px 14px 8px; }
+  figcaption { font-family: "Source Sans 3","Noto Sans SC",Helvetica,sans-serif; font-size: 12.5px; color: var(--muted); margin-top: 8px; line-height: 1.45; }
+  figcaption strong { color: var(--ink); font-weight: 650; }
+  svg { display: block; width: 100%; height: auto; }
+  ol.steps { padding-left: 1.25em; }
+  ol.steps li { margin: .45em 0; }
+  .fn { margin-top: 2em; padding-top: 10px; border-top: 1px solid var(--rule); font-size: 12.5px; color: var(--muted); }
+</style>
+</head>
+<body>
+<article class="sheet">
+  <div class="kicker">System paper · Offline RL for manipulation</div>
+  <h1>当前代码中的 RECAP：<br/>软件架构、算法与落地步骤</h1>
+  <div class="byline">实现说明 · 以 <code>scripts/run_finetune_recap.sh</code> 与 <code>examples/rac/hil_data_collection.py</code> 为准</div>
+
+  <section class="abs">
+    <div class="lab">摘要</div>
+    <p>
+      本系统把离线示教与人在回路数据迭代成优势条件策略。数据流分为四段：分布价值模型、N 步优势与分位数标签、带语言 dropout 的 flow-matching 策略、带可选 CFG 的在线采集。
+      价值网络为 Pi\*0.6。价值目标有两种互斥模式：<code>remaining_steps</code>（当前脚本默认，与 Evo-RL 的目标及优势一致）和 <code>recap_returns</code>（RLinf 回报）。
+      策略训练默认只对高优势帧附加 <code>Advantage: positive</code>。推理在 Pi0.5 的去噪速度上做引导；引导系数约为 1 时退化为单路条件采样。
+      采集不在线写优势标签。标签在离线 value-infer 中写回数据集，供下一轮策略使用。
+    </p>
+  </section>
+
+  <h2>1. 软件架构</h2>
+  <p>一次迭代由四个进程阶段和一次机器人采集组成。阶段开关在 <code>run_finetune_recap.sh</code> 顶部，当前默认为价值训练、价值推理、统计重算打开，策略训练关闭。</p>
+
+  <figure>
+    <svg viewBox="0 0 760 168" xmlns="http://www.w3.org/2000/svg">
+      <rect x="8" y="36" width="132" height="64" fill="none" stroke="#1a365d" stroke-width="1.2"/>
+      <text x="74" y="62" text-anchor="middle" font-family="Noto Sans SC, sans-serif" font-size="12" fill="#1a365d">数据集</text>
+      <text x="74" y="80" text-anchor="middle" font-family="Noto Sans SC, sans-serif" font-size="10" fill="#5c5c5c">episode_success</text>
+      <polygon points="144,68 158,62 158,74" fill="#1a365d"/>
+      <rect x="162" y="36" width="132" height="64" fill="none" stroke="#1a365d" stroke-width="1.2"/>
+      <text x="228" y="58" text-anchor="middle" font-family="Noto Sans SC, sans-serif" font-size="12" fill="#1a365d">lerobot-value-train</text>
+      <text x="228" y="76" text-anchor="middle" font-family="Noto Sans SC, sans-serif" font-size="10" fill="#5c5c5c">Pistar06</text>
+      <polygon points="298,68 312,62 312,74" fill="#1a365d"/>
+      <rect x="316" y="36" width="140" height="64" fill="none" stroke="#1a365d" stroke-width="1.2"/>
+      <text x="386" y="58" text-anchor="middle" font-family="Noto Sans SC, sans-serif" font-size="12" fill="#1a365d">lerobot-value-infer</text>
+      <text x="386" y="76" text-anchor="middle" font-family="Noto Sans SC, sans-serif" font-size="10" fill="#5c5c5c">advantage, indicator</text>
+      <polygon points="460,68 474,62 474,74" fill="#1a365d"/>
+      <rect x="478" y="36" width="120" height="64" fill="none" stroke="#1a365d" stroke-width="1.2"/>
+      <text x="538" y="58" text-anchor="middle" font-family="Noto Sans SC, sans-serif" font-size="12" fill="#1a365d">recompute_stats</text>
+      <text x="538" y="76" text-anchor="middle" font-family="Noto Sans SC, sans-serif" font-size="10" fill="#5c5c5c">相对动作</text>
+      <polygon points="602,68 616,62 616,74" fill="#1a365d"/>
+      <rect x="620" y="36" width="128" height="64" fill="none" stroke="#1a365d" stroke-width="1.2"/>
+      <text x="684" y="58" text-anchor="middle" font-family="Noto Sans SC, sans-serif" font-size="12" fill="#1a365d">lerobot-train</text>
+      <text x="684" y="76" text-anchor="middle" font-family="Noto Sans SC, sans-serif" font-size="10" fill="#5c5c5c">Pi05 + ACP</text>
+      <text x="380" y="128" text-anchor="middle" font-family="Noto Serif SC, serif" font-size="12" fill="#1c1c1c">checkpoint → HIL 采集（hil_data_collection）→ 新数据集，k ← k+1</text>
+      <path d="M684,100 L684,146 L74,146 L74,100" fill="none" stroke="#1a365d" stroke-width="1"/>
+      <polygon points="68,108 74,96 80,108" fill="#1a365d"/>
+    </svg>
+    <figcaption><strong>图 1.</strong> 一轮 RECAP。优势列写在原数据集上；策略读这些列，不在机器人上计算价值。</figcaption>
+  </figure>
+
+  <table>
+    <thead><tr><th>模块</th><th>路径</th><th>职责</th></tr></thead>
+    <tbody>
+      <tr><td>编排</td><td><code>scripts/run_finetune_recap.sh</code></td><td>模式、超参、四阶段开关</td></tr>
+      <tr><td>价值模型</td><td><code>values/pistar06/</code></td><td>分布价值、两种目标</td></tr>
+      <tr><td>RECAP 回报</td><td><code>rl/recap_returns.py</code></td><td>仅 <code>recap_returns</code> 使用</td></tr>
+      <tr><td>优势与标签</td><td><code>scripts/lerobot_value_infer.py</code></td><td>N 步优势、分位数、写 parquet</td></tr>
+      <tr><td>训练路由</td><td><code>rl/acp_prompt.py</code>，<code>rl/acp_hook.py</code></td><td>在 preprocessor 之前改 <code>task</code></td></tr>
+      <tr><td>子任务</td><td><code>rl/subtask_prompt.py</code></td><td>可选，插在 ACP 之前</td></tr>
+      <tr><td>策略 CFG</td><td><code>policies/pi05/modeling_pi05.py</code></td><td><code>sample_actions</code> 混合速度</td></tr>
+      <tr><td>推理配置</td><td><code>rl/acp_inference.py</code></td><td><code>no_guide</code> / <code>positive</code></td></tr>
+      <tr><td>采集</td><td><code>examples/rac/hil_data_collection.py</code></td><td>RTC 或同步推理，记录干预与成败</td></tr>
+    </tbody>
+  </table>
+
+  <h2>2. 数据契约</h2>
+  <p>价值与标签依赖回合级 <code>episode_success</code>（<code>success</code> 或 <code>failure</code>）。字段缺失时按 <code>default_success=failure</code> 处理。帧级可选 <code>complementary_info.is_intervention</code>。策略语言来自 <code>task</code>；若打开子任务条件，还需要能解析出的 <code>subtask</code> 文本（<code>meta/subtasks.parquet</code> 加帧上的 <code>subtask_index</code>）。</p>
+  <p>value-infer 写回两列，名字由脚本指定，当前为 <code>advantage_continuous</code> 与 <code>complementary_info.acp_indicator</code>。采集帧里的 <code>task</code> 始终是高层原文，不含 Advantage 标签。</p>
+
+  <h2>3. 价值模型</h2>
+  <p>Pi\*0.6 用 SigLIP 编码多相机图像，用 Gemma 编码 <code>Task: …, State: …</code>，头部为 $[-1,0]$ 上 201 个 bin 的 logits。预测值是 bin 中心的期望。损失是软标签交叉熵，不是均方误差。本体状态只出现在文本里。</p>
+  <p>两种目标互斥，训练与推理必须使用同一个 <code>RECAP_TARGET_MODE</code>。</p>
+  <h3>3.1 remaining_steps</h3>
+  <div class="eq">$$g_t=-(L-t-1)-\mathbf{1}[\mathrm{fail}]\,L_{\max}\,c_{\mathrm{fail}},\qquad V^\star_t=\mathrm{clip}\!\left(\frac{g_t}{L_{\max}+c_{\mathrm{fail}}},-1,0\right).$$</div>
+  <p>$L_{\max}$ 是该 <code>task_index</code> 的最长回合。脚本未覆盖 <code>c_fail_coef</code>，因此使用默认值 1。此模式不使用 $\gamma$ 与 <code>failure_reward</code>。</p>
+  <h3>3.2 recap_returns</h3>
+  <div class="eq">$$r_t=\begin{cases}-1,& t&lt;T-1,\\ 0,& \text{成功终止},\\ R_{\mathrm{fail}},& \text{失败终止,}\end{cases}\quad G_t=r_t+\gamma G_{t+1},\quad V^\star_t=\dfrac{G_t-G_{\min}}{G_{\max}-G_{\min}}-1.$$</div>
+  <p>脚本中 $\gamma=1$、$R_{\mathrm{fail}}=-300$。归一化范围是整个数据集的回报，不是单个任务的长度。</p>
+
+  <h2>4. 优势与二值标签</h2>
+  <p>连续优势由价值预测 $V$ 与第 3 节的奖励共同构成。两种模式的 $r_t$ 不同，因此 $A_t$ 不可互换。</p>
+  <p><strong>remaining_steps.</strong> 令 $r_t=V^\star_t-V^\star_{t+1}$（最后一帧 $r_t=V^\star_t$），</p>
+  <div class="eq">$$A_t=\sum_{k=0}^{N-1} r_{t+k}+V_{t+N}-V_t.$$</div>
+  <p>走不满 $N$ 步时 bootstrap 为 0。无折扣。</p>
+  <p><strong>recap_returns.</strong></p>
+  <div class="eq">$$A_t=\mathrm{norm}\!\left(\sum_{k=0}^{N-1}\gamma^k r_{t+k}\right)+\gamma^{N_{\mathrm{valid}}}V_{t+N}-V_t.$$</div>
+  <p>$\mathrm{norm}$ 使用与 $G$ 相同的全局映射，使奖励和与 $V$ 同尺度。<code>discount_next_value=false</code> 时 bootstrap 上的折扣指数改为 1。</p>
+  <p>二值化与模式无关：对每个 <code>task_index</code>，</p>
+  <div class="eq">$$\tau=Q_{1-\rho}(A),\qquad \mathbb{I}=\mathbf{1}[A\ge\tau],\qquad \rho=0.3.$$</div>
+  <p><code>FORCE_INTERVENTION_POSITIVE=true</code> 时，干预标志大于 0.5 的帧强制为 1。当前脚本 $N=32$。若 <code>RECAP_USE_EXISTING_ADVANTAGE=true</code>，则跳过价值模型，只对已有连续列做上述分位数，不再按 <code>target_mode</code> 重算 $A_t$。</p>
+
+  <h2>5. CFG-RL 策略训练</h2>
+  <p>每个 batch 在 preprocessor 之前改写 <code>task</code>。若 <code>CONDITION_ON_SUBTASK=true</code>，先按概率丢掉 <code>Subtask:</code>，再做 ACP。当前脚本关闭子任务。ACP 由 <code>POSITIVE_ONLY_CONDITIONAL=true</code> 与 <code>INDICATOR_DROPOUT_PROB=0.1</code> 控制：</p>
+  <table>
+    <thead><tr><th>indicator</th><th>概率 $1-p$</th><th>概率 $p=0.1$</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>任务文本加 <code>Advantage: positive</code></td><td>纯任务文本</td></tr>
+      <tr><td>0</td><td colspan="2">始终纯任务文本，不写 negative</td></tr>
+    </tbody>
+  </table>
+  <p>Pi0.5 在单路提示上做 flow-matching。训练不做速度混合。换行在 tokenizer 前被压成空格，因此模型看到的是一行 <code>Task: … Advantage: positive, State: …</code>。策略使用相对动作，<code>right_joint6.pos</code> 排除在相对化之外，<code>chunk_size</code> 与统计重算的 <code>CHUNK_SIZE</code> 必须相同，当前为 32。</p>
+
+  <h2>6. 推理</h2>
+  <p><code>acp_inference.mode</code> 取 <code>no_guide</code> 或 <code>positive</code>。后者构造两条字符串：基础任务，以及同一字符串加上 <code>Advantage: positive</code>。去噪步上</p>
+  <div class="eq">$$v=(1-\beta)\,v_{\mathrm{u}}+\beta\,v_{\mathrm{c}}.$$</div>
+  <p>$\beta\approx 0$ 只跑无条件前缀；$\beta\approx 1$ 只跑条件前缀，每步一次前向；其余 $\beta$ 才维护两套 KV。采集脚本默认 <code>ACP_MODE=positive</code>、<code>CFG_BETA=1.0</code>，因此是单路正条件。HIL 支持 RTC 后台线程与同步 <code>predict_action</code>，两条路径都走上述逻辑。可选 <code>--subtask</code> 会写进基础字符串，位于 Advantage 之前。</p>
+
+  <figure>
+    <svg viewBox="0 0 720 92" xmlns="http://www.w3.org/2000/svg">
+      <rect x="16" y="28" width="150" height="40" fill="none" stroke="#1a365d"/>
+      <text x="91" y="52" text-anchor="middle" font-size="12" font-family="Noto Sans SC, sans-serif">no_guide</text>
+      <text x="190" y="52" font-size="12" font-family="Noto Serif SC, serif">纯 task</text>
+      <rect x="360" y="28" width="150" height="40" fill="none" stroke="#1a365d"/>
+      <text x="435" y="52" text-anchor="middle" font-size="12" font-family="Noto Sans SC, sans-serif">positive, β=1</text>
+      <text x="524" y="52" font-size="12" font-family="Noto Serif SC, serif">单路 Advantage: positive</text>
+    </svg>
+    <figcaption><strong>图 2.</strong> 部署默认是右支。β 偏离 1 时才在同一步噪声上混合两路速度。</figcaption>
+  </figure>
+
+  <h2>附录 A. 从零到一的操作</h2>
+  <p>以下步骤对应仓库当前脚本。路径以脚本内变量为准，换机器时只改环境变量和 <code>repo_id</code>，不要在四个阶段里各写一套模式。</p>
+
+  <h3>A.1 准备数据与环境</h3>
+  <ol class="steps">
+    <li>数据集放在 <code>${HF_LEROBOT_HOME}/${repo_id}</code>。当前脚本为 <code>/workspace/huggingface/lerobot/screw_sorting_single_sft_ep280_v30_steam</code>。</li>
+    <li>确认 <code>meta/episodes</code> 含 <code>episode_success</code>。没有该列的回合会被当成失败。</li>
+    <li>确认相机键与脚本中的 rename 一致：<code>cam_high</code>、<code>cam_right_wrist</code> 映射到 <code>high</code>、<code>right</code>。状态与动作维度为 7。</li>
+    <li>安装本仓库，使 <code>lerobot-value-train</code>、<code>lerobot-value-infer</code>、<code>lerobot-edit-dataset</code>、<code>lerobot-train</code> 在 PATH 中。价值与策略阶段使用 4 张 GPU（脚本中 <code>gpu_ids=0,1,2,3</code>）。</li>
+    <li>准备 Pi0.5 基座权重，脚本指向 <code>/workspace/lerobot/pretrained_models/pi05_base</code>。</li>
+  </ol>
+
+  <h3>A.2 选定算法模式</h3>
+  <p>在 <code>scripts/run_finetune_recap.sh</code> 中只保留一种价值模式，并让后续轮次沿用它。</p>
+  <pre>RECAP_TARGET_MODE=remaining_steps   # 或 recap_returns
+RECAP_N_STEP=32
+RECAP_POSITIVE_RATIO=0.3
+RECAP_USE_EXISTING_ADVANTAGE=false
+POSITIVE_ONLY_CONDITIONAL=true
+INDICATOR_DROPOUT_PROB=0.1</pre>
+  <p><code>remaining_steps</code> 忽略 <code>RECAP_GAMMA</code> 与 <code>RECAP_FAILURE_REWARD</code>。<code>recap_returns</code> 会使用它们。已有外部连续优势、且不打算重训价值时，才把 <code>RECAP_USE_EXISTING_ADVANTAGE</code> 设为 <code>true</code>，并保证 <code>ACP_ADVANTAGE_FIELD</code> 已在 parquet 中。</p>
+
+  <h3>A.3 第 1 步：训练价值</h3>
+  <pre>RUN_VALUE_FUNCTION_TRAINING=true
+RUN_VALUE_FUNCTION_INFER=false
+RUN_RECOMPUTE_STATS=false
+RUN_VLA_TRAIN=false
+bash scripts/run_finetune_recap.sh</pre>
+  <p>检查 <code>outputs/pi06star_value_train_${repo_id}_round_${k}/checkpoints/last/pretrained_model</code> 存在。日志中的 <code>target_mode</code> 必须与脚本变量一致。</p>
+
+  <h3>A.4 第 2 步：写优势与标签</h3>
+  <p>只打开 <code>RUN_VALUE_FUNCTION_INFER</code>。推理读取上一步的 <code>last</code> checkpoint，把 <code>advantage_continuous</code> 与 <code>complementary_info.acp_indicator</code> 写进数据集。日志应出现 <code>positive_ratio_target=0.3000</code> 以及接近它的 <code>positive_ratio_observed</code>。干预强制打开时，观测比例可以略高于 0.3。</p>
+  <p>抽查一帧：indicator 为 0 或 1；同一 <code>task_index</code> 上，indicator 为 1 的连续优势应不低于该任务阈值。</p>
+
+  <h3>A.5 第 3 步：相对动作统计</h3>
+  <p>只打开 <code>RUN_RECOMPUTE_STATS</code>。该步按 <code>CHUNK_SIZE</code> 重算统计，并排除 <code>right_joint6.pos</code>。必须在策略训练之前完成，且 <code>CHUNK_SIZE</code> 与下一步 <code>policy.chunk_size</code> 相同。覆盖写回同一 <code>repo_id</code>。</p>
+
+  <h3>A.6 第 4 步：微调策略</h3>
+  <p>只打开 <code>RUN_VLA_TRAIN</code>。确认命令行包含</p>
+  <pre>--acp.enable=true
+--acp.indicator_field=complementary_info.acp_indicator
+--acp.positive_only_conditional=true
+--acp.indicator_dropout_prob=0.1
+--policy.use_relative_actions=true
+--policy.chunk_size=32
+--policy.n_action_steps=32</pre>
+  <p>权重写到 <code>outputs/pi06_policy_${repo_id}_round_${k}</code>。若数据集没有 <code>subtask</code>，保持 <code>CONDITION_ON_SUBTASK=false</code>。</p>
+
+  <h3>A.7 第 5 步：采集下一轮数据</h3>
+  <p>把 <code>scripts/run_hil_collect_data.sh</code> 的 <code>--policy.path</code> 指到刚保存的 <code>pretrained_model</code>。默认</p>
+  <pre>ACP_MODE=positive
+CFG_BETA=1.0
+SUBTASK=</pre>
+  <p>启动后日志应包含 <code>ACP infer: mode=positive</code> 以及带 <code>Advantage: positive</code> 的条件提示。需要无条件对照时设 <code>ACP_MODE=no_guide</code>。需要更强或更弱引导时改 <code>CFG_BETA</code>（偏离 1 会变成双路去噪，更慢）。</p>
+  <p>采集时：空格暂停，<code>c</code> 接管，<code>p</code> 交还策略，方向键结束回合。打开结局标注时，未按成功/失败键的回合使用脚本中的默认标签。记录列是高层 <code>task</code>、<code>is_intervention</code> 和 <code>episode_success</code>，不是 Advantage 字符串。</p>
+
+  <h3>A.8 第 6 步：进入下一轮</h3>
+  <ol class="steps">
+    <li>把新采集数据与原数据合成一个 LeRobot 数据集，或把 <code>repo_id</code> 改为合并后的目录。</li>
+    <li><code>k</code> 加 1，避免覆盖上一轮 <code>outputs/</code>。</li>
+    <li>从 A.3 重做。不要更换 <code>RECAP_TARGET_MODE</code>，除非同时丢弃旧的价值 checkpoint 与 indicator。</li>
+  </ol>
+
+  <h3>A.9 验收清单</h3>
+  <table>
+    <thead><tr><th>检查</th><th>通过标准</th></tr></thead>
+    <tbody>
+      <tr><td>模式一致</td><td>价值训练、value-infer、笔记三者的 <code>target_mode</code> 相同</td></tr>
+      <tr><td>标签比例</td><td>日志中 observed positive ratio 约 0.3，或因干预略高</td></tr>
+      <tr><td>字段</td><td>训练能读到 <code>complementary_info.acp_indicator</code>，值为 0/1</td></tr>
+      <tr><td>相对动作</td><td>统计重算的 chunk 与 <code>policy.chunk_size</code> 同为 32</td></tr>
+      <tr><td>部署提示</td><td><code>positive</code> 且 β=1 时，日志为单条带 Advantage 的提示</td></tr>
+      <tr><td>采集默认成败</td><td>与价值侧 <code>default_success=failure</code> 的约定一致，避免未标注回合被当成成功</td></tr>
+    </tbody>
+  </table>
+
+  <div class="fn">
+    本文描述仓库当前实现，不是 RLinf 或 Evo-RL 的论文复述。<code>remaining_steps</code> 的目标与优势公式与 Evo-RL 相同；<code>recap_returns</code> 与 positive-only 训练、速度场 CFG 对齐 RLinf。公式由 KaTeX 渲染。
+  </div>
+</article>
+</body>
+</html>
