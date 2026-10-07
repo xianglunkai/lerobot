@@ -215,9 +215,8 @@ class LanguageColumnsWriter:
         table = pq.read_table(path)
         n_rows = table.num_rows
 
-        # Ensure we cover every episode in the file. Episodes that don't have
-        # staging artifacts are passed through with empty annotation lists —
-        # this keeps the writer idempotent and safe for partial reruns.
+        # Episodes included in this run without staging artifacts get empty lists.
+        # Episodes not included keep whatever language columns are already stored.
         staged_per_ep: dict[int, dict[str, list[dict[str, Any]]]] = {}
         for record in episodes:
             staging = EpisodeStaging(staging_dir, record.episode_index)
@@ -262,14 +261,31 @@ class LanguageColumnsWriter:
         if episode_col is None or ts_col is None:
             raise ValueError(f"{path} is missing 'episode_index' or 'timestamp' — required by the writer.")
 
+        # Episodes outside this run keep the language columns already on disk.
+        # A partial ``only_episodes`` pass must not blank the rest of the shard.
+        touched = {int(ep) for ep in persistent_by_ep}
+        if LANGUAGE_PERSISTENT in table.column_names:
+            old_persistent = table.column(LANGUAGE_PERSISTENT).to_pylist()
+            old_events = table.column(LANGUAGE_EVENTS).to_pylist()
+        else:
+            old_persistent = None
+            old_events = None
+
         per_row_persistent: list[list[dict[str, Any]]] = []
         per_row_events: list[list[dict[str, Any]]] = []
         for i in range(n_rows):
-            ep = episode_col[i]
+            ep = int(episode_col[i])
             ts = float(ts_col[i])
-            per_row_persistent.append(persistent_by_ep.get(ep, []))
-            buckets = events_by_ep_ts.get(ep, {})
-            per_row_events.append(buckets.get(ts, []))
+            if ep in touched:
+                per_row_persistent.append(persistent_by_ep.get(ep, []))
+                buckets = events_by_ep_ts.get(ep, {})
+                per_row_events.append(buckets.get(ts, []))
+            elif old_persistent is not None and old_events is not None:
+                per_row_persistent.append(old_persistent[i] or [])
+                per_row_events.append(old_events[i] or [])
+            else:
+                per_row_persistent.append([])
+                per_row_events.append([])
 
         new_table = self._materialize_table(
             table, per_row_persistent, per_row_events, drop_old=self.drop_existing_subtask_index

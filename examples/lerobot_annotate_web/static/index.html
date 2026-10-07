@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LeRobot 标注</title>
+  <link rel="stylesheet" href="/assets/styles.css?v=live">
+</head>
+<body>
+  <div id="app">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">LEROBOT ANNOTATION</p>
+        <h1>数据集标注</h1>
+        <p class="subhead">查看 LeRobot 数据集结构、多路视频和表格，并按官方语言列自动标注、人工修改。</p>
+      </div>
+      <span id="health" class="status">未连接</span>
+    </header>
+
+    <nav class="main-nav" role="tablist">
+      <button class="nav-tab active" data-page="structurePage" type="button">数据集</button>
+      <button class="nav-tab" data-page="playPage" type="button">回放</button>
+      <button class="nav-tab" data-page="tablePage" type="button">表格</button>
+      <button class="nav-tab" data-page="annotatePage" type="button">自动标注</button>
+      <button class="nav-tab" data-page="editPage" type="button">人工编辑</button>
+      <a class="nav-tab" href="/guide">说明文档</a>
+    </nav>
+
+    <section class="panel">
+      <div class="section-heading">
+        <div>
+          <span class="eyebrow">WORKSPACE</span>
+          <h2>打开数据集</h2>
+        </div>
+        <span id="datasetState" class="muted">还没有加载</span>
+      </div>
+      <div class="dataset-row">
+        <label class="grow">数据集路径
+          <input id="path" value="/home/xlk/work/data/huggingface/lerobot/take_me_tissues_v30">
+        </label>
+        <button id="open" class="primary" type="button">加载</button>
+      </div>
+      <p id="loadMessage" class="message" role="status"></p>
+    </section>
+
+    <section id="structurePage" class="page">
+      <div class="page-heading section-heading">
+        <div><span class="eyebrow">01 · STRUCTURE</span><h2>数据集构造</h2></div>
+      </div>
+      <section class="panel">
+        <dl class="metrics" id="metrics"></dl>
+        <div class="workspace" style="margin-top:16px">
+          <div>
+            <h3>特征字典</h3>
+            <pre id="features">加载数据集后显示 info.json 里的 features。</pre>
+          </div>
+          <div>
+            <h3>文件</h3>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>路径</th><th>大小</th></tr></thead>
+                <tbody id="files"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <h3 style="margin-top:16px">info</h3>
+        <pre id="infoDict">{}</pre>
+      </section>
+    </section>
+
+    <section id="playPage" class="page" hidden>
+      <div class="section-heading">
+        <div><span class="eyebrow">02 · PLAYBACK</span><h2>多视频回放</h2></div>
+        <span id="playMeta" class="muted"></span>
+      </div>
+      <div class="workspace">
+        <aside class="episodes-panel">
+          <label>搜索 episode<input id="filter" type="search" placeholder="0 或任务文字"></label>
+          <div id="episodeList" class="episode-list"></div>
+        </aside>
+        <div class="viewer">
+          <div id="players" class="video-grid"></div>
+          <div class="panel transport">
+            <button id="play" class="primary" type="button">播放</button>
+            <button id="pause" class="ghost" type="button">暂停</button>
+            <label>速度
+              <select id="rate">
+                <option value="0.25">0.25×</option>
+                <option value="0.5">0.5×</option>
+                <option value="1" selected>1×</option>
+                <option value="1.5">1.5×</option>
+                <option value="2">2×</option>
+                <option value="4">4×</option>
+              </select>
+            </label>
+            <label class="grow">进度
+              <input id="seek" type="range" min="0" max="1000" value="0">
+            </label>
+            <span id="clock" class="muted">0.0 / 0.0 s</span>
+          </div>
+          <div id="timeline" class="cards"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tablePage" class="page" hidden>
+      <div class="section-heading">
+        <div><span class="eyebrow">03 · PARQUET</span><h2>内部表格</h2></div>
+      </div>
+      <section class="panel">
+        <div class="toolbar">
+          <label class="grow">文件
+            <select id="parquetFile"></select>
+          </label>
+          <label>episode
+            <select id="parquetEpisode"><option value="all">全部</option></select>
+          </label>
+          <label>每页
+            <select id="pageSize">
+              <option>25</option>
+              <option selected>50</option>
+              <option>100</option>
+            </select>
+          </label>
+          <button id="parquetPrev" class="ghost" type="button">上一页</button>
+          <button id="parquetNext" class="ghost" type="button">下一页</button>
+        </div>
+        <p id="parquetMeta" class="muted"></p>
+        <div class="table-wrap">
+              <table class="data-table">
+                <thead id="parquetHead"></thead>
+            <tbody id="parquetBody"></tbody>
+          </table>
+        </div>
+        <h3 style="margin:16px 0 8px">选中行的字典</h3>
+        <pre id="rowDict">点击一行查看。</pre>
+      </section>
+    </section>
+
+    <section id="annotatePage" class="page" hidden>
+      <div class="section-heading">
+        <div><span class="eyebrow">04 · AUTO</span><h2>自动标注</h2></div>
+        <span id="jobState" class="muted"></span>
+      </div>
+      <section class="panel">
+        <p class="muted">情节写法示例：<code>all</code> 全部，<code>0</code> 只标第 0 条，<code>0-2</code> 第 0 到 2 条，<code>0,3,5</code> 这三条。</p>
+        <div class="toolbar" style="margin-top:12px">
+          <button class="chip" type="button" data-spec="all">all</button>
+          <button class="chip" type="button" data-spec="0">0</button>
+          <button class="chip" type="button" data-spec="0-2">0-2</button>
+          <button class="chip" type="button" data-spec="0,3,5">0,3,5</button>
+        </div>
+        <div class="toolbar">
+          <label class="grow">情节
+            <input id="spec" value="all">
+          </label>
+          <label>写入方式
+            <select id="mode">
+              <option value="overwrite">覆盖原数据集</option>
+              <option value="copy">生成新数据集</option>
+            </select>
+          </label>
+          <label class="grow">新数据集目录
+            <input id="output" placeholder="选择“生成新数据集”后填写">
+          </label>
+          <button id="run" class="primary" type="button">开始</button>
+          <button id="jobPause" class="ghost" type="button" disabled>暂停</button>
+          <button id="jobResume" class="ghost" type="button" disabled>继续</button>
+          <button id="jobStop" class="ghost" type="button" disabled>结束</button>
+        </div>
+        <p id="liveProgress" class="live-progress">正在读取任务状态…</p>
+        <pre id="log" class="live-log">还没有任务。</pre>
+        <p class="muted">这次要生成并写入的特征。只要 subtask 和 memory 时，取消 plan、task_aug、interjections 和 vqa。插话会同时写出 say。勾选插话时会先生成 subtask 供它参照；没勾 subtask 时这些句子留在暂存，不写入数据集。已经存在的模块暂存会跳过模型，写 parquet 时仍按这里的勾选过滤。</p>
+        <div class="toolbar checks" id="featureChoices">
+          <label class="check"><input type="checkbox" value="subtask" checked> subtask</label>
+          <label class="check"><input type="checkbox" value="plan" checked> plan</label>
+          <label class="check"><input type="checkbox" value="memory" checked> memory</label>
+          <label class="check"><input type="checkbox" value="task_aug" checked> task_aug</label>
+          <label class="check"><input type="checkbox" value="interjections" checked> interjections + say</label>
+          <label class="check"><input type="checkbox" value="vqa" checked> vqa</label>
+        </div>
+        <div class="toolbar">
+          <button class="chip" type="button" data-features="all">全部特征</button>
+          <button class="chip" type="button" data-features="subtask,memory">只要 subtask + memory</button>
+        </div>
+        <p class="muted">开始、暂停、继续、结束都由这里控制。暂停会冻住当前模型调用，继续从原处接着跑，结束会停掉进程，已经写好的暂存还在。</p>
+        <p id="jobMessage" class="message"></p>
+        <p id="featureStatus" class="message">加载数据集后，这里按当前勾选的特征和情节提示是否已经标完。</p>
+        <div id="bars"></div>
+        <h3 style="margin:16px 0 8px">标注了什么</h3>
+        <p id="changeSummary" class="muted"></p>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>episode</th><th>模块</th><th>style</th><th>时间</th><th>将写入</th><th>数据集现状</th><th>内容</th>
+              </tr>
+            </thead>
+            <tbody id="changeRows"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <section id="editPage" class="page" hidden>
+      <div class="section-heading">
+        <div><span class="eyebrow">05 · EDIT</span><h2>按视频修改</h2></div>
+        <span id="editMeta" class="muted"></span>
+      </div>
+      <div class="workspace">
+        <aside class="episodes-panel">
+          <div id="editList" class="episode-list"></div>
+        </aside>
+        <div class="viewer">
+          <div id="editPlayers" class="video-grid"></div>
+          <div class="panel">
+            <div class="toolbar">
+              <button id="save" class="primary" type="button">保存这一条</button>
+              <button id="addPersistent" class="ghost" type="button">添加持续标注</button>
+              <button id="addEvent" class="ghost" type="button">添加事件</button>
+              <span id="saveState" class="muted"></span>
+            </div>
+            <h3 style="margin:12px 0">language_persistent</h3>
+            <div id="persistent"></div>
+            <h3 style="margin:12px 0">language_events</h3>
+            <div id="events"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script src="/assets/app.js?v=live"></script>
+</body>
+</html>
