@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LeRobot 标注工具说明</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <div id="app" class="guide">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">DESIGN AND OPERATIONS</p>
+        <h1>标注工具说明</h1>
+        <p class="subhead">设计、安装、启动和退出，以及 take_me_tissues_v30 的真实操作顺序。</p>
+      </div>
+      <a class="status" href="/">返回标注页</a>
+    </header>
+
+    <section class="panel">
+      <h2>设计</h2>
+      <p>LeRobot 仓库里的官方入口是命令行 <code>lerobot-annotate</code>，没有自带网页。这个页面放在 <code>examples/lerobot_annotate_web</code>，调用同一套计划、插话、计划更新、VQA、校验和写回，不另做一套字段。</p>
+      <ul>
+        <li>持续列 <code>language_persistent</code>：subtask、plan、memory、task_aug、motion。官方模块会写前四种，motion 只在人工编辑里添加。</li>
+        <li>事件列 <code>language_events</code>：interjection、vqa、trace，以及 style 为空、带 <code>say</code> 工具调用的说话事件。页面上说话显示成 say，保存时写成官方工具调用。</li>
+        <li>图像、state、action、原来的任务句保持不动。第一次覆盖写入前，把 <code>meta/info.json</code> 和 data parquet 复制到 <code>meta/backup_before_language/</code>。</li>
+        <li>生成新数据集时，复制 meta 和 parquet，视频用符号链接指回原文件，避免再拷一遍几百 MB 的 mp4。</li>
+        <li>模型是 DashScope 的 <code>qwen3.8-max</code>，OpenAI 兼容接口。密钥从环境变量 <code>DASHSCOPE_API_KEY</code> 或 <code>annotate-tools/annotator/.env</code> 读取，页面和日志都不打印密钥。</li>
+        <li>已经写好的 <code>.annotate_staging/episode_XXXXXX/&lt;module&gt;.jsonl</code> 会跳过，中断后重新跑同一条命令会从缺的情节继续。DashScope 若把某一帧误判为不适宜内容，这一次调用记一条警告并跳过，整次任务不会因此退出。</li>
+      </ul>
+      <p>画面沿用 annotate-tools 可视化那套：Space Grotesk 和 Noto Sans SC，深色底，橙色主按钮，青色小标题。</p>
+    </section>
+
+    <section class="panel">
+      <h2>安装</h2>
+      <p>在已经装好 LeRobot 的环境里执行。这台机器用的是 conda 环境，<code>uv</code> 不在 PATH 上。</p>
+      <pre>cd /home/xlk/work/lerobot
+/home/xlk/miniconda3/envs/lerobot/bin/python -m pip install 'openai>=1.40,&lt;2.0'</pre>
+      <p>密钥二选一。不要把密钥写进网页或提交到 git。</p>
+      <pre>export DASHSCOPE_API_KEY=你的密钥
+# 或者保持这个文件存在，启动时会自己读：
+# /home/xlk/work/annotate-tools/annotator/.env</pre>
+      <p>可选环境变量：<code>FINEART_VLM_MODEL</code> 换模型名，<code>DASHSCOPE_BASE_URL</code> 换兼容接口地址，<code>FINEART_ANNOTATE_ENV</code> 指向另一份 .env。</p>
+    </section>
+
+    <section class="panel">
+      <h2>启动和退出</h2>
+      <p>网页只监听本机。</p>
+      <pre>cd /home/xlk/work/lerobot
+PYTHONUNBUFFERED=1 /home/xlk/miniconda3/envs/lerobot/bin/python examples/lerobot_annotate_web/app.py</pre>
+      <p>浏览器打开 <a href="http://127.0.0.1:8766/">http://127.0.0.1:8766/</a>。说明页是 <a href="http://127.0.0.1:8766/guide">http://127.0.0.1:8766/guide</a>。</p>
+      <p>退出网页：在启动它的终端按 Ctrl+C。这只停 HTTP 服务。自动标注是另一个进程，停网页不会把它停掉，已经跑完的暂存还在数据集的 <code>.annotate_staging/</code>。</p>
+      <p>要停掉标注进程，先在「自动标注」页看 pid，再执行 <code>kill &lt;pid&gt;</code>。不要对数据集 parquet 做强制删除。覆盖写入使用临时文件替换，中途杀掉可能留下 <code>.parquet.tmp</code>，正式的 parquet 仍是上一版。</p>
+      <p>命令行等价启动，不经过网页：</p>
+      <pre>/home/xlk/miniconda3/envs/lerobot/bin/python examples/lerobot_annotate_web/run_pipeline.py \
+  --root /home/xlk/work/data/huggingface/lerobot/take_me_tissues_v30 \
+  --episodes all \
+  --mode overwrite</pre>
+      <p>只标第 0 条并写到新目录：</p>
+      <pre>/home/xlk/miniconda3/envs/lerobot/bin/python examples/lerobot_annotate_web/run_pipeline.py \
+  --root /home/xlk/work/data/huggingface/lerobot/take_me_tissues_v30 \
+  --episodes 0 \
+  --mode copy \
+  --output /home/xlk/work/data/huggingface/lerobot/take_me_tissues_v30_annotated</pre>
+    </section>
+
+    <section class="panel">
+      <h2>take_me_tissues_v30 全流程</h2>
+      <p>数据集在 <code>/home/xlk/work/data/huggingface/lerobot/take_me_tissues_v30</code>。v3.0，30 fps，28 条轨迹，54610 帧，三路视频 <code>observation.images.high</code>、<code>left</code>、<code>right</code>，动作和状态都是 16 维。任务句是：Please take a pack of tissues from the drawer next to you, then pull out one sheet and give it to me.</p>
+      <ol>
+        <li>按上面的命令启动网页，打开 http://127.0.0.1:8766/ 。右上角应变成「已连接」。</li>
+        <li>路径保持该数据集，点「加载」。数据集页应出现 v3.0、54610 帧、三个视频特征和 <code>data/</code>、<code>videos/</code>、<code>meta/</code> 文件表。点开特征字典能看到 action、observation.state 的 shape。</li>
+        <li>打开「回放」，点 <code>#0</code>。三路画面同时出来。用播放、暂停和速度（0.25× 到 4×）控制，拖动进度条时三路一起跳。第 0 条高位相机在拼接视频里从 0 秒到 79.6 秒。</li>
+        <li>打开「表格」，文件选 <code>data/chunk-000/file-000.parquet</code>，episode 选 0。表格里是帧行，action 显示成向量摘要。点一行，下面的字典展开这一行。</li>
+        <li>打开「自动标注」。示例按钮会填入情节：<code>all</code>、<code>0</code>、<code>0-2</code>、<code>0,3,5</code>。特征默认全选。只要 subtask 和 memory 时，点「只要 subtask + memory」，plan、task_aug、interjections 和 vqa 不会调用模型。插话会连同 say 一起生成。覆盖原数据集会改当前 parquet；生成新数据集则把结果写到路径框里的目录，默认是原目录名加 <code>_annotated</code>。新目录若已存在会拒绝，避免盖掉上次结果。命令行对应 <code>--features subtask,memory</code>。</li>
+        <li>自动标注由「开始」「暂停」「继续」「结束」控制。任务一旦起来，「开始」会锁住，暂停和结束可以点；继续只有暂停之后才亮。按钮正下方是当前第几条、本条已等待多久，以及最新日志，模型还没返回时秒数也会往上走。暂停冻住当前模型调用，继续从原地接着跑，结束停掉进程并保留暂存。勾选的每个特征都有自己的进度。所选情节里这些特征的暂存都齐了，页面会用绿色提示「所选特征已标注完成」；语言列还没进 parquet 时，同一句会说明还要再点「开始」才会写入。页面上的表按 episode、style、将写入的语言列和句子列出已经生成的内容；action、state 和图像在任务结束前不会改，语言列要等写回 parquet 后才变成「已写入」。</li>
+        <li>全部阶段结束并校验通过后，语言列才写入 parquet。覆盖模式下重新点「加载」，语言列状态变为已有。生成模式下把路径改成新目录再加载。然后在回放里点 subtask 句子，视频会跳到对应时间。</li>
+        <li>打开「人工编辑」，选同一条。改 subtask 文字，或「添加事件」写一句 interjection。vqa 和 trace 必须填相机名，例如 <code>observation.images.high</code>。点「保存这一条」。只改这一条，其它 episode 保留。再点该条，表格和编辑区应显示刚保存的句子。</li>
+        <li>标注还在写整表时不要保存。写回和人工保存会抢同一个 parquet。</li>
+      </ol>
+      <p>基本测试：</p>
+      <pre>cd /home/xlk/work/lerobot
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 /home/xlk/miniconda3/envs/lerobot/bin/python -m pytest \
+  -p pytest tests/annotations/test_language_review.py tests/annotations/test_annotate_web.py -q</pre>
+    </section>
+  </div>
+</body>
+</html>
