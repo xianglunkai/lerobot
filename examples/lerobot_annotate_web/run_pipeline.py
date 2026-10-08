@@ -200,26 +200,11 @@ class _SelectiveWriter(LanguageColumnsWriter):
         return super().write_all(records, filtered, root)
 
 
+DASHSCOPE_API_KEY = "sk-a42c33cd37dd452babdf855d8d870f5c"
+
+
 def load_dashscope() -> None:
-    if os.environ.get("DASHSCOPE_API_KEY", "").strip():
-        return
-    override = os.environ.get("FINEART_ANNOTATE_ENV", "").strip()
-    candidates = [
-        Path(override) if override else None,
-        Path(__file__).resolve().parents[2].parent / "annotate-tools" / "annotator" / ".env",
-    ]
-    for path in candidates:
-        if path is None or not path.is_file():
-            continue
-        for line in path.read_text(encoding="utf-8").splitlines():
-            text = line.strip()
-            if not text or text.startswith("#") or "=" not in text:
-                continue
-            name, value = text.split("=", 1)
-            os.environ.setdefault(name.strip(), value.strip().strip('"').strip("'"))
-        if os.environ.get("DASHSCOPE_API_KEY", "").strip():
-            return
-    raise RuntimeError("DASHSCOPE_API_KEY is missing. Export it or keep annotate-tools/annotator/.env.")
+    os.environ["DASHSCOPE_API_KEY"] = DASHSCOPE_API_KEY
 
 
 def run(root: Path, episodes: list[int] | None, features: str = "all") -> None:
