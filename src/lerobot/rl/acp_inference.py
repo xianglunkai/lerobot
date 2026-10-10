@@ -38,22 +38,16 @@ class ACPInferenceConfig:
     - ``mode="positive"``: CFG with ``Advantage: positive``; mix weight is ``cfg_beta``
       (RLinf ``guidance_type=positive`` + ``cfgrl_guidance_scale``). When ``cfg_beta≈1``,
       sampling uses the conditional branch only (single forward).
-
-    Legacy: ``enable=true`` → ``positive``; ``enable=false`` → ``no_guide``.
     """
 
     mode: str = "no_guide"
     cfg_beta: float = 1.0
-    enable: bool = False
-    use_cfg: bool = False  # kept for CLI compat; ignored once mode resolves to positive
 
 
 def resolve_acp_inference_mode(acp: ACPInferenceConfig) -> str:
     """Resolve final mode to ``no_guide`` or ``positive``."""
     mode = acp.mode
     if mode in _POSITIVE_ALIASES:
-        return "positive"
-    if mode == "no_guide" and acp.enable:
         return "positive"
     if mode not in ACP_INFER_MODES:
         raise ValueError(

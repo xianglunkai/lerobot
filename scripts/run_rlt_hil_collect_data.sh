@@ -56,7 +56,6 @@ COMMON_ARGS=(
     --double_tap_window_s=0.6
     --only_critical=false
     --start_with_teleop=false
-    --acp_inference.enable=false
 )
 
 case "$SELECT" in

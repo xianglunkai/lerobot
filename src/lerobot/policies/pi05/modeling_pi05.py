@@ -924,6 +924,21 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
         execution_horizon = kwargs.get("execution_horizon")
         use_training_time_rtc = self._training_time_rtc_inference_enabled()
+        if use_training_time_rtc and inference_delay:
+            max_delay = self.config.rtc_training_config.max_delay
+            if inference_delay > max_delay:
+                logging.warning(
+                    "Training-time RTC inference_delay %s exceeds max_delay %s; clamping the hard prefix.",
+                    inference_delay,
+                    max_delay,
+                )
+
+                print(
+                    "Training-time RTC inference_delay %s exceeds max_delay %s; clamping the hard prefix.",
+                    inference_delay,
+                    max_delay,
+                )
+                inference_delay = max_delay
 
         x_t = noise
         prev_chunk_left_over_ext = None

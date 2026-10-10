@@ -24,7 +24,7 @@ echo "Selected model: $SELECT"
 SUBTASK="${SUBTASK:-}"
 # ACP/CFG-RL inference (RLinf-aligned): no_guide | positive
 # positive + CFG_BETA=1.0 → single conditional forward (same as RLinf scale=1)
-ACP_MODE="${ACP_MODE:-positive}"
+ACP_MODE="${ACP_MODE:-no_guide}"
 CFG_BETA="${CFG_BETA:-1.0}"
 
 case "$SELECT" in

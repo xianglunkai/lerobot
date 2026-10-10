@@ -308,11 +308,6 @@ class HILConfig:
             
         if self.acp_inference.cfg_beta < 0:
             raise ValueError("`acp_inference.cfg_beta` must be >= 0.")
-        if self.acp_inference.use_cfg and not self.acp_inference.enable and self.acp_inference.mode == "no_guide":
-            raise ValueError(
-                "`acp_inference.use_cfg=true` requires `acp_inference.enable=true` "
-                "or an explicit `acp_inference.mode` other than no_guide."
-            )
         self.acp_inference.mode = _resolve_acp_inference_mode(self.acp_inference)
 
         self.subtask = str(self.subtask).strip() if self.subtask else ""

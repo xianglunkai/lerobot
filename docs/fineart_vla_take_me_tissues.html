@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FineART-VLA：从 take_me_tissues_v30 第一集到训练与推理</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'\\(',right:'\\)',display:false}],throwOnError:false});"></script>
+<style>
+  :root {
+    --ink: #1a1a1a;
+    --muted: #4a4a4a;
+    --rule: #d8d4cc;
+    --paper: #f7f4ee;
+    --card: #fffdf8;
+    --accent: #1f3a5f;
+    --hl: #8c3a2f;
+    --lo: #1d5c4a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Source Serif 4", "Noto Serif SC", "Songti SC", Palatino, serif;
+    line-height: 1.65;
+  }
+  header.banner {
+    background: var(--accent);
+    color: #f4efe6;
+    padding: 2.4rem 1.4rem 1.8rem;
+  }
+  header.banner h1 {
+    max-width: 920px;
+    margin: 0 auto 0.4rem;
+    font-size: 1.85rem;
+    font-weight: 650;
+    letter-spacing: 0.01em;
+  }
+  header.banner p {
+    max-width: 920px;
+    margin: 0.25rem auto;
+    color: #d5deea;
+    font-size: 0.98rem;
+  }
+  main { max-width: 920px; margin: 0 auto; padding: 1.6rem 1.2rem 4rem; }
+  h2 {
+    font-size: 1.35rem;
+    margin: 2.2rem 0 0.6rem;
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 0.25rem;
+    color: var(--accent);
+  }
+  h3 { font-size: 1.08rem; margin: 1.4rem 0 0.4rem; }
+  p, li { font-size: 1.02rem; }
+  code, .mono {
+    font-family: "IBM Plex Mono", "Source Code Pro", ui-monospace, monospace;
+    font-size: 0.86em;
+  }
+  code { background: #efeae2; padding: 0.05em 0.28em; border-radius: 3px; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0.8rem 0 1.1rem;
+    background: var(--card);
+    font-size: 0.92rem;
+  }
+  th, td { border: 1px solid var(--rule); padding: 0.38rem 0.5rem; text-align: left; vertical-align: top; }
+  th { background: #efe8dc; font-weight: 650; }
+  .note {
+    background: var(--card);
+    border-left: 3px solid var(--accent);
+    padding: 0.6rem 0.9rem;
+    margin: 0.9rem 0;
+  }
+  pre.algo, pre.src {
+    padding: 0.9rem 1rem;
+    overflow-x: auto;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 0.78rem;
+    line-height: 1.45;
+    border-radius: 4px;
+  }
+  pre.algo { background: #1c2430; color: #e8eef6; }
+  pre.src { background: #fffdf8; color: #1a1a1a; border: 1px solid var(--rule); }
+  pre.src .c { color: #6b6256; }
+  .flow { display: flex; flex-direction: column; gap: 0; margin: 1rem 0 1.4rem; }
+  .box {
+    background: var(--card);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 0.55rem 0.75rem;
+  }
+  .box strong { color: var(--accent); }
+  .arrow { text-align: center; color: var(--muted); font-size: 0.85rem; line-height: 1.2; padding: 0.15rem 0; }
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem; }
+  .hlbox { border-color: #c9a59d; }
+  .hlbox strong { color: var(--hl); }
+  .lobox { border-color: #9dbfb4; }
+  .lobox strong { color: var(--lo); }
+  .tag { font-family: ui-monospace, monospace; font-size: 0.78rem; color: var(--muted); }
+  @media (max-width: 720px) { .split { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header class="banner">
+  <h1>FineART-VLA：以 take_me_tissues_v30 第一集为例的训练与推理解剖</h1>
+  <p>对照 LeRobot 当前实现。运行例子取 episode 0 的全局 index 0–5。读完后应能独立写出一次 batch size = 1 的前向、损失和推理循环。</p>
+  <p>代码锚点：<span class="mono">datasets/language_render.py</span>，<span class="mono">policies/fineart_vla/{configuration,processor,modeling}_fineart_vla.py</span>，<span class="mono">policies/pi05/modeling_pi05.py</span></p>
+</header>
+<main>
+
+<h2>1. 这篇文档怎么用</h2>
+<p>全文只跟踪一条真实轨迹。数据集是 <code>/data/huggingface/lerobot/lerobot/take_me_tissues_v30</code>，v3.0，30&nbsp;Hz，机器人 <code>agilex_cobot</code>，29 集、56033 帧。第 0 集占全局 index <code>[0, 2388)</code>，时长 79.6&nbsp;s。任务句来自 <code>meta/tasks.parquet</code>：</p>
+<p class="note">Please take a pack of tissues from the drawer next to you, then pull out one sheet and give it to me.</p>
+<p>观测是三路 480×640 视频 <code>high</code> / <code>left</code> / <code>right</code>，状态和动作都是 16 维：左臂 7 关节、右臂 7 关节、<code>vx</code>、<code>vtheta</code>。语言已经写进每一帧的 <code>language_persistent</code>；<code>language_events</code> 在这一集是空列表。默认配方只用 <code>${task}</code> 和 <code>${subtask}</code>，同集里的 memory 行不进入损失。</p>
+
+<h2>2. 第 0 集开头四帧</h2>
+<p>前四帧时间戳是 \(0,\ 1/30,\ 2/30,\ 3/30\) 秒。本体和动作在这四帧上相同，机器人还停在起始姿态。下面只列左臂前两关节、右臂第 0 关节和底盘，完整 16 维在第 4 节归一化时用到。</p>
+<table>
+  <tr><th>index</th><th>t (s)</th><th>L0</th><th>L1</th><th>R0</th><th>vx</th><th>vθ</th><th>当时有效子任务</th></tr>
+  <tr><td>0</td><td>0.000</td><td>−0.0237</td><td>0.0031</td><td>0.1348</td><td>0</td><td>0</td><td>drive forward along the office aisle toward the desk bench</td></tr>
+  <tr><td>1</td><td>0.033</td><td>−0.0237</td><td>0.0031</td><td>0.1348</td><td>0</td><td>0</td><td>同上</td></tr>
+  <tr><td>2</td><td>0.067</td><td>−0.0237</td><td>0.0031</td><td>0.1348</td><td>0</td><td>0</td><td>同上</td></tr>
+  <tr><td>3</td><td>0.100</td><td>−0.0237</td><td>0.0031</td><td>0.1348</td><td>0</td><td>0</td><td>同上</td></tr>
+</table>
+<p>子任务按时间轴分段，写在 <code>language_persistent</code> 里，并且每一帧都带着整集的列表。取“当前子任务”的函数是 <code>active_at</code>（<code>src/lerobot/datasets/language_render.py</code>）。它先留下时间戳满足 timestamp ≤ t 的行，再在这些行里取最大的时间戳：</p>
+<pre class="src"><span class="c"># language_render.py</span>
+def active_at(t, *, persistent, style=None, role=None, tool_name=None, camera=None):
+    matches = [
+        row
+        for row in _matching_rows(persistent, style=style, role=role,
+                                   tool_name=tool_name, camera=camera)
+        if _timestamp(row) &lt;= t          <span class="c"># 只要 timestamp ≤ t</span>
+    ]
+    if not matches:
+        return None
+    latest_ts = max(_timestamp(row) for row in matches)   <span class="c"># 其中最新的一条</span>
+    return _select_one(
+        [row for row in matches if _timestamp(row) == latest_ts],
+        style=style, role=role, tool_name=tool_name, camera=camera,
+    )</pre>
+<p>用 index 0、\(t=0\) 走一遍。这一帧的 <code>language_persistent</code> 里 style=<code>subtask</code> 的时间戳是 0、12.20、15.23、30、32.5、43.7、49.3、60、65。条件 <code>_timestamp(row) &lt;= 0</code> 只留下 0.0 那一行，所以</p>
+<pre class="src">active_at(0.0, persistent=ep0_rows, style="subtask")
+→ {"content": "drive forward along the office aisle toward the desk bench",
+   "timestamp": 0.0, "style": "subtask", "role": "assistant"}</pre>
+<p>同一调用若改成 style=<code>memory</code>：memory 的时间戳从 12.2 才开始，没有一行 ≤ 0，函数返回 <code>None</code>。到了 \(t=12.2\)（约第 366 帧），subtask 里 ≤ 12.2 的有 0.0 和 12.2，<code>max</code> 取 12.2，子任务换成 “turn right and approach the desk end with drawer cabinet”。</p>
+<table>
+  <tr><th>子任务开始 (s)</th><th>约等于帧</th><th>content</th></tr>
+  <tr><td>0.00</td><td>0</td><td>drive forward along the office aisle toward the desk bench</td></tr>
+  <tr><td>12.20</td><td>366</td><td>turn right and approach the desk end with drawer cabinet</td></tr>
+  <tr><td>15.23</td><td>457</td><td>stop beside the desk drawer cabinet and hold position</td></tr>
+  <tr><td>30.00</td><td>900</td><td>open the drawer next to the desk</td></tr>
+  <tr><td>32.50</td><td>975</td><td>pick up the tissue pack from the drawer</td></tr>
+  <tr><td>43.70</td><td>1311</td><td>pull a sheet from the held tissue pack with the other gripper</td></tr>
+  <tr><td>49.30</td><td>1479</td><td>carry the tissue pack to the seated person</td></tr>
+  <tr><td>60.00</td><td>1800</td><td>hand over the tissue pack to the seated person</td></tr>
+  <tr><td>65.00</td><td>1950</td><td>put the tissue pack on the round side table</td></tr>
+</table>
+<p>因此 index 0–5 的监督子任务都是第一句。动作块长度默认 50 帧，约 1.67&nbsp;s，也落在这一句里面。第一条 memory 的时间戳是 12.2&nbsp;s，在 \(t=0\) 时 <code>active_at</code> 得到空，默认配方本来也不读 memory。</p>
+
+<h2>3. 默认配方，以及 BLAKE2b 如何抽成高层或低层</h2>
+<h3>3.1 <code>_fineart_vla_default_recipe</code></h3>
+<p>函数在 <code>src/lerobot/policies/fineart_vla/configuration_fineart_vla.py</code>。它返回一个字典，<code>FineARTVLAConfig.recipe</code> 用它当默认值。训练时 <code>TrainingRecipe.from_dict</code> 再把它收成对象。<code>${task}</code> 和 <code>${subtask}</code> 是占位符，真正的字符串要等 <code>render_sample</code> 去填。</p>
+<pre class="src">def _fineart_vla_default_recipe() -&gt; dict:
+    """不 import 数据集模块，只把子任务契约嵌进配置。"""
+    return {
+        "blend": {
+            <span class="c"># 约 30% 的样本：任务句 → 子任务，只做文本交叉熵</span>
+            "high_level_subtask": {
+                "weight": 0.30,
+                "messages": [
+                    {"role": "user", "content": "${task}", "stream": "high_level"},
+                    {
+                        "role": "assistant",
+                        "content": "${subtask}",   <span class="c"># 由 active_at(t, style=subtask) 填入</span>
+                        "stream": "high_level",
+                        "target": True,            <span class="c"># 这一轮的 token 写入 text_labels</span>
+                        "if_present": "subtask",   <span class="c"># 当前时刻没有子任务就整轮丢掉</span>
+                    },
+                ],
+            },
+            <span class="c"># 约 70% 的样本：子任务 → 动作。没有 assistant target，所以没有文本监督</span>
+            "low_level_execution": {
+                "weight": 0.70,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "${subtask}",
+                        "stream": "low_level",     <span class="c"># 流名让 tokenizer 打开 predict_actions，并拼接 State:</span>
+                        "if_present": "subtask",
+                    }
+                ],
+            },
+        }
+    }</pre>
+<table>
+  <tr><th>成分</th><th>权重</th><th>对话</th><th>监督</th></tr>
+  <tr><td>high_level_subtask</td><td>0.30</td><td>user: <code>${task}</code>；assistant: <code>${subtask}</code></td><td>assistant 段文本交叉熵。流是 <code>high_level</code>，<code>predict_actions=False</code></td></tr>
+  <tr><td>low_level_execution</td><td>0.70</td><td>user: <code>${subtask}</code></td><td>流是 <code>low_level</code>，<code>predict_actions=True</code>，监督未来 50 步动作</td></tr>
+</table>
+<p><code>${subtask}</code> 的默认绑定在 <code>recipe.py</code> 的 <code>DEFAULT_BINDINGS</code>：<code>"subtask": "active_at(t, style=subtask)"</code>。所以第 2 节那个函数就是这里被调用的实现。<code>${task}</code> 不走 <code>active_at</code>，直接读 <code>meta/tasks.parquet</code> 里 task_index 0 的那句。</p>
+
+<h3>3.2 BLAKE2b 抽签，按字节展开</h3>
+<p><code>RenderTrainingMessagesStep</code> 把数据集列 <code>index</code> 当作 <code>sample_idx</code>。抽签在 <code>_select_recipe</code>（同样是 <code>language_render.py</code>）。它不用随机数，同一 index 每次训练都走同一条路线。</p>
+<pre class="src">def _select_recipe(recipe, sample_idx):
+    components = [c for c in recipe.blend.values() if c.route is None]
+    <span class="c"># 默认配方：先 high_level_subtask(0.30)，再 low_level_execution(0.70)</span>
+    total_weight = sum(c.weight or 0.0 for c in components)   <span class="c"># = 1.0</span>
+
+    <span class="c"># 1) 把 index 的十进制字符串编码成字节。index 0 → b"0"，index 2 → b"2"</span>
+    digest = hashlib.blake2b(str(sample_idx).encode(), digest_size=8).digest()
+    <span class="c"># 2) digest 是 8 字节。按大端读成 0 .. 2^64-1 的整数</span>
+    <span class="c"># 3) 除以 2^64 得到 [0, 1) 的小数，再乘总权重</span>
+    draw = int.from_bytes(digest, "big") / 2**64 * total_weight
+
+    cumulative = 0.0
+    for component in components:          <span class="c"># 字典顺序：先 0.30 的高层，再 0.70 的低层</span>
+        cumulative += component.weight or 0.0
+        if draw &lt; cumulative:
+            return component
+    return components[-1]</pre>
+<p>BLAKE2b 在这里只被当作一个把整数映到 64 比特的函数。<code>digest_size=8</code> 表示只要 8 字节（64 比特），不是默认的 64 字节。展开成三步：</p>
+$$\mathrm{digest}=\mathrm{BLAKE2b}_{8}(\text{UTF-8}(\mathrm{str}(i)))\in\{0,1\}^{64}$$
+$$n=\sum_{k=0}^{7}\mathrm{digest}[k]\cdot 256^{7-k}$$
+$$\mathrm{draw}=n\,/\,2^{64}\times 1.0$$
+<p>累计权重先加高层的 0.30。draw &lt; 0.30 返回高层，否则继续加上 0.70，累计到 1.0，返回低层。</p>
+<p>index 0 的具体字节：</p>
+<table>
+  <tr><th></th><th>index 0</th><th>index 2</th></tr>
+  <tr><td>输入字节</td><td><code>b"0"</code> = <code>30</code></td><td><code>b"2"</code> = <code>32</code></td></tr>
+  <tr><td>BLAKE2b-64 十六进制</td><td><code>842b7d9d43cddf75</code></td><td><code>1bf41ef6fd6f6f6c</code></td></tr>
+  <tr><td>大端整数 \(n\)</td><td>9523843951405948789</td><td>2014268979504181100</td></tr>
+  <tr><td>\(n/2^{64}\)</td><td>0.516289</td><td>0.109194</td></tr>
+  <tr><td>与 0.30 比较</td><td>0.516 ≥ 0.30，落到低层</td><td>0.109 &lt; 0.30，落到高层</td></tr>
+</table>
+<p>前六帧的实际抽签是：</p>
+<table>
+  <tr><th>index</th><th>draw</th><th>本步路线</th></tr>
+  <tr><td>0</td><td>0.516289</td><td>低层执行</td></tr>
+  <tr><td>1</td><td>0.964787</td><td>低层执行</td></tr>
+  <tr><td>2</td><td>0.109194</td><td>高层子任务</td></tr>
+  <tr><td>3</td><td>0.617754</td><td>低层执行</td></tr>
+  <tr><td>4</td><td>0.441856</td><td>低层执行</td></tr>
+  <tr><td>5</td><td>0.544251</td><td>低层执行</td></tr>
+</table>
+<p>下面用 index&nbsp;0 走完低层，用 index&nbsp;2 走完高层。两者的图像、状态、子任务在内容上几乎一样，差别只在配方把它们写成了不同的监督。</p>
+
+<h2>4. 数据进入模型之前</h2>
+<h3>4.1 数据集读出一块动作</h3>
+<p><code>LeRobotDataset</code> 按策略的 <code>delta_timestamps</code> 取未来动作。默认 <code>chunk_size=50</code>、<code>fps=30</code>，index&nbsp;0 的动作目标是</p>
+$$A_{0}=\{a_{0},a_{1},\ldots,a_{49}\}\in\mathbb{R}^{50\times 16}$$
+<p>图像按时间戳从三路 AV1 视频解码出 \(480\times 640\times 3\)。相对动作默认关闭（<code>use_relative_actions=False</code>），所以 \(A\) 是绝对关节位置，减去当前状态这一步不发生。</p>
+
+<h3>4.2 分位数归一化</h3>
+<p>状态和动作走 <code>NormalizationMode.QUANTILES</code>，统计量是 <code>meta/stats.json</code> 的 \(q_{01}, q_{99}\)。图像走 <code>IDENTITY</code>，像素缩放留给视觉塔。</p>
+$$\tilde x = 2\cdot\frac{x-q_{01}}{q_{99}-q_{01}}-1$$
+<p>这个映射不裁剪。停在起点的关节经常落在数据集分布的尾巴外，\(\tilde x\) 可以小于 \(-1\) 或大于 \(1\)。index&nbsp;0 的 16 维状态经过数据集分位数之后是：</p>
+<p class="note mono">−0.180, −1.010, 1.000, 0.856, 0.021, −0.068, −1.001, −0.095, −1.000, 1.000, −0.838, −0.943, 1.201, 4.804, −0.183, 0.821</p>
+<p>动作块的每一行做同样的变换，再在最后一维补零到 <code>max_action_dim=32</code>，得到模型内部的 \(A\in\mathbb{R}^{1\times 50\times 32}\)。损失只回看前 16 维。</p>
+
+<h3>4.3 低层 prompt：index 0</h3>
+<p>渲染结果只有一轮 user，流是 <code>low_level</code>，没有 <code>target: true</code>。Tokenizer 步发现流里有 <code>low_level</code>，就把分位数后的状态离散成 256 个箱子并接到句尾。<code>discretize_state_str</code> 的箱子边界是 \(\mathrm{linspace}(-1,1,257)[:-1]\)。落在 \([-1,1]\) 外的分量变成 \(-1\) 或 \(255\)。index&nbsp;0 的正文是：</p>
+<pre class="algo">User: drive forward along the office aisle toward the desk bench, State: 105 -1 255 237 130 119 -1 115 -1 255 20 7 255 255 104 233;</pre>
+<p>右填充到 200。因为没有 assistant 监督跨度，<code>text_labels</code> 形状 <code>(1, 200)</code>，全部是 \(-100\)。<code>predict_actions</code> 是 <code>True</code>。</p>
+
+<h3>4.4 高层 prompt：index 2</h3>
+<p>抽签落在高层。user 是任务句，assistant 是当时的子任务，assistant 标成监督目标：</p>
+<pre class="algo">User: Please take a pack of tissues from the drawer next to you, then pull out one sheet and give it to me.
+Assistant: drive forward along the office aisle toward the desk bench</pre>
+<p>高层流不是 <code>low_level</code>，所以不拼接 <code>State:</code>。<code>text_labels</code> 只在 assistant 子任务的 token 上等于 input id，user 和 padding 都是 \(-100\)。<code>predict_actions</code> 是 <code>False</code>。图像仍然进 prefix，模型看的是同一时刻的三张图。</p>
+
+<h3>4.5 图像 token</h3>
+<p>每路相机缩到 \(224\times 224\)，像素映射到 SigLIP 期望的 \([-1,1]\)。patch 14 给出 \(16\times 16=256\) 个视觉 token。三路相机拼起来是 768 个图像 token，注意力段标记为 0，也就是图像内部双向可见。语言最多再接 200 个 token。低层若打开 FAST，动作码还接在语言后面，prefix 最长大约 \(768+200+256\)。</p>
+
+<h2>4.6 <code>processor_fineart_vla.py</code>：两条样本各自怎么走</h2>
+<p>这个文件做三件事：把归一化后的状态写成 <code>State:</code> 字符串、把渲染好的对话编成 token 和标签、以及 <code>make_fineart_vla_pre_post_processors</code> 把前面的步骤串成流水线。配方抽签不在这个文件里，它发生在流水线中的 <code>RenderTrainingMessagesStep</code>。下面按 index 0（低层）和 index 2（高层）各走一遍。</p>
+
+<h3>流水线顺序</h3>
+<p><code>make_fineart_vla_pre_post_processors</code> 在 recipe 不为空时组装这些步。相对动作默认关，FAST 默认开。</p>
+<pre class="src">input_steps = [
+    RenameObservationsProcessorStep(rename_map={}),          <span class="c"># 本数据集不改名</span>
+    AddBatchDimensionProcessorStep(),                        <span class="c"># (16,) → (1,16)，(50,16) → (1,50,16)</span>
+    RelativeActionsProcessorStep(enabled=False),             <span class="c"># 默认关闭，动作保持绝对位置</span>
+    NormalizerProcessorStep(... QUANTILES ...),              <span class="c"># 状态和动作：2*(x-q01)/(q99-q01)-1</span>
+    RenderRuntimeMessagesStep(recipe),                       <span class="c"># 推理时才把外部 task 填进配方</span>
+    RenderTrainingMessagesStep(recipe),                      <span class="c"># 训练：BLAKE2b 抽路线，active_at 填 ${subtask}</span>
+    FineARTVLATextTokenizerStep(max_length=200),             <span class="c"># 本文件的主体，见下</span>
+    ActionTokenizerProcessorStep(...),                       <span class="c"># enable_fast_action_loss=True 才加入</span>
+    DeviceProcessorStep(device=config.device),
+]
+output_steps = [
+    UnnormalizerProcessorStep(...),                          <span class="c"># 推理后把动作从 [-1,1] 映回关节单位</span>
+    AbsoluteActionsProcessorStep(enabled=False),
+    DeviceProcessorStep(device="cpu"),
+]</pre>
+
+<h3>进 tokenizer 之前，两条样本的对话已经不同</h3>
+<p><code>RenderTrainingMessagesStep</code> 写出三个键，tokenizer 只读它们：<code>messages_rendered</code>、<code>message_streams</code>、<code>target_message_indices</code>。</p>
+<table>
+  <tr><th>键</th><th>index 0，draw=0.516，低层</th><th>index 2，draw=0.109，高层</th></tr>
+  <tr><td>messages</td><td><code>[{role:user, content: "drive forward along the office aisle toward the desk bench"}]</code></td><td><code>[{role:user, content: "Please take a pack of tissues ..."}, {role:assistant, content: "drive forward ..."}]</code></td></tr>
+  <tr><td>message_streams</td><td><code>["low_level"]</code></td><td><code>["high_level", "high_level"]</code></td></tr>
+  <tr><td>target_message_indices</td><td><code>[]</code></td><td><code>[1]</code>（第 2 条，assistant）</td></tr>
+  <tr><td>此时的 state</td><td colspan="2">都已经过分位数，16 维，见第 4.2 节那一行</td></tr>
+</table>
+
+<h3><code>FineARTVLATextTokenizerStep.__call__</code></h3>
+<p>batch 维已经加上，所以 <code>messages</code> 的第一项是 list，走 <code>_is_batched_messages</code> 分支。batch size 为 1 时只调用一次 <code>_encode_messages</code>，<code>state_row</code> 取 <code>observation.state[0]</code>。</p>
+<pre class="src">def __call__(self, transition):
+    messages = complementary["messages_rendered"]
+    state_all = transition[OBSERVATION]["observation.state"]   <span class="c"># (1, 16)，已归一化</span>
+    encoded = [self._encode_messages(..., state_row=state_all[0])]
+    obs["observation.language.tokens"] = stack(input_ids)       <span class="c"># (1, 200)</span>
+    obs["observation.language.attention_mask"] = stack(attn)    <span class="c"># (1, 200) bool</span>
+    complementary["text_labels"] = stack(labels)                <span class="c"># (1, 200)，-100 表示不监督</span>
+    complementary["predict_actions"] = stack(pred)              <span class="c"># (1,) bool</span></pre>
+
+<h3><code>_encode_messages</code> 的四步</h3>
+<p>默认配方没有 VQA JSON，也没有 <code>say</code> 工具调用，所以 <code>_messages_vqa_to_loc</code> 和 <code>_flatten_say_tool_calls</code> 对这两条样本是原样返回。<code>_strip_blocks</code> 只是去掉消息上的 <code>stream</code> / <code>target</code> 字段。</p>
+<p>第一步，只有低层才拼接本体。代码是：</p>
+<pre class="src">def discretize_state_str(state_row):
+    arr = state_row.detach().cpu().numpy()
+    <span class="c"># 257 个等分点去掉最后一个，得到 256 个左边界，覆盖 [-1, 1)</span>
+    disc = np.digitize(arr, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
+    return " ".join(str(int(x)) for x in disc)
+
+<span class="c"># _encode_messages 内</span>
+if state_row is not None and any(s == "low_level" for s in message_streams):
+    state_str = discretize_state_str(state_row)
+    <span class="c"># 从最后一条 user 往前找，把正文改成 "{原文}, State: {bins};"</span>
+    m["content"] = f"{base}, State: {state_str};"</pre>
+<p>index 0 的 <code>message_streams</code> 含 <code>low_level</code>，于是 user 正文变成</p>
+<pre class="src">drive forward along the office aisle toward the desk bench, State: 105 -1 255 237 130 119 -1 115 -1 255 20 7 255 255 104 233;</pre>
+<p>箱子里的 −1 和 255 来自分位数没有裁剪：小于 −1 的分量 <code>digitize</code> 得到 0，再减 1 变成 −1；大于最后一个边界的分量得到 256，再减 1 变成 255。index 2 的流全是 <code>high_level</code>，这个 if 不进入，正文保持任务句和子任务两行，没有 <code>State:</code>。</p>
+<p>第二步，<code>_format_messages</code> 把每轮写成 <code>Role: 正文\n</code>。监督轮的正文末尾会加上 tokenizer 的 EOS，这样模型学得到哪里停。字符区间 <code>(start, end)</code> 只覆盖正文，不覆盖 <code>User: </code> 这种头。</p>
+<pre class="src">header = f"{role.capitalize()}: "          <span class="c"># "User: " 或 "Assistant: "</span>
+body = content + eos_token if i in targets else content
+full = header + body + "\n"
+spans.append((cursor + len(header), cursor + len(header) + len(body)))</pre>
+<p>index 0 没有 target，拼出来是一行：</p>
+<pre class="src">User: drive forward along the office aisle toward the desk bench, State: 105 -1 255 ...;</pre>
+<p>index 2 的 target 下标是 1，assistant 正文带 EOS：</p>
+<pre class="src">User: Please take a pack of tissues from the drawer next to you, then pull out one sheet and give it to me.
+Assistant: drive forward along the office aisle toward the desk bench&lt;eos&gt;</pre>
+<p>第三步，PaliGemma tokenizer 右填充或截断到 200，并返回每个 token 在原文字符串里的 <code>offset_mapping</code>。标签先全部写成 −100，再把与监督区间重叠、且 attention mask 为真的 token 改回它们自己的 id：</p>
+<pre class="src">labels = torch.full_like(input_ids, fill_value=-100)
+overlaps = (offsets[:, 1] &gt; span_start) &amp; (offsets[:, 0] &lt; span_end)
+labels = torch.where(attention_mask &amp; overlaps, input_ids, labels)</pre>
+<p>index 0 的 <code>target_indices</code> 是空列表，<code>labels</code> 保持 200 个 −100。index 2 只有 “Assistant: ” 后面的子任务 token（含 EOS）等于 input id，user 句和右侧 padding 仍是 −100。</p>
+<p>第四步，<code>predict_actions</code> 只看流名，不看有没有动作张量：</p>
+<pre class="src">predict_actions = torch.tensor(any(s == "low_level" for s in message_streams))
+<span class="c"># index 0 → True ；index 2 → False</span></pre>
+<p>返回值五个：<code>input_ids (200,)</code>、<code>attention_mask (200,)</code>、<code>labels (200,)</code>、<code>predict_actions</code> 标量、<code>prompt</code> 字符串。<code>__call__</code> 再 stack 成 batch 维 1，写进 observation 和 complementary。训练循环随后把 <code>text_labels</code> 和 <code>predict_actions</code> 放进 <code>policy.forward</code> 看到的 batch。高层步因此 <code>run_flow=False</code>，低层步 <code>run_flow=True</code>。</p>
+<p>FAST 步接在 tokenizer 后面，只在 <code>enable_fast_action_loss=True</code> 时存在。它读的是已经归一化、补到 32 维的动作块，编成动作码。低层 <code>predict_actions=True</code> 时这些码进入前向；高层该标志为 False，模型侧的 <code>run_fast</code> 直接关掉，码即使被编出来也不进损失。</p>
+
+<h2>4.7 语言怎么变成 input_ids，−100 标在哪，训练时谁用它们</h2>
+<p>状态拼接、分词、<code>input_ids</code> 和 <code>text_labels</code> 是四件不同的事。状态先变成字符串，拼进 user 正文；分词器再把整段字符串切成整数；<code>input_ids</code> 是切出来的全部整数，模型用它查词嵌入；<code>text_labels</code> 是一条平行的长 200 的整数，只有要预测的位置抄 <code>input_ids</code>，其余位置写成 −100。−100 不是词表里的 token，PaliGemma 的 pad 是 0、bos 是 2、eos 是 1。</p>
+
+<h3>从句子到字符串</h3>
+<p>分词器看不到 <code>${subtask}</code>，也看不到 16 维浮点状态。它只看到 <code>_format_messages</code> 拼好的一串字符。本地 <code>pretrain_model/paligemma-3b-pt-224</code> 的特殊符号是 <code>&lt;bos&gt;=2</code>、<code>&lt;eos&gt;=1</code>、<code>&lt;pad&gt;=0</code>，<code>add_bos_token=true</code>，所以每条样本开头都会被自动加上 id 2。</p>
+<p>index 0（低层）在分词前的完整字符串是下面这一行，末尾有一个换行。状态不是额外的张量，而是这句话里面的数字：</p>
+<pre class="src">User: drive forward along the office aisle toward the desk bench, State: 105 -1 255 237 130 119 -1 115 -1 255 20 7 255 255 104 233;</pre>
+<p>index 2（高层）有两轮。只有 assistant 是 <code>target</code>，所以只在子任务正文后面插入字符串 <code>&lt;eos&gt;</code>，user 轮不加：</p>
+<pre class="src">User: Please take a pack of tissues from the drawer next to you, then pull out one sheet and give it to me.
+Assistant: drive forward along the office aisle toward the desk bench&lt;eos&gt;</pre>
+<p><code>_format_messages</code> 同时记下 assistant 正文在这串字符里的半开区间。这条样本的区间是字符 <code>[119, 182)</code>，也就是从 <code> drive</code> 的前导空格到 <code>&lt;eos&gt;</code> 结束，不含 <code>Assistant:</code> 这几个字，也不含最后那个换行。</p>
+
+<h3>分词器做了什么</h3>
+<p><code>FineARTVLATextTokenizerStep._encode_messages</code> 调用的是 PaliGemma 的 SentencePiece tokenizer，参数固定为 <code>max_length=200</code>、<code>padding="max_length"</code>、<code>padding_side="right"</code>、<code>truncation=True</code>、<code>return_offsets_mapping=True</code>。返回三样东西：</p>
+<table>
+  <tr><th>返回键</th><th>形状</th><th>含义</th></tr>
+  <tr><td><code>input_ids</code></td><td><code>(200,)</code> 再 stack 成 <code>(1, 200)</code></td><td>每个子词的词表编号。右边不够的位置填 pad id 0</td></tr>
+  <tr><td><code>attention_mask</code></td><td>同样 <code>(1, 200)</code> 的 bool</td><td>真实 token 为 True，pad 为 False。模型用它丢掉填充位置</td></tr>
+  <tr><td><code>offset_mapping</code></td><td>每个 token 一对 <code>(char_start, char_end)</code></td><td>这个子词对应原字符串的哪一段。用来决定标签，不进模型</td></tr>
+</table>
+<p>index 0 切出 73 个有效 token，后面 127 个是 pad。开头是自动加上的 <code>&lt;bos&gt;</code>，它的 offset 是 <code>[0, 0]</code>，不占原文字符。单词按子词切开，例如 <code> drive</code> 是一个 token（id 6109，带前导空格）。状态数字大多一个数字一个 token，负号会和前面的空格粘成 <code> -</code>：</p>
+<table>
+  <tr><th>位置</th><th>id</th><th>原文片段</th><th>说明</th></tr>
+  <tr><td>0</td><td>2</td><td><code>&lt;bos&gt;</code></td><td>分词器自动加的，不在原文字符串里</td></tr>
+  <tr><td>1–2</td><td>2224, 235292</td><td><code>User</code> <code>:</code></td><td>角色头，不监督</td></tr>
+  <tr><td>3</td><td>6109</td><td><code> drive</code></td><td>子任务第一个词</td></tr>
+  <tr><td>12</td><td>15475</td><td><code> bench</code></td><td>子任务最后一个词</td></tr>
+  <tr><td>13–15</td><td>…</td><td><code>,</code> <code> State</code> <code>:</code></td><td>状态拼接的固定前缀</td></tr>
+  <tr><td>17–19</td><td>235274, 235276, 235308</td><td><code>1</code> <code>0</code> <code>5</code></td><td>箱子 105，三个数字三个 token</td></tr>
+  <tr><td>20–21</td><td>728, 235274</td><td><code> -</code> <code>1</code></td><td>箱子 −1。空格和减号是一个 token</td></tr>
+  <tr><td>71</td><td>235289</td><td><code>;</code></td><td>状态串的结尾分号</td></tr>
+  <tr><td>72</td><td>108</td><td>换行</td><td><code>_format_messages</code> 每轮末尾的 <code>\n</code></td></tr>
+  <tr><td>73–199</td><td>0</td><td>pad</td><td><code>attention_mask=False</code></td></tr>
+</table>
+
+<h3>−100 怎么写上</h3>
+<p>标签先整条写成 −100，再按字符区间把该监督的位置改回 <code>input_ids</code> 里的同一个数。代码是：</p>
+<pre class="src">labels = torch.full_like(input_ids, fill_value=-100)   # 200 个 -100
+# 一个 token 被监督，当且仅当：
+#   attention_mask 为 True（不是 pad）
+#   并且它的 [char_start, char_end) 与某个 target span 有重叠
+overlaps = (offset_end &gt; span_start) &amp; (offset_start &lt; span_end)
+labels = torch.where(attention_mask &amp; overlaps, input_ids, labels)</pre>
+<p>index 0 没有 target span，重叠永远不成立，所以 <code>text_labels</code> 是 200 个 −100。<code>input_ids</code> 仍然是上面那 73 个真实 id 加 pad。模型看得到这句话，只是没有任何一个位置要被交叉熵预测。</p>
+<p>index 2 切出 42 个有效 token。字符区间 <code>[119, 182)</code> 盖住子任务和 <code>&lt;eos&gt;</code>，盖不住 <code>Assistant:</code>，也盖不住它后面的换行。于是只有位置 30 到 40 的标签等于 <code>input_ids</code>，其余仍是 −100：</p>
+<table>
+  <tr><th>位置</th><th>input_ids</th><th>片段</th><th>text_labels</th></tr>
+  <tr><td>0</td><td>2</td><td><code>&lt;bos&gt;</code></td><td>−100</td></tr>
+  <tr><td>1–27</td><td>…</td><td><code>User: Please take ... me.\n</code></td><td>−100</td></tr>
+  <tr><td>28–29</td><td>51190, 235292</td><td><code>Assistant</code> <code>:</code></td><td>−100。头不在 span 里</td></tr>
+  <tr><td>30</td><td>6109</td><td><code> drive</code></td><td>6109</td></tr>
+  <tr><td>31</td><td>4830</td><td><code> forward</code></td><td>4830</td></tr>
+  <tr><td>32–38</td><td>…</td><td><code> along the office aisle toward the</code></td><td>等于对应 input_id</td></tr>
+  <tr><td>39</td><td>15475</td><td><code> bench</code></td><td>15475</td></tr>
+  <tr><td>40</td><td>1</td><td><code>&lt;eos&gt;</code></td><td>1。让模型学会在子任务后停止</td></tr>
+  <tr><td>41</td><td>108</td><td>换行</td><td>−100。字符起点 182 等于 span 终点，不算重叠</td></tr>
+  <tr><td>42–199</td><td>0</td><td>pad</td><td>−100</td></tr>
+</table>
+
+<h3>这两条张量在训练里各走各的</h3>
+<p><code>input_ids</code> 进 <code>embed_prefix</code>，经 <code>embed_language_tokens</code> 变成语言嵌入，和 768 个图像 token 拼成 prefix。每个位置都参与前向，包括 user 句和 pad 以外的全部有效 token。pad 被 attention mask 挡掉。</p>
+<p>损失不直接拿 <code>input_ids</code> 当目标。交叉熵在 <code>_shifted_lin_ce</code> 里把序列错开一位，这是标准的“用当前位置的 hidden 预测下一个 token”：</p>
+<pre class="src">shift_hidden = hidden[:, :-1, :]    # 位置 0 .. 198 的隐藏状态
+shift_labels = text_labels[:, 1:]   # 位置 1 .. 199 的标签
+loss = cross_entropy(lm_head(shift_hidden), shift_labels, ignore_index=-100)</pre>
+<p>index 2 上，真正产生损失的配对只有 11 个。位置 29 的 hidden（它读到的最后一个前缀 token 是 <code>:</code>）去预测位置 30 的 <code> drive</code>；位置 39 的 <code> bench</code> 去预测位置 40 的 <code>&lt;eos&gt;</code>。user 句、角色头、换行和 pad 的标签是 −100，<code>ignore_index=-100</code> 把它们从分子里去掉。分母是非 −100 的个数，这里是 11。</p>
+<table>
+  <tr><th>hidden 位置</th><th>该位置已经看到的 token</th><th>要预测的下一个 token</th></tr>
+  <tr><td>29</td><td><code>:</code>（Assistant 头的冒号）</td><td><code> drive</code></td></tr>
+  <tr><td>30</td><td><code> drive</code></td><td><code> forward</code></td></tr>
+  <tr><td>31</td><td><code> forward</code></td><td><code> along</code></td></tr>
+  <tr><td>38</td><td><code> desk</code></td><td><code> bench</code></td></tr>
+  <tr><td>39</td><td><code> bench</code></td><td><code>&lt;eos&gt;</code></td></tr>
+</table>
+<p>同一条 <code>text_labels != -100</code> 还被 <code>_mark_target_span_causal</code> 用来改注意力：user 和图像保持双向，子任务这 11 个位置改成因果，所以 <code> drive</code> 看不到后面的 <code> bench</code>。这和上面的错位预测一致，否则模型可以直接从右侧答案抄下一个词。</p>
+<p>index 0 的标签全是 −100。错位之后仍然全是 −100，交叉熵分子是 0。这句话的 <code>input_ids</code> 照样嵌进 prefix，给流匹配当条件；它只是不提供文本梯度。<code>predict_actions=True</code> 才是这一步要训练动作的原因，和标签里的 −100 是两套开关。</p>
+
+<h2>5. 模型里有什么</h2>
+<p>FineART-VLA 是 π0.5 的联合主干，外加配方文本损失。两条流共享层号，权重分开：</p>
+<table>
+  <tr><th>部件</th><th>默认</th><th>吃什么</th><th>谁更新它</th></tr>
+  <tr><td>SigLIP + Gemma 2B（PaliGemma）</td><td><code>gemma_2b</code></td><td>图像 token、语言 token、FAST 码</td><td>文本交叉熵、FAST 交叉熵</td></tr>
+  <tr><td>Gemma 300M action expert</td><td><code>gemma_300m</code></td><td>50 个带噪动作 token，时间用 AdaRMS 注入</td><td>流匹配损失</td></tr>
+  <tr><td><code>action_in_proj</code> / <code>action_out_proj</code></td><td>32 维</td><td>动作向量与速度</td><td>流匹配损失</td></tr>
+  <tr><td><code>lm_head</code></td><td>与词嵌入同形；π0.5 权重里若缺则从 <code>embed_tokens</code> 拷贝</td><td>语言和 FAST 的 hidden</td><td>两种交叉熵</td></tr>
+</table>
+<p>一次训练步只实例化一条路线。高层步的 <code>inputs_embeds</code> 是 <code>[prefix, None]</code>，action expert 不参与。低层步是 <code>[prefix, suffix]</code>，两条流在每一层做联合注意力。</p>
+<p>默认超参：<code>flow_loss_weight=10</code>，<code>text_loss_weight=1</code>，<code>fast_action_loss_weight=1</code>，<code>enable_fast_action_loss=True</code>，<code>flow_num_repeats=5</code>，<code>knowledge_insulation=True</code>，<code>text_ce_z_loss_weight=10^{-4}</code>，<code>num_inference_steps=10</code>。时间采样是</p>
+$$t=\mathrm{Beta}(1.5,\ 1.0)\cdot 0.999+0.001\in(0.001,\ 1]$$
+
+<h2>6. 训练：index 2，高层，只有文本损失</h2>
+<p><code>FineARTVLAPolicy.forward</code> 看到 <code>predict_actions=False</code>，于是 <code>run_flow=False</code>、<code>run_fast=False</code>、<code>run_text=True</code>，进入 <code>_compute_text_and_fast_loss</code>。</p>
+<pre class="algo">Algorithm 1  高层一步（batch = 1，index = 2）
+输入: 三张图 I，语言 token x[1,200]，标签 y[1,200]
+1  prefix ← EmbedPrefix(I, x)                         # 约 768 + 200
+2  把 y ≠ −100 的位置在注意力段标记里改成因果
+   # _mark_target_span_causal：prompt 双向，子任务 token 看不到右侧子任务 token
+3  H ← PaliGemma(prefix)                              # inputs_embeds = [prefix, None]
+4  取语言段最后 200 个 hidden，右移一位
+5  L_text ← CrossEntropy(lm_head(H[:, :-1]), y[:, 1:]; ignore −100)
+6  若 z &gt; 0: L_text ← L_text + z · mean(logsumexp(logits)^2) 在有效位置上
+7  返回 L = 1 · L_text
+   action expert、flow、FAST 本步梯度为 0</pre>
+<p>有效的预测位置就是 “drive forward …” 这些子任务 token。图像 token 通过注意力把视觉信息送进这些位置，所以视觉塔在高层步里是被文本损失更新的。</p>
+
+<h2>7. 训练：index 0，低层，流匹配加 FAST</h2>
+<p><code>predict_actions=True</code>，默认 FAST 打开，所以 <code>run_flow</code> 和 <code>run_fast</code> 同时为真，走 <code>_compute_all_losses_fused</code>。因为 <code>flow_num_repeats=5</code>，实际调用的是 <code>_amortized_prefix_and_flow</code>：同一条 VLM prefix 配 5 组独立的噪声和时间。</p>
+<p>流匹配约定是噪声在 \(t=1\)：</p>
+$$x_t = t\,\epsilon + (1-t)\,A,\qquad u_t = \epsilon - A,\qquad \epsilon\sim\mathcal{N}(0,I)$$
+<p>5 组 suffix 在序列上首尾相接，形状是 <code>(1, 5×50, D)</code>。注意力是分块的：prefix 看不到任何动作块；每个动作块只看 prefix 和自己那 50 个 token，5 组之间互不可见。若 FAST 码接在语言后面，动作块还被禁止看 FAST 段，避免动作码把答案直接漏给速度头。FAST 与流的 RoPE 位置从非 FAST prefix 的末尾重新起算，这样推理时没有 FAST 段，位置编号仍然对齐。</p>
+<pre class="algo">Algorithm 2  低层一步（batch = 1，index = 0，K = 5）
+输入: 图 I，低层 prompt x，标签 y 全 −100，动作 A[1,50,32]，FAST 码 c
+1  prefix ← EmbedPrefix(I, x)
+2  把 FAST 嵌入接到 prefix 末尾；语言对 FAST 不可见（段掩码）
+3  对 k = 1..5:
+     ε_k ~ N(0,I),  t_k ~ Beta(1.5,1)·0.999+0.001
+     x_k = t_k ε_k + (1−t_k) A
+     u_k = ε_k − A
+4  一次联合前向 (prefix_out, suffix_out) ← JointLayers(prefix, concat_k suffix)
+   每一层:
+     VLM query 使用未断开的 K/V
+     action query 使用 detach(VLM K/V) ⊕ expert K/V     # knowledge_insulation
+5  v_k = action_out_proj(suffix_out 的第 k 块)          # [1,50,32] → 取前 16 维
+6  L_flow = mean_k mean_{h,d} (v_k − u_k)^2
+7  L_text = CE(语言段, y)                               # y 全是 −100，这一项为 0
+8  L_fast = CE(FAST 段的动作码位置, c)，同样忽略非码位置
+9  返回 L = 10·L_flow + 1·L_text + 1·L_fast</pre>
+<p>知识隔离在 <code>compute_layer_complete</code> 里，FineART 在构造时把 <code>paligemma_with_expert.knowledge_insulation</code> 设为配置值。动作 query 对 VLM 的 K/V 做 <code>detach</code>，流匹配的梯度因此到不了 VLM。VLM 自己的 query 仍使用未断开的 K/V，所以 FAST 交叉熵可以更新视觉塔和语言模型。文本项在这一步因为标签全是 \(-100\) 而等于 0。</p>
+<p>另一条更强的开关是 <code>suppress_prefix_grads</code>：只有 <code>text_labels is None</code> 且没有 FAST token 时，才把整个 prefix 放进 <code>no_grad</code>。默认低层步两者都在，这条开关是关的。隔离靠的是注意力里的 K/V detach，prefix 的 FAST 损失仍然回传。</p>
+
+<h2>8. 推理：先生成子任务，再积分动作</h2>
+<p>推理不走 <code>forward</code>，也不抽配方。控制器先做一次语言生成，再把生成的句子填进低层 prompt，然后去噪。两次调用的 batch 都是 1。<code>generate_text</code> 在 batch 不是 1 时直接报错。</p>
+<pre class="algo">Algorithm 3  在 t = 0 部署一次（batch = 1）
+输入: 三张当前图 I，当前状态 s，任务句 task
+# ---- 高层 ----
+1  prompt ← "User: {task}\nAssistant:"
+   # 运行时没有训练标签，tokenizer 会补上 Assistant:，对齐训练里目标段的前缀
+2  自回归，最多 128 个新 token，temperature = 0，即 argmax
+   每步屏蔽 FAST 专用词表；子任务生成再屏蔽 &lt;loc&gt; id [256000, 257024)
+   默认使用 KV cache：第一步算完整 prefix，之后只喂最新 token
+3  遇到 EOS 停止，解码得到 ŝ，例如
+   "drive forward along the office aisle toward the desk bench"
+# ---- 低层 ----
+4  把 s 做与训练相同的分位数归一化，离散成 State 串
+5  prompt ← "User: {ŝ}, State: {bins};"
+6  可选：把 ŝ 对应的 token 标成 lang_causal_marks，
+   让推理 prefix 的因果布局与训练时的 _mark_target_span_causal 一致
+7  预计算 prefix 的 K/V（只跑 VLM，use_cache=True）
+8  x ← ε ~ N(0, I)，形状 (1, 50, 32)
+9  对 n = 0 .. 9:                         # num_inference_steps = 10
+     t ← 1 − n/10
+     v ← action_out_proj(Expert(x, t | cached prefix K/V))
+     x ← x + dt · v                      # dt &lt; 0，从噪声走到动作
+     每步之后把 suffix 的 K/V 裁掉，prefix cache 保持只读
+10 返回 x[:, :, :16]，再按 q01/q99 反映射回关节单位</pre>
+<p>去噪方向与训练一致：\(t=1\) 是噪声，\(t=0\) 是动作，\(v\) 预测的是 \(\epsilon-A\)，欧拉步 \(x\leftarrow x+dt\,v\) 且 \(dt&lt;0\)。10 步之后得到未来 \(50/30\approx 1.67\)&nbsp;s 的 16 维指令。默认 <code>n_action_steps=50</code>，这一整块都会被执行；若外层只取前几步，剩余步留到下一次推理做实时分块，那是 RTC，默认 <code>rtc_training_max_delay=0</code>，本文的主路径不含它。</p>
+<p>推理时的子任务是模型自己写出来的。训练时 index&nbsp;0 看到的是标注句 “drive forward …”。两者在格式上相同：低层 user 轮、同一套 <code>State:</code> 离散化、同一套 10 步欧拉积分。高层生成不经过 action expert。</p>
+
+<h2>9. LeRobot 工作流</h2>
+<p>从采集到下发的主链。FineART 的分叉只发生在 “渲染配方” 之后。</p>
+<div class="flow">
+  <div class="box"><strong>1. 采集</strong><div class="tag">lerobot-record / teleoperate</div>30&nbsp;Hz 写下三路视频、16 维 state、16 维 action、task_index。产物是 v3.0 数据集：<code>data/chunk-*/file-*.parquet</code>、<code>videos/</code>、<code>meta/{info,stats,tasks,episodes}</code>。</div>
+  <div class="arrow">↓</div>
+  <div class="box"><strong>2. 语言标注</strong><div class="tag">examples/lerobot_annotate_web</div>按时间写下 subtask 与 memory，落入每帧的 <code>language_persistent</code>。本集 events 为空。memory 留在数据里，默认配方不读。</div>
+  <div class="arrow">↓</div>
+  <div class="box"><strong>3. 训练入口</strong><div class="tag">lerobot-train → TrainPipelineConfig → make_policy("fineart_vla")</div>从数据集特征填 <code>input_features</code> / <code>output_features</code>，用 <code>stats.json</code> 的 q01/q99 建归一化，按 <code>chunk_size</code> 建 <code>delta_timestamps</code>。可选在训练集上拟合 FAST tokenizer。</div>
+  <div class="arrow">↓</div>
+  <div class="box"><strong>4. Dataset __getitem__</strong><div class="tag">LeRobotDataset</div>解码三张图，取出 \(a_{t:t+50}\)，带上 <code>index</code>、<code>timestamp</code>、整集 <code>language_persistent</code>、task 字符串。</div>
+  <div class="arrow">↓</div>
+  <div class="box"><strong>5. Preprocessor</strong><div class="tag">make_fineart_vla_pre_post_processors</div>加 batch 维 → 可选相对动作 → 分位数归一化 → <code>RenderTrainingMessagesStep</code>（BLAKE2b 抽 0.30/0.70）→ PaliGemma tokenizer（低层才拼 State）→ 可选 FAST 码 → 放到 device。</div>
+  <div class="arrow">↓</div>
+  <div class="split">
+    <div class="box hlbox"><strong>高层步 ~30%</strong><div class="tag">index 2 就是这一支</div>只有 PaliGemma。监督 assistant 子任务。\(L=L_{\text{text}}\)。更新 VLM 与 lm_head。</div>
+    <div class="box lobox"><strong>低层步 ~70%</strong><div class="tag">index 0 就是这一支</div>联合层，K=5 个独立流。\(L=10L_{\text{flow}}+L_{\text{text}}+L_{\text{fast}}\)。flow 经 detach 的 K/V 更新 expert；FAST 更新 VLM。</div>
+  </div>
+  <div class="arrow">↓</div>
+  <div class="box"><strong>6. 优化</strong><div class="tag">get_optim_params</div>AdamW，峰值学习率 \(2.5\times 10^{-5}\)，\(\beta=(0.9,0.95)\)，梯度裁剪 1.0。可选把 backbone、action expert、lm_head 分成不同学习率组。余弦调度乘在所有组上。</div>
+  <div class="arrow">↓</div>
+  <div class="box"><strong>7. 检查点</strong><div class="tag">config.json + model.safetensors + policy_{pre,post}processor</div>配方写进 config，之后推理用同一份 recipe。加载 π0.5 格式权重时走 <code>_convert_openpi_state_dict</code>，并在缺 lm_head 时用词嵌入初始化。</div>
+  <div class="arrow">↓</div>
+  <div class="box"><strong>8. 推理</strong><div class="tag">generate_text → 填低层 prompt → predict_action_chunk</div>batch 必须为 1。语言生成只用 VLM。动作是 10 步欧拉积分，prefix K/V 缓存。后处理用 q01/q99 反映射，裁回 16 维，交给机器人。</div>
+</div>
+
+<h2>10. 把一次训练写成可执行的伪代码</h2>
+<pre class="algo">def train_step(sample):  # sample.index ∈ {0,1,2,...}
+    imgs, state, actions, t, persistent, task = load(sample)   # actions: (50,16)
+    state_n  = quantile(state,  q01_s, q99_s)                  # (16,)
+    action_n = quantile(actions, q01_a, q99_a)                 # (50,16)
+    A = pad(action_n, 32)                                      # (1,50,32)
+
+    route = "high" if blake2b_unit(sample.index) &lt; 0.30 else "low"
+    sub = active_at(t, persistent, style="subtask").content
+    # t=0 → "drive forward along the office aisle toward the desk bench"
+
+    if route == "high":                      # index 2, draw=0.109
+        text = f"User: {task}\nAssistant: {sub}"
+        ids, labels = tokenize_with_target(text, target="Assistant 段")
+        H = vlm(embed(imgs, ids))
+        loss = ce(lm_head(H), labels)        # + 1e-4 * z_loss
+    else:                                    # index 0, draw=0.516
+        bins = discretize_256(state_n)       # "105 -1 255 ..."
+        text = f"User: {sub}, State: {bins};"
+        ids, labels = tokenize(text)         # labels 全 −100
+        fast = fast_tokenize(A)              # 默认开启
+        prefix = cat(embed(imgs, ids), embed(fast))
+        flow = 0
+        for k in range(5):
+            eps = randn_like(A)
+            tk  = beta(1.5, 1.0) * 0.999 + 0.001
+            xt  = tk * eps + (1 - tk) * A
+            ut  = eps - A
+            # 五次循环在实现里是一次前向、块对角注意力
+            vt  = action_out_proj(expert(xt, tk | prefix, detach_vlm_kv=True))
+            flow += mse(vt[..., :16], ut[..., :16])
+        flow /= 5
+        loss = 10 * flow + ce(vlm_hidden, labels) + ce(fast_hidden, fast)
+    loss.backward()
+    clip_grad_(1.0)
+    adamw_step()
+
+def infer_step(imgs, state, task):
+    sub = generate_text(imgs, f"User: {task}\nAssistant:")   # greedy, B=1
+    bins = discretize_256(quantile(state, q01_s, q99_s))
+    ids = tokenize(f"User: {sub}, State: {bins};")
+    kv = vlm_cache(embed(imgs, ids))
+    x = randn(1, 50, 32)
+    for n in range(10):
+        t = 1 - n / 10
+        v = action_out_proj(expert(x, t | kv))
+        x = x + (-1/10) * v
+    return unquantile(x[..., :16], q01_a, q99_a)</pre>
+
+<h2>11. 对照时容易写错的几点</h2>
+<table>
+  <tr><th>事实</th><th>依据</th></tr>
+  <tr><td>index 0 是低层步，index 2 才是高层步</td><td><code>_select_recipe</code> 的 BLAKE2b，权重 0.30/0.70</td></tr>
+  <tr><td>同一帧的 memory 不进默认损失</td><td>默认配方只引用 <code>${task}</code> 与 <code>${subtask}</code></td></tr>
+  <tr><td>低层 <code>State:</code> 用的是分位数之后的状态，箱子可以是 −1 或 255</td><td><code>discretize_state_str</code> 在 Normalizer 之后；分位数公式不裁剪</td></tr>
+  <tr><td>高层不拼 State</td><td>只有 <code>message_streams</code> 含 <code>low_level</code> 才离散化本体</td></tr>
+  <tr><td>默认低层是 5 次独立噪声，一次前向</td><td><code>flow_num_repeats=5</code></td></tr>
+  <tr><td>flow 不更新 VLM；FAST 交叉熵更新 VLM</td><td><code>knowledge_insulation</code> 只 detach 动作 query 看到的 VLM K/V</td></tr>
+  <tr><td>默认低层的 <code>suppress_prefix_grads</code> 是关的</td><td>该开关要求 <code>text_labels is None</code> 且没有 FAST token；processor 总会写出 <code>text_labels</code></td></tr>
+  <tr><td>推理的两段不共享同一次前向</td><td><code>generate_text</code> 只用 VLM；<code>sample_actions</code> 再缓存 prefix、积分 suffix</td></tr>
+</table>
+
+<p class="note">数值来自该数据集 parquet 与 <code>meta/stats.json</code> 的现场计算：episode 0 的 index、时间戳、原始关节、分位数后的状态，以及 BLAKE2b 抽签。FAST 码的具体 id 取决于拟合出的 tokenizer，本文不虚构那一串 id。打开本文需要能访问 KaTeX CDN，公式才会排版。</p>
+</main>
+</body>
+</html>
