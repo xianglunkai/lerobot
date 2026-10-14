@@ -30,7 +30,7 @@ CFG_BETA="${CFG_BETA:-1.0}"
 case "$SELECT" in
     s)
         python examples/rac/hil_data_collection.py \
-            --policy.path=/home/xlk/work/lerobot/checkpoints/pi06_policy_screw_sorting_single_v30/checkpoints/030000/pretrained_model \
+            --policy.path=/home/xlk/work/lerobot/checkpoints/outputs/pi05_policy_screw_sorting_single_sft_ep280_v30/checkpoints/030000/pretrained_model \
             --robot.type=agilex_cobot \
             --robot.use_external_commands=false \
             --robot.ros_config.with_mobile_base=false \
@@ -47,17 +47,19 @@ case "$SELECT" in
             --dataset.push_to_hub=false \
             --dataset.num_episodes=60 \
             --dataset.vcodec=libsvtav1 \
-            --dataset.streaming_encoding=true \
+            --dataset.streaming_encoding=false \
             --display_data=false \
             --rtc.enabled=true \
-            --rtc.execution_horizon=20 \
+            --rtc.execution_horizon=12 \
+            --fixed_inference_delay=6 \
             --rtc.max_guidance_weight=10.0 \
             --rtc.prefix_attention_schedule=EXP \
             --rtc.sigma_d=0.2 \
             --interpolation_multiplier=1 \
             --calibrate=true \
+            --use_torch_compile=true \
             --device=cuda \
-            --action_queue_size_to_get_new_actions=30 \
+            --action_queue_size_to_get_new_actions=22 \
             --enable_episode_outcome_labeling=true \
             --default_episode_success="success" \
             --require_episode_success_label=true \

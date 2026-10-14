@@ -251,6 +251,8 @@ class HILConfig:
     device: str = "cuda"
     use_torch_compile: bool = False
     compile_warmup_inferences: int = 2
+    # Prefix length passed to the policy. None keeps the latency-derived delay.
+    fixed_inference_delay: int | None = None
     calibrate: bool = False
     log_hz: bool = True
     hz_log_interval_s: float = 2.0
@@ -306,6 +308,10 @@ class HILConfig:
         if self.default_episode_success is not None:
             self.default_episode_success = normalize_episode_success_label(self.default_episode_success)
             
+        if self.fixed_inference_delay is not None and self.fixed_inference_delay < 0:
+            raise ValueError(
+                f"`fixed_inference_delay` must be >= 0, got {self.fixed_inference_delay}."
+            )
         if self.acp_inference.cfg_beta < 0:
             raise ValueError("`acp_inference.cfg_beta` must be >= 0.")
         self.acp_inference.mode = _resolve_acp_inference_mode(self.acp_inference)
@@ -365,12 +371,89 @@ def _normalize_prev_actions_length(prev_actions: torch.Tensor, target_steps: int
     if steps > target_steps:
         return prev_actions[:target_steps]
 
-    # padded = torch.zeros((target_steps, action_dim), dtype=prev_actions.dtype, device=prev_actions.device)
-    # padded[:steps] = prev_actions
-
     hold = prev_actions[-1:].expand(target_steps - steps, -1)
     padded = torch.cat([prev_actions, hold], dim=0)
     return padded
+
+
+def _seed_rtc_observation(robot, obs_holder: dict, obs_lock: Lock) -> None:
+    """Push the latest robot observation to the RTC inference thread."""
+    obs = robot.get_observation()
+    with obs_lock:
+        obs_holder["obs"] = obs
+
+
+def _wait_for_rtc_actions(queue_holder: dict, min_actions: int = 1, timeout_s: float = 30.0) -> bool:
+    """Block until the live action queue has at least ``min_actions`` steps."""
+    deadline = time.perf_counter() + timeout_s
+    while time.perf_counter() < deadline:
+        queue = queue_holder.get("queue")
+        if queue is not None and queue.qsize() >= min_actions:
+            return True
+        time.sleep(0.01)
+    return False
+
+
+def _run_rtc_compile_warmup(
+    robot,
+    obs_holder: dict,
+    obs_lock: Lock,
+    queue_holder: dict,
+    policy_active: Event,
+    compile_warmup_done: Event,
+    cfg: "HILConfig",
+) -> None:
+    """Run torch.compile / CUDA-graph warmup before the first episode.
+
+    Warmup inferences are discarded and must not consume episode time or
+    drive the robot. The live queue is replaced afterwards so stale merges
+    cannot leak into episode 1.
+    """
+    if not cfg.use_torch_compile or compile_warmup_done.is_set():
+        return
+
+    n_warmup = max(1, int(cfg.compile_warmup_inferences))
+    msg = (
+        f"[RTC] Compile warmup ({n_warmup} inferences) before first episode — "
+        "robot will not move"
+    )
+    logger.info(msg)
+    print(msg)
+    if queue_holder.get("queue") is None:
+        queue_holder["queue"] = ActionQueue(cfg.rtc)
+    _seed_rtc_observation(robot, obs_holder, obs_lock)
+    policy_active.set()
+    if not compile_warmup_done.wait(timeout=180.0):
+        timeout_msg = "[RTC] Compile warmup timed out after 180s; continuing anyway"
+        logger.warning(timeout_msg)
+        print(timeout_msg)
+    policy_active.clear()
+    queue_holder["queue"] = ActionQueue(cfg.rtc)
+    done_msg = "[RTC] Compile warmup complete; discarded warmup outputs"
+    logger.info(done_msg)
+    print(done_msg)
+
+
+def _hold_pose_rtc_prefix(
+    current_state: torch.Tensor,
+    relative_step: RelativeActionsProcessorStep,
+    normalizer_step: NormalizerProcessorStep | None,
+    horizon: int,
+    policy_device: torch.device | str,
+) -> torch.Tensor:
+    """Build an RTC leftover that means 'stay at the current pose' for relative policies."""
+    state = current_state.detach()
+    if state.ndim == 2:
+        state = state[0]
+    state = state.flatten().cpu()
+    hold_abs = state.unsqueeze(0).repeat(max(1, int(horizon)), 1)
+    return _reanchor_relative_rtc_prefix(
+        prev_actions_absolute=hold_abs,
+        current_state=current_state,
+        relative_step=relative_step,
+        normalizer_step=normalizer_step,
+        policy_device=policy_device,
+    )
 
 
 def _resolve_action_key_order(cfg, dataset_action_names: list[str]) -> list[str]:
@@ -505,6 +588,8 @@ def _rtc_inference_thread(
     policy_inference_count = 0
     latency_sum_s = 0.0
     inference_count = 0
+    last_queue = None
+    seed_prev_actions: torch.Tensor | None = None
     warmup_required = max(1, int(cfg.compile_warmup_inferences)) if cfg.use_torch_compile else 0
 
     relative_step = next(
@@ -541,15 +626,24 @@ def _rtc_inference_thread(
         if queue is None or obs is None:
             time.sleep(0.01)
             continue
+        if queue is not last_queue:
+            latency_tracker.reset()
+            last_queue = queue
 
-        if queue.qsize() <= threshold:
+        warmup_incomplete = warmup_required > 0 and inference_count < warmup_required
+        if queue.qsize() <= threshold or warmup_incomplete:
             try:
                 current_time = time.perf_counter()
                 idx_before = queue.get_action_index()
                 prev_actions = queue.get_left_over()
 
-                latency = latency_tracker.max()
-                delay = math.ceil(latency / time_per_chunk) if latency else 0
+                latency = latency_tracker.latest()
+                dynamic_delay = math.ceil(latency / time_per_chunk) if latency else 0
+                delay = (
+                    cfg.fixed_inference_delay
+                    if cfg.fixed_inference_delay is not None
+                    else dynamic_delay
+                )
 
                 obs_batch = build_dataset_frame(hw_features, obs, prefix="observation")
                 for name in obs_batch:
@@ -562,7 +656,23 @@ def _rtc_inference_thread(
                 obs_batch["robot_type"] = obs_holder.get("robot_type", "unknown")
                 preprocessed, cfg_beta = _preprocess_with_optional_cfg(obs_batch, preprocessor, cfg)
 
-                if prev_actions is not None and relative_step is not None and OBS_STATE in obs_batch:
+                if prev_actions is None:
+                    # Empty queue (warmup / episode start): keep a leftover tensor so
+                    # torch.compile stays on the RTC CUDA graph (~0.12s) instead of
+                    # recapturing the no-prefix graph (~0.85s). For relative policies
+                    # this leftover means "hold the current pose".
+                    if relative_step is not None and OBS_STATE in obs_batch:
+                        prev_actions = _hold_pose_rtc_prefix(
+                            current_state=obs_batch[OBS_STATE],
+                            relative_step=relative_step,
+                            normalizer_step=normalizer_step,
+                            horizon=cfg.rtc.execution_horizon,
+                            policy_device=policy_device,
+                        )
+                    elif seed_prev_actions is not None:
+                        n = max(1, int(cfg.rtc.execution_horizon))
+                        prev_actions = seed_prev_actions[: min(n, seed_prev_actions.shape[0])]
+                elif relative_step is not None and OBS_STATE in obs_batch:
                     prev_actions_absolute = queue.get_processed_left_over()
                     if prev_actions_absolute is not None and prev_actions_absolute.numel() > 0:
                         prev_actions = _reanchor_relative_rtc_prefix(
@@ -572,6 +682,9 @@ def _rtc_inference_thread(
                             normalizer_step=normalizer_step,
                             policy_device=policy_device,
                         )
+
+                if warmup_incomplete and prev_actions is not None and delay == 0:
+                    delay = min(int(prev_actions.shape[0]), int(cfg.rtc.execution_horizon))
 
                 if prev_actions is not None:
                     prev_actions = _normalize_prev_actions_length(
@@ -588,26 +701,34 @@ def _rtc_inference_thread(
                 new_latency = time.perf_counter() - current_time
                 new_delay = math.ceil(new_latency / time_per_chunk)
                 inference_count += 1
+                seed_prev_actions = original.clone()
                 is_warmup_inference = cfg.use_torch_compile and inference_count <= warmup_required
                 if is_warmup_inference:
                     latency_tracker.reset()
+                    if inference_count >= warmup_required and not compile_warmup_done.is_set():
+                        compile_warmup_done.set()
+                        logger.info(
+                            "[RTC] Inference warmup complete (%d/%d inferences)",
+                            inference_count,
+                            warmup_required,
+                        )
+                    print(f"[RTC] Inference warmup complete ({inference_count}/{warmup_required} inferences)")
+                    if inference_count >= warmup_required:
+                        # Main thread clears policy_active and replaces the queue.
+                        # Wait for that before looping, otherwise one extra chunk is
+                        # computed into the discarded warmup queue (delayqueue=0).
+                        while policy_active.is_set() and not shutdown_event.is_set():
+                            time.sleep(0.005)
                 else:
-                    latency_tracker.add(new_latency)
-                queue.merge(original, processed, new_delay, idx_before)
+                    live_queue = queue_holder.get("queue")
+                    if live_queue is queue and policy_active.is_set():
+                        latency_tracker.add(new_latency)
+                        live_queue.merge(original, processed, new_delay, idx_before)
+                    else:
+                        logger.info("[RTC] Dropped stale inference (queue replaced or policy inactive)")
                 policy_inference_count += 1
                 latency_sum_s += new_latency
-                if (
-                    is_warmup_inference
-                    and inference_count >= warmup_required
-                    and not compile_warmup_done.is_set()
-                ):
-                    compile_warmup_done.set()
-                    logger.info(
-                        "[RTC] Compile warmup complete (%d/%d inferences)",
-                        inference_count,
-                        warmup_required,
-                    )
-                logger.debug("[RTC] Inference latency=%.2fs, queue=%d", new_latency, queue.qsize())
+                print(f"[RTC] Inference latency={new_latency}s, latest_delay= {new_delay}steps, dynamic_delay ={dynamic_delay}steps, delayqueue={queue.qsize()}")
             except Exception as e:
                 logger.error("[RTC] Error: %s", e)
                 time.sleep(time_per_chunk)
@@ -891,8 +1012,6 @@ def _rollout_rtc(
     last_obs_poll_t = 0.0
     obs_filtered: dict[str, Any] = {}
     obs_frame: dict[str, Any] = {}
-    warmup_wait_logged = False
-    warmup_queue_flushed = False
 
     while timestamp < cfg.dataset.episode_time_s:
         loop_start = time.perf_counter()
@@ -989,53 +1108,39 @@ def _rollout_rtc(
             if not policy_active.is_set():
                 policy_active.set()
 
-            if cfg.use_torch_compile and not compile_warmup_done.is_set():
-                if not warmup_wait_logged:
-                    logger.info(
-                        "[RTC] Waiting for compile warmup (%d inferences) before policy rollout",
-                        max(1, int(cfg.compile_warmup_inferences)),
-                    )
-                    warmup_wait_logged = True
-            else:
-                if cfg.use_torch_compile and not warmup_queue_flushed:
-                    queue_holder["queue"] = ActionQueue(cfg.rtc)
-                    interpolator.reset()
-                    warmup_queue_flushed = True
-                    logger.info("[RTC] Warmup queue cleared; starting live policy rollout")
+            queue = queue_holder["queue"]
 
-                queue = queue_holder["queue"]
+            if interpolator.needs_new_action():
+                new_action = queue.get() if queue else None
+                if new_action is not None:
+                    interpolator.add(new_action.cpu())
 
-                if interpolator.needs_new_action():
-                    new_action = queue.get() if queue else None
-                    if new_action is not None:
-                        interpolator.add(new_action.cpu())
-
-                action_tensor = interpolator.get()
-                if action_tensor is not None:
-                    robot_action = {
-                        k: action_tensor[i].item()
-                        for i, k in enumerate(action_keys)
-                        if i < len(action_tensor)
-                    }
-                    robot.send_action(robot_action)
-                    robot_command_count += 1
-                    last_action = robot_action
-                    # Even though the RTC policy is generating action chunks, we only record at the same stride as the non-RTC case to keep the dataset size manageable. 
-                    # This means we may skip some interpolated actions in the recording,
-                    # but it allows us to capture the overall policy behavior while keeping the data volume reasonable.
-                    action_frame = build_dataset_frame(dataset.features, robot_action, prefix=ACTION)
-                    if record_tick % record_stride == 0:
-                        frame = {**obs_frame, **action_frame, "task": cfg.dataset.single_task}
+            action_tensor = interpolator.get()
+            if action_tensor is not None:
+                robot_action = {
+                    k: action_tensor[i].item()
+                    for i, k in enumerate(action_keys)
+                    if i < len(action_tensor)
+                }
+                robot.send_action(robot_action)
+                robot_command_count += 1
+                last_action = robot_action
+                # Even though the RTC policy is generating action chunks, we only record at the same stride as the non-RTC case to keep the dataset size manageable. 
+                # This means we may skip some interpolated actions in the recording,
+                # but it allows us to capture the overall policy behavior while keeping the data volume reasonable.
+                action_frame = build_dataset_frame(dataset.features, robot_action, prefix=ACTION)
+                if record_tick % record_stride == 0:
+                    frame = {**obs_frame, **action_frame, "task": cfg.dataset.single_task}
+                    
+                     # For human-in-loop datasets, we mark these frames as non-intervention since they are generated by the RTC policy, not the teleop corrections.
+                    if "complementary_info.is_intervention" in dataset.features:
+                        frame["complementary_info.is_intervention"] = np.array([0.0], dtype=np.float32)
                         
-                         # For human-in-loop datasets, we mark these frames as non-intervention since they are generated by the RTC policy, not the teleop corrections.
-                        if "complementary_info.is_intervention" in dataset.features:
-                            frame["complementary_info.is_intervention"] = np.array([0.0], dtype=np.float32)
-                            
-                        if stream_online:
-                            dataset.add_frame(frame)
-                        else:
-                            frame_buffer.append(frame)
-                    record_tick += 1
+                    if stream_online:
+                        dataset.add_frame(frame)
+                    else:
+                        frame_buffer.append(frame)
+                record_tick += 1
                     
         if cfg.display_data and robot_action:
             log_rerun_data(observation=obs_filtered, action=robot_action)
@@ -1176,6 +1281,10 @@ def hil_collect(cfg: HILConfig) -> LeRobotDataset:
             policy_config = PreTrainedConfig.from_pretrained(cfg.policy.pretrained_path)
             if hasattr(policy_config, "compile_model"):
                 policy_config.compile_model = cfg.use_torch_compile
+            # max-autotune benchmarks Triton configs that do not fit this GPU and
+            # then selects cuBLAS. reduce-overhead skips that search.
+            if cfg.use_torch_compile and hasattr(policy_config, "compile_mode"):
+                policy_config.compile_mode = "reduce-overhead"
             policy = policy_class.from_pretrained(cfg.policy.pretrained_path, config=policy_config)
             policy.config.rtc_config = cfg.rtc
             if hasattr(policy, "init_rtc_processor"):
@@ -1264,19 +1373,41 @@ def hil_collect(cfg: HILConfig) -> LeRobotDataset:
         logger.info(f"  Interpolation: {cfg.interpolation_multiplier}x")
         if use_rtc:
             logger.info(f"  RTC: enabled (execution_horizon={cfg.rtc.execution_horizon})")
+            if cfg.fixed_inference_delay is None:
+                logger.info("  RTC inference_delay: dynamic (from latency)")
+            else:
+                logger.info("  RTC inference_delay: fixed=%d", cfg.fixed_inference_delay)
+            _run_rtc_compile_warmup(
+                robot=robot,
+                obs_holder=obs_holder,
+                obs_lock=obs_lock,
+                queue_holder=queue_holder,
+                policy_active=policy_active,
+                compile_warmup_done=compile_warmup_done,
+                cfg=cfg,
+            )
 
         with VideoEncodingManager(dataset):
             recorded = 0
             while recorded < cfg.dataset.num_episodes and not events["stop_recording"]:
                 events["episode_outcome"] = None
                 events["rerecord_episode"] = False
-                log_say(f"Episode {dataset.num_episodes}", cfg.play_sounds)
-                
+
                 if policy is not None:
                     robot_raw.reset_to_default_positions()
 
                 if use_rtc:
                     queue_holder["queue"] = ActionQueue(cfg.rtc)
+                    _seed_rtc_observation(robot, obs_holder, obs_lock)
+                    policy_active.set()
+                    wait_msg = "[RTC] Waiting for first action chunk before episode start"
+                    logger.info(wait_msg)
+                    print(wait_msg)
+                    if not _wait_for_rtc_actions(queue_holder, min_actions=1, timeout_s=30.0):
+                        timeout_msg = "[RTC] Timed out waiting for first action chunk"
+                        logger.warning(timeout_msg)
+                        print(timeout_msg)
+                    log_say(f"Episode {dataset.num_episodes}", cfg.play_sounds)
                     _rollout_rtc(
                         robot=robot,
                         teleop=teleop,
@@ -1294,6 +1425,7 @@ def hil_collect(cfg: HILConfig) -> LeRobotDataset:
                         hw_features=hw_features,
                     )
                 else:
+                    log_say(f"Episode {dataset.num_episodes}", cfg.play_sounds)
                     _rollout_sync(
                         robot=robot,
                         teleop=teleop,

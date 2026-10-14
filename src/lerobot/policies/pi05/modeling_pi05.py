@@ -932,13 +932,19 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                     inference_delay,
                     max_delay,
                 )
-
                 print(
-                    "Training-time RTC inference_delay %s exceeds max_delay %s; clamping the hard prefix.",
-                    inference_delay,
-                    max_delay,
+                    f"Training-time RTC inference_delay {inference_delay} exceeds max_delay {max_delay}; "
+                    "clamping the hard prefix."
                 )
                 inference_delay = max_delay
+
+        # Both RTC paths require inference_delay and a previous chunk; the first chunk
+        # has neither, so it falls back to plain denoising.
+        has_rtc_prefix = (
+            inference_delay is not None
+            and inference_delay > 0
+            and prev_chunk_left_over is not None
+        )
 
         x_t = noise
         prev_chunk_left_over_ext = None
@@ -964,13 +970,13 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                 )
                 return (1.0 - beta) * v_t + beta * v_cond
 
-            if use_training_time_rtc:
+            if use_training_time_rtc and has_rtc_prefix:
                 # Hard-inpaint prefix and use per-token times (prefix time = 0), matching training.
                 x_t, time_tensor, prev_chunk_left_over_ext = apply_training_time_rtc_inference(
                     x_t, time, inference_delay, prev_chunk_left_over, self.config.chunk_size
                 )
                 v_t = denoise_step_partial_call(input_x_t=x_t, current_timestep=time_tensor)
-            elif self._rtc_enabled():
+            elif self._rtc_enabled() and has_rtc_prefix:
                 v_t = self.rtc_processor.denoise_step(
                     x_t=x_t,
                     prev_chunk_left_over=prev_chunk_left_over,

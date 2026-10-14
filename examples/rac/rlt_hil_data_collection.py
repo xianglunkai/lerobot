@@ -51,7 +51,10 @@ from hil_data_collection import (
     _resolve_action_key_order,
     _resolve_state_joint_order,
     _rtc_inference_thread,
+    _run_rtc_compile_warmup,
+    _seed_rtc_observation,
     _set_openarm_max_relative_target_if_missing,
+    _wait_for_rtc_actions,
 )
 from hil_utils import (
     HILDatasetConfig,
@@ -441,9 +444,6 @@ def _rollout_rtc_rlt(
     last_obs_poll_t = 0.0
     obs_filtered: dict[str, Any] = {}
     obs_frame: dict[str, Any] = {}
-    warmup_wait_logged = False
-    warmup_queue_flushed = False
-
     while timestamp < cfg.dataset.episode_time_s:
         loop_start = time.perf_counter()
         _handle_intervention_toggle(events)
@@ -487,38 +487,24 @@ def _rollout_rtc_rlt(
             queue_holder["queue"] = ActionQueue(cfg.rtc)
             interpolator.reset()
         else:
-            if cfg.use_torch_compile and not compile_warmup_done.is_set():
-                if not warmup_wait_logged:
-                    logger.info(
-                        "[RTC] Waiting for compile warmup (%d inferences)",
-                        max(1, int(cfg.compile_warmup_inferences)),
-                    )
-                    warmup_wait_logged = True
-                source = SOURCE_VLA
-            else:
-                if cfg.use_torch_compile and not warmup_queue_flushed:
-                    queue_holder["queue"] = ActionQueue(cfg.rtc)
-                    interpolator.reset()
-                    warmup_queue_flushed = True
+            queue = queue_holder["queue"]
+            if interpolator.needs_new_action():
+                new_action = queue.get() if queue else None
+                if new_action is not None:
+                    interpolator.add(new_action.cpu())
 
-                queue = queue_holder["queue"]
-                if interpolator.needs_new_action():
-                    new_action = queue.get() if queue else None
-                    if new_action is not None:
-                        interpolator.add(new_action.cpu())
-
-                action_tensor = interpolator.get()
-                if action_tensor is not None:
-                    robot_action = {
-                        k: action_tensor[i].item()
-                        for i, k in enumerate(action_keys)
-                        if i < len(action_tensor)
-                    }
-                    robot.send_action(robot_action)
-                    robot_command_count += 1
-                    last_action = robot_action
-                    last_policy_action = dict(robot_action)
-                source = SOURCE_VLA
+            action_tensor = interpolator.get()
+            if action_tensor is not None:
+                robot_action = {
+                    k: action_tensor[i].item()
+                    for i, k in enumerate(action_keys)
+                    if i < len(action_tensor)
+                }
+                robot.send_action(robot_action)
+                robot_command_count += 1
+                last_action = robot_action
+                last_policy_action = dict(robot_action)
+            source = SOURCE_VLA
 
         if (
             _should_record_frame(only_critical=cfg.only_critical, tracker=tracker)
@@ -754,6 +740,15 @@ def rlt_hil_collect(cfg: RLTHILConfig) -> LeRobotDataset:
         logger.info("  only_critical=%s start_with_teleop=%s", cfg.only_critical, cfg.start_with_teleop)
         if use_rtc:
             logger.info("  RTC execution_horizon=%s", cfg.rtc.execution_horizon)
+            _run_rtc_compile_warmup(
+                robot=robot,
+                obs_holder=obs_holder,
+                obs_lock=obs_lock,
+                queue_holder=queue_holder,
+                policy_active=policy_active,
+                compile_warmup_done=compile_warmup_done,
+                cfg=cfg,
+            )
 
         with VideoEncodingManager(dataset):
             recorded = 0
@@ -771,6 +766,12 @@ def rlt_hil_collect(cfg: RLTHILConfig) -> LeRobotDataset:
 
                 if use_rtc:
                     queue_holder["queue"] = ActionQueue(cfg.rtc)
+                    if not events["intervention_active"]:
+                        _seed_rtc_observation(robot, obs_holder, obs_lock)
+                        policy_active.set()
+                        logger.info("[RTC] Waiting for first action chunk before episode start")
+                        if not _wait_for_rtc_actions(queue_holder, min_actions=1, timeout_s=30.0):
+                            logger.warning("[RTC] Timed out waiting for first action chunk")
                     _rollout_rtc_rlt(
                         robot=robot,
                         teleop=teleop,
