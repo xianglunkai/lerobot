@@ -27,6 +27,7 @@ from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
+    ForwardTrackerProcessorStep,
     NormalizerProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
@@ -181,6 +182,9 @@ def make_pi05_pre_post_processors(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
         AbsoluteActionsProcessorStep(enabled=config.use_relative_actions, relative_step=relative_step),
+        # Lead compensation is defined on absolute joint targets. Leave it off
+        # until lead_s is tuned for the arm; the saved pipeline can enable it.
+        ForwardTrackerProcessorStep(enabled=False),
         DeviceProcessorStep(device="cpu"),
     ]
 

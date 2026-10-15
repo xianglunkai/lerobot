@@ -85,6 +85,7 @@ from .temporal_profile_processor import TimeAxisOptimizationProcessor
 from .rename_processor import RenameObservationsProcessorStep
 from .tokenizer_processor import ActionTokenizerProcessorStep, TokenizerProcessorStep
 from .filter_processor import LowPassFilterProcessor
+from .forward_tracker_processor import ForwardTrackerProcessorStep
 from .qp_action_processor import QPActionSmoothingProcessor
 from .spline_action_processor import SplineActionSmoothingProcessor
 
@@ -146,6 +147,7 @@ __all__ = [
     "UnnormalizerProcessorStep",
     "VanillaObservationProcessorStep",
     "LowPassFilterProcessor",
+    "ForwardTrackerProcessorStep",
     "QPActionSmoothingProcessor",
     "SplineActionSmoothingProcessor",
     "TimeAxisOptimizationProcessor",
