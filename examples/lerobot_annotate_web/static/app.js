@@ -44,7 +44,6 @@ function formatBytes(bytes) {
 }
 
 function showPage(id) {
-  const previous = [...document.querySelectorAll(".page")].find((page) => !page.hidden);
   document.querySelectorAll(".page").forEach((page) => { page.hidden = page.id !== id; });
   document.querySelectorAll(".nav-tab[data-page]").forEach((tab) => {
     tab.classList.toggle("active", tab.dataset.page === id);
@@ -53,10 +52,8 @@ function showPage(id) {
     if (!hostIsVisible(video.closest(".video-grid"))) releaseVideo(video);
   });
   const host = id === "playPage" ? $("players") : id === "editPage" ? $("editPlayers") : null;
-  if (host && state.episode) {
-    engagePlayers(host);
-    if ((id === "editPage" && (!previous || previous.id !== "editPage")) || state.playing) setPlaying(true);
-  }
+  if (host && state.episode) engagePlayers(host);
+  if (state.playing) setPlaying(true);
 }
 
 document.querySelectorAll(".nav-tab[data-page]").forEach((tab) => {
@@ -123,9 +120,37 @@ function renderEpisodeButtons() {
   });
 }
 
-async function openEpisode(index) {
+let episodeSerial = 0;
+
+function stopCurrentPlayback() {
+  episodeSerial += 1;
   state.playing = false;
+  state.playhead = 0;
+  document.querySelectorAll("#players video, #editPlayers video").forEach((video) => {
+    video.dataset.dead = "1";
+    video.onerror = null;
+    video.onloadedmetadata = null;
+    video.pause();
+    if (video.getAttribute("src")) {
+      video.removeAttribute("src");
+      video.load();
+    }
+  });
+  $("play").textContent = "播放";
+  $("editPlay").textContent = "播放";
+  $("seek").value = "0";
+  $("editSeek").value = "0";
+  $("clock").textContent = "0.0 / 0.0 s";
+  $("editClock").textContent = "0.0 / 0.0 s";
+  const time = $("editTime");
+  if (time) time.value = "0.000";
+}
+
+async function openEpisode(index) {
+  stopCurrentPlayback();
+  const serial = episodeSerial;
   const episode = await api(`/api/episode?index=${index}`);
+  if (serial !== episodeSerial) return;
   state.episode = episode;
   state.clips = episode.video;
   const first = Object.values(episode.video)[0];
@@ -140,7 +165,6 @@ async function openEpisode(index) {
   renderTimeline(episode);
   renderEditors(episode);
   seek(0);
-  if (hostIsVisible($("editPlayers"))) setPlaying(true);
 }
 
 function hostIsVisible(host) {
@@ -152,7 +176,7 @@ function mountPlayers(host, videos) {
   host.innerHTML = Object.entries(videos).map(([key, video]) => `
     <div class="video-card">
       <strong>${escapeHtml(key)}</strong>
-      <video data-start="${video.start}" data-end="${video.end}" data-src="/videos/${video.path}" preload="auto" playsinline></video>
+      <video data-start="${video.start}" data-end="${video.end}" data-src="/videos/${video.path}" preload="metadata" playsinline></video>
       <p class="muted video-note"></p>
     </div>
   `).join("");
@@ -160,16 +184,11 @@ function mountPlayers(host, videos) {
 }
 
 function releaseVideo(video) {
+  video.onerror = null;
   video.pause();
   if (!video.getAttribute("src")) return;
   video.removeAttribute("src");
   video.load();
-}
-
-function hasSource(video) {
-  const wanted = video.dataset.src || "";
-  const current = video.getAttribute("src") || "";
-  return Boolean(wanted) && (current === wanted || current.endsWith(wanted));
 }
 
 function engagePlayers(host) {
@@ -177,21 +196,20 @@ function engagePlayers(host) {
     const note = video.parentElement.querySelector(".video-note");
     if (note) note.textContent = "";
     video.onerror = () => {
-      if (video.dataset.retried === "1") {
-        if (note) note.textContent = "这一路没有解出画面。";
-        return;
-      }
-      video.dataset.retried = "1";
-      if (note) note.textContent = "这一路跳转被中断，正在重新定位。";
-      const src = video.dataset.src;
-      releaseVideo(video);
-      video.src = src;
-      video.onloadedmetadata = () => placeVideo(video, state.playhead || 0);
+      if (!video.isConnected || !video.getAttribute("src")) return;
+      if (note) note.textContent = "这一路没有解出画面。";
     };
-    if (!hasSource(video)) video.src = video.dataset.src;
+    if (video.dataset.boundSrc !== video.dataset.src) {
+      video.dataset.boundSrc = video.dataset.src;
+      video.src = video.dataset.src;
+    }
     video.playbackRate = currentRate();
-    if (video.readyState >= 1) placeVideo(video, state.playhead || 0);
-    else video.onloadedmetadata = () => placeVideo(video, state.playhead || 0);
+    const showFrame = () => {
+      if (!video.isConnected) return;
+      placeVideo(video, state.playhead || 0);
+    };
+    if (video.readyState >= 1) showFrame();
+    else video.onloadedmetadata = showFrame;
   });
 }
 
@@ -200,8 +218,7 @@ function players() {
 }
 
 function placeVideo(video, local) {
-  video.dataset.want = String(local);
-  if (video.seeking) return;
+  if (!video.isConnected || video.readyState < 1 || video.seeking) return;
   const start = Number(video.dataset.start);
   const end = Number(video.dataset.end);
   let target = start + Math.max(0, local);
@@ -209,32 +226,7 @@ function placeVideo(video, local) {
   if (Number.isFinite(video.duration) && video.duration > 0) {
     target = Math.min(target, Math.max(0, video.duration - 0.05));
   }
-  const keepPlaying = () => {
-    if (!state.playing || !video.paused) return;
-    video.playbackRate = currentRate();
-    const pending = video.play();
-    if (pending && pending.catch) pending.catch((error) => {
-      if (!error || error.name === "AbortError") return;
-      state.playing = false;
-      $("play").textContent = "播放";
-      $("editPlay").textContent = "播放";
-    });
-  };
-  if (Math.abs(video.currentTime - target) < 0.05) {
-    keepPlaying();
-    return;
-  }
-  const wanted = local;
-  const resume = () => {
-    video.removeEventListener("seeked", resume);
-    const next = Number(video.dataset.want);
-    if (Number.isFinite(next) && Math.abs(next - wanted) > 0.05) {
-      placeVideo(video, next);
-      return;
-    }
-    keepPlaying();
-  };
-  video.addEventListener("seeked", resume);
+  if (Math.abs(video.currentTime - target) < 0.08) return;
   video.currentTime = target;
 }
 
@@ -271,7 +263,10 @@ function seek(seconds, options = {}) {
   players().forEach((video) => {
     video.playbackRate = currentRate();
     if (video.readyState >= 1) placeVideo(video, local);
-    else video.onloadedmetadata = () => placeVideo(video, state.playhead || 0);
+    else video.onloadedmetadata = () => {
+      if (!video.isConnected || video.dataset.dead === "1") return;
+      placeVideo(video, state.playhead || 0);
+    };
   });
   paintClock(local, {force: !options.live});
   highlightCurrent(local, options);
@@ -281,10 +276,9 @@ function setPlaying(playing) {
   state.playing = playing;
   const rate = currentRate();
   const host = hostIsVisible($("editPlayers")) ? $("editPlayers") : hostIsVisible($("players")) ? $("players") : null;
-  if (playing && host && state.episode && players().some((video) => !hasSource(video))) {
+  if (playing && host && state.episode && players().some((video) => !video.getAttribute("src"))) {
     engagePlayers(host);
   }
-  const pending = [];
   players().forEach((video) => {
     video.playbackRate = rate;
     if (!playing) {
@@ -292,19 +286,8 @@ function setPlaying(playing) {
       return;
     }
     const job = video.play();
-    if (job && job.then) pending.push(job);
+    if (job && job.catch) job.catch(() => {});
   });
-  if (playing && pending.length) {
-    Promise.allSettled(pending).then((results) => {
-      if (!state.playing) return;
-      const rejected = results.filter((item) => item.status === "rejected" && (!item.reason || item.reason.name !== "AbortError"));
-      if (rejected.length && rejected.length === results.length) {
-        state.playing = false;
-        $("play").textContent = "播放";
-        $("editPlay").textContent = "播放";
-      }
-    });
-  }
   const label = playing ? "播放中" : "播放";
   $("play").textContent = label;
   $("editPlay").textContent = label;
