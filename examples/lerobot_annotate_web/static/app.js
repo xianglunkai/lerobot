@@ -44,6 +44,7 @@ function formatBytes(bytes) {
 }
 
 function showPage(id) {
+  const previous = [...document.querySelectorAll(".page")].find((page) => !page.hidden);
   document.querySelectorAll(".page").forEach((page) => { page.hidden = page.id !== id; });
   document.querySelectorAll(".nav-tab[data-page]").forEach((tab) => {
     tab.classList.toggle("active", tab.dataset.page === id);
@@ -52,7 +53,10 @@ function showPage(id) {
     if (!hostIsVisible(video.closest(".video-grid"))) releaseVideo(video);
   });
   const host = id === "playPage" ? $("players") : id === "editPage" ? $("editPlayers") : null;
-  if (host && state.episode) engagePlayers(host);
+  if (host && state.episode) {
+    engagePlayers(host);
+    if ((id === "editPage" && (!previous || previous.id !== "editPage")) || state.playing) setPlaying(true);
+  }
 }
 
 document.querySelectorAll(".nav-tab[data-page]").forEach((tab) => {
@@ -120,6 +124,7 @@ function renderEpisodeButtons() {
 }
 
 async function openEpisode(index) {
+  state.playing = false;
   const episode = await api(`/api/episode?index=${index}`);
   state.episode = episode;
   state.clips = episode.video;
@@ -135,6 +140,7 @@ async function openEpisode(index) {
   renderTimeline(episode);
   renderEditors(episode);
   seek(0);
+  if (hostIsVisible($("editPlayers"))) setPlaying(true);
 }
 
 function hostIsVisible(host) {
@@ -146,7 +152,7 @@ function mountPlayers(host, videos) {
   host.innerHTML = Object.entries(videos).map(([key, video]) => `
     <div class="video-card">
       <strong>${escapeHtml(key)}</strong>
-      <video data-start="${video.start}" data-end="${video.end}" data-src="/videos/${video.path}" preload="none"></video>
+      <video data-start="${video.start}" data-end="${video.end}" data-src="/videos/${video.path}" preload="auto" playsinline></video>
       <p class="muted video-note"></p>
     </div>
   `).join("");
@@ -158,6 +164,12 @@ function releaseVideo(video) {
   if (!video.getAttribute("src")) return;
   video.removeAttribute("src");
   video.load();
+}
+
+function hasSource(video) {
+  const wanted = video.dataset.src || "";
+  const current = video.getAttribute("src") || "";
+  return Boolean(wanted) && (current === wanted || current.endsWith(wanted));
 }
 
 function engagePlayers(host) {
@@ -176,7 +188,8 @@ function engagePlayers(host) {
       video.src = src;
       video.onloadedmetadata = () => placeVideo(video, state.playhead || 0);
     };
-    if (video.getAttribute("src") !== video.dataset.src) video.src = video.dataset.src;
+    if (!hasSource(video)) video.src = video.dataset.src;
+    video.playbackRate = currentRate();
     if (video.readyState >= 1) placeVideo(video, state.playhead || 0);
     else video.onloadedmetadata = () => placeVideo(video, state.playhead || 0);
   });
@@ -187,6 +200,7 @@ function players() {
 }
 
 function placeVideo(video, local) {
+  video.dataset.want = String(local);
   if (video.seeking) return;
   const start = Number(video.dataset.start);
   const end = Number(video.dataset.end);
@@ -195,7 +209,32 @@ function placeVideo(video, local) {
   if (Number.isFinite(video.duration) && video.duration > 0) {
     target = Math.min(target, Math.max(0, video.duration - 0.05));
   }
-  if (Math.abs(video.currentTime - target) < 0.05) return;
+  const keepPlaying = () => {
+    if (!state.playing || !video.paused) return;
+    video.playbackRate = currentRate();
+    const pending = video.play();
+    if (pending && pending.catch) pending.catch((error) => {
+      if (!error || error.name === "AbortError") return;
+      state.playing = false;
+      $("play").textContent = "播放";
+      $("editPlay").textContent = "播放";
+    });
+  };
+  if (Math.abs(video.currentTime - target) < 0.05) {
+    keepPlaying();
+    return;
+  }
+  const wanted = local;
+  const resume = () => {
+    video.removeEventListener("seeked", resume);
+    const next = Number(video.dataset.want);
+    if (Number.isFinite(next) && Math.abs(next - wanted) > 0.05) {
+      placeVideo(video, next);
+      return;
+    }
+    keepPlaying();
+  };
+  video.addEventListener("seeked", resume);
   video.currentTime = target;
 }
 
@@ -205,34 +244,78 @@ function localTime() {
   return Math.max(0, video.currentTime - Number(video.dataset.start));
 }
 
-function seek(seconds) {
+function currentRate() {
+  const select = hostIsVisible($("editPlayers")) ? $("editRate") : $("rate");
+  const rate = Number(select.value);
+  return Number.isFinite(rate) && rate > 0 ? rate : 1;
+}
+
+function paintClock(local, options = {}) {
+  const ratio = state.duration ? String(Math.round(local / state.duration * 1000)) : "0";
+  const text = `${local.toFixed(1)} / ${(state.duration || 0).toFixed(1)} s`;
+  for (const id of ["seek", "editSeek"]) {
+    const node = $(id);
+    if (!node) continue;
+    if (!options.force && document.activeElement === node) continue;
+    node.value = ratio;
+  }
+  $("clock").textContent = text;
+  $("editClock").textContent = text;
+  const time = $("editTime");
+  if (time && document.activeElement !== time) time.value = local.toFixed(3);
+}
+
+function seek(seconds, options = {}) {
   const local = Math.min(Math.max(0, seconds), state.duration || 0);
   state.playhead = local;
   players().forEach((video) => {
+    video.playbackRate = currentRate();
     if (video.readyState >= 1) placeVideo(video, local);
-    else video.onloadedmetadata = () => placeVideo(video, local);
+    else video.onloadedmetadata = () => placeVideo(video, state.playhead || 0);
   });
-  $("seek").value = state.duration ? String(Math.round(local / state.duration * 1000)) : "0";
-  $("clock").textContent = `${local.toFixed(1)} / ${state.duration.toFixed(1)} s`;
+  paintClock(local, {force: !options.live});
+  highlightCurrent(local, options);
 }
 
 function setPlaying(playing) {
   state.playing = playing;
-  const rate = Number($("rate").value);
+  const rate = currentRate();
+  const host = hostIsVisible($("editPlayers")) ? $("editPlayers") : hostIsVisible($("players")) ? $("players") : null;
+  if (playing && host && state.episode && players().some((video) => !hasSource(video))) {
+    engagePlayers(host);
+  }
+  const pending = [];
   players().forEach((video) => {
     video.playbackRate = rate;
-    if (playing) video.play();
-    else video.pause();
+    if (!playing) {
+      video.pause();
+      return;
+    }
+    const job = video.play();
+    if (job && job.then) pending.push(job);
   });
-  $("play").textContent = playing ? "播放中" : "播放";
+  if (playing && pending.length) {
+    Promise.allSettled(pending).then((results) => {
+      if (!state.playing) return;
+      const rejected = results.filter((item) => item.status === "rejected" && (!item.reason || item.reason.name !== "AbortError"));
+      if (rejected.length && rejected.length === results.length) {
+        state.playing = false;
+        $("play").textContent = "播放";
+        $("editPlay").textContent = "播放";
+      }
+    });
+  }
+  const label = playing ? "播放中" : "播放";
+  $("play").textContent = label;
+  $("editPlay").textContent = label;
 }
 
 function tick() {
   if (!state.playing) return;
   const local = localTime();
-  if (local >= state.duration - 0.05) {
+  if (state.duration > 0 && local >= state.duration - 0.05) {
     setPlaying(false);
-    seek(0);
+    seek(hostIsVisible($("editPlayers")) ? state.duration : 0);
     return;
   }
   state.playhead = local;
@@ -242,8 +325,8 @@ function tick() {
     const expected = Number(video.dataset.start) + local;
     if (Math.abs(video.currentTime - expected) > 0.35) placeVideo(video, local);
   });
-  $("seek").value = state.duration ? String(Math.round(local / state.duration * 1000)) : "0";
-  $("clock").textContent = `${local.toFixed(1)} / ${state.duration.toFixed(1)} s`;
+  paintClock(local);
+  highlightCurrent(local);
 }
 setInterval(tick, 200);
 
@@ -261,6 +344,7 @@ function renderEditors(episode) {
   $("persistent").innerHTML = episode.persistent.map((row) => editorRow("persistent", row)).join("");
   $("events").innerHTML = episode.events.map((row) => editorRow("event", row)).join("");
   bindEditorRows();
+  highlightCurrent(state.playhead || 0);
 }
 
 function editorRow(kind, row) {
@@ -283,8 +367,155 @@ function editorRow(kind, row) {
 
 function bindEditorRows() {
   document.querySelectorAll(".drop").forEach((button) => {
-    button.onclick = () => button.closest(".edit-row").remove();
+    button.onclick = () => {
+      button.closest(".edit-row").remove();
+      highlightCurrent(state.playhead || 0);
+    };
   });
+  document.querySelectorAll("#persistent [data-field], #events [data-field]").forEach((field) => {
+    field.oninput = () => highlightCurrent(state.playhead || localTime());
+  });
+}
+
+const PERSISTENT_ORDER = ["subtask", "plan", "memory", "task_aug", "motion"];
+
+function editorItems(host) {
+  return [...host.querySelectorAll(".edit-row")].map((row) => ({
+    row,
+    style: row.querySelector('[data-field="style"]').value,
+    time: Number(row.querySelector('[data-field="timestamp"]').value),
+    content: row.querySelector('[data-field="content"]').value.trim(),
+  })).filter((item) => Number.isFinite(item.time));
+}
+
+function nearestStamp(local) {
+  const stamps = state.episode && state.episode.timestamps;
+  if (!stamps || !stamps.length) return {time: local, index: null};
+  let lo = 0;
+  let hi = stamps.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (stamps[mid] < local) lo = mid + 1;
+    else hi = mid;
+  }
+  if (lo > 0 && Math.abs(stamps[lo - 1] - local) < Math.abs(stamps[lo] - local)) lo -= 1;
+  return {time: stamps[lo], index: lo};
+}
+
+function snapTime(seconds) {
+  const clamped = Math.min(Math.max(0, seconds), state.duration || Math.max(0, seconds));
+  return nearestStamp(clamped).time;
+}
+
+function activePersistent(items, local) {
+  const byStyle = new Map();
+  items.forEach((item) => {
+    const group = byStyle.get(item.style) || [];
+    group.push(item);
+    byStyle.set(item.style, group);
+  });
+  const chosen = [];
+  byStyle.forEach((group) => {
+    let best = -Infinity;
+    group.forEach((item) => {
+      if (item.time <= local + 1e-3 && item.time > best) best = item.time;
+    });
+    if (!Number.isFinite(best) || best === -Infinity) return;
+    group.filter((item) => Math.abs(item.time - best) < 1e-3).forEach((item) => chosen.push(item));
+  });
+  chosen.sort((left, right) => {
+    const a = PERSISTENT_ORDER.indexOf(left.style);
+    const b = PERSISTENT_ORDER.indexOf(right.style);
+    return (a < 0 ? 99 : a) - (b < 0 ? 99 : b);
+  });
+  return chosen;
+}
+
+function highlightCurrent(local, options = {}) {
+  const box = $("editNow");
+  if (!box) return;
+  if (!state.episode) {
+    box.dataset.markup = "";
+    box.textContent = "先选择一条 episode。画面会从开头播放；拖动进度条或输入时间后，这里标出这一刻的 subtask 和事件。";
+    return;
+  }
+  const persistent = editorItems($("persistent"));
+  const events = editorItems($("events"));
+  const currentPersistent = activePersistent(persistent, local);
+  const currentEvents = events.filter((item) => Math.abs(item.time - local) <= 0.05 + 1e-4);
+  const active = new Set([...currentPersistent, ...currentEvents].map((item) => item.row));
+  document.querySelectorAll("#persistent .edit-row, #events .edit-row").forEach((row) => {
+    row.classList.toggle("current", active.has(row));
+  });
+  const frame = nearestStamp(local);
+  const lines = [`<b>${local.toFixed(3)} s</b>${frame.index == null ? "" : ` · 第 ${frame.index} 帧`}`];
+  const described = new Set();
+  PERSISTENT_ORDER.forEach((style) => {
+    const rows = currentPersistent.filter((item) => item.style === style);
+    if (!rows.length) {
+      if (style === "subtask") lines.push("subtask：这一刻还没有");
+      return;
+    }
+    rows.forEach((item) => {
+      described.add(item);
+      lines.push(`${escapeHtml(item.style)}：${escapeHtml(item.content) || "（空）"} · 自 ${item.time.toFixed(3)} s`);
+    });
+  });
+  currentPersistent.filter((item) => !described.has(item)).forEach((item) => {
+    lines.push(`${escapeHtml(item.style)}：${escapeHtml(item.content) || "（空）"} · 自 ${item.time.toFixed(3)} s`);
+  });
+  if (currentEvents.length) {
+    lines.push(`事件：${currentEvents.map((item) => `${escapeHtml(item.style)} ${escapeHtml(item.content) || "（空）"} @ ${item.time.toFixed(3)} s`).join("；")}`);
+  } else if (events.length) {
+    const nearest = events.reduce((best, item) => (
+      Math.abs(item.time - local) < Math.abs(best.time - local) ? item : best
+    ));
+    lines.push(`这一帧没有事件。最近是 ${escapeHtml(nearest.style)} @ ${nearest.time.toFixed(3)} s（相差 ${Math.abs(nearest.time - local).toFixed(3)} s）`);
+  } else {
+    lines.push("这一帧没有事件。");
+  }
+  const markup = lines.map((line) => `<span>${line}</span>`).join("");
+  if (box.dataset.markup !== markup) {
+    box.dataset.markup = markup;
+    box.innerHTML = markup;
+  }
+  if (options.scroll) {
+    const subtask = currentPersistent.find((item) => item.style === "subtask");
+    const target = (subtask || currentEvents[0] || currentPersistent[0]);
+    if (target) target.row.scrollIntoView({block: "nearest"});
+  }
+}
+
+function parseClock(text) {
+  const raw = String(text ?? "").trim();
+  if (!raw) return null;
+  if (raw.includes(":")) {
+    const pieces = raw.split(":");
+    if (pieces.length !== 2) return null;
+    const minutes = Number(pieces[0]);
+    const seconds = Number(pieces[1]);
+    if (!Number.isFinite(minutes) || !Number.isFinite(seconds) || minutes < 0 || seconds < 0) return null;
+    return minutes * 60 + seconds;
+  }
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
+
+function jumpToTypedTime() {
+  if (!state.episode) {
+    $("editNow").dataset.markup = "";
+    $("editNow").textContent = "先选择一条 episode。";
+    return;
+  }
+  const parsed = parseClock($("editTime").value);
+  if (parsed == null || parsed < 0) {
+    $("editNow").dataset.markup = "";
+    $("editNow").textContent = "时间格式不对。填秒数，例如 12.5，或分:秒，例如 1:02.5。";
+    return;
+  }
+  const snapped = snapTime(parsed);
+  seek(snapped, {scroll: true});
+  $("editTime").value = snapped.toFixed(3);
 }
 
 function readEditors(kind) {
@@ -582,11 +813,30 @@ $("open").onclick = async () => {
 $("filter").oninput = () => { if (state.dataset) renderEpisodeButtons(); };
 $("play").onclick = () => setPlaying(true);
 $("pause").onclick = () => setPlaying(false);
-$("rate").onchange = () => {
-  const rate = Number($("rate").value);
-  players().forEach((video) => { video.playbackRate = rate; });
+$("editPlay").onclick = () => {
+  if (!state.episode) {
+    $("editNow").dataset.markup = "";
+    $("editNow").textContent = "先选择一条 episode。";
+    return;
+  }
+  setPlaying(true);
 };
-$("seek").oninput = () => seek(Number($("seek").value) / 1000 * state.duration);
+$("editPause").onclick = () => setPlaying(false);
+function applyRate(value) {
+  const rate = Number(value);
+  players().forEach((video) => { video.playbackRate = rate; });
+}
+$("rate").onchange = () => applyRate($("rate").value);
+$("editRate").onchange = () => applyRate($("editRate").value);
+$("seek").oninput = () => seek(Number($("seek").value) / 1000 * state.duration, {live: true});
+$("editSeek").oninput = () => seek(Number($("editSeek").value) / 1000 * (state.duration || 0), {live: true});
+$("editSeek").onchange = () => seek(snapTime(Number($("editSeek").value) / 1000 * (state.duration || 0)), {scroll: true});
+$("editJump").onclick = () => jumpToTypedTime();
+$("editTime").onkeydown = (event) => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  jumpToTypedTime();
+};
 $("parquetFile").onchange = () => { state.parquetOffset = 0; loadParquet(); };
 $("parquetEpisode").onchange = () => { state.parquetOffset = 0; loadParquet(); };
 $("pageSize").onchange = () => { state.parquetOffset = 0; loadParquet(); };

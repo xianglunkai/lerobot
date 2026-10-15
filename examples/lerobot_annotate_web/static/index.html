@@ -214,7 +214,30 @@
         </aside>
         <div class="viewer">
           <div id="editPlayers" class="video-grid"></div>
+          <div class="panel transport">
+            <button id="editPlay" class="primary" type="button">播放</button>
+            <button id="editPause" class="ghost" type="button">暂停</button>
+            <label class="rate-field">速度
+              <select id="editRate">
+                <option value="0.25">0.25×</option>
+                <option value="0.5">0.5×</option>
+                <option value="1" selected>1×</option>
+                <option value="1.5">1.5×</option>
+                <option value="2">2×</option>
+                <option value="4">4×</option>
+              </select>
+            </label>
+            <label class="grow">进度
+              <input id="editSeek" type="range" min="0" max="1000" value="0">
+            </label>
+            <span id="editClock" class="muted">0.0 / 0.0 s</span>
+            <label class="time-field">时间
+              <input id="editTime" inputmode="decimal" autocomplete="off" placeholder="秒或 分:秒" value="0.000">
+            </label>
+            <button id="editJump" class="ghost" type="button">定位</button>
+          </div>
           <div class="panel">
+            <div id="editNow" class="current-readout">先选择一条 episode。画面会从开头播放；拖动进度条或输入时间后，这里标出这一刻的 subtask 和事件。</div>
             <div class="toolbar">
               <button id="save" class="primary" type="button">保存这一条</button>
               <button id="addPersistent" class="ghost" type="button">添加持续标注</button>
