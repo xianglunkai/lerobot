@@ -75,7 +75,7 @@ PYTHONUNBUFFERED=1 /home/xlk/miniconda3/envs/lerobot/bin/python examples/lerobot
         <li>打开「自动标注」。示例按钮会填入情节：<code>all</code>、<code>0</code>、<code>0-2</code>、<code>0,3,5</code>。特征默认全选。只要 subtask 和 memory 时，点「只要 subtask + memory」，plan、task_aug、interjections 和 vqa 不会调用模型。插话会连同 say 一起生成。覆盖原数据集会改当前 parquet；生成新数据集则把结果写到路径框里的目录，默认是原目录名加 <code>_annotated</code>。新目录若已存在会拒绝，避免盖掉上次结果。命令行对应 <code>--features subtask,memory</code>。</li>
         <li>自动标注由「开始」「暂停」「继续」「结束」控制。任务一旦起来，「开始」会锁住，暂停和结束可以点；继续只有暂停之后才亮。按钮正下方是当前第几条、本条已等待多久，以及最新日志，模型还没返回时秒数也会往上走。暂停冻住当前模型调用，继续从原地接着跑，结束停掉进程并保留暂存。勾选的每个特征都有自己的进度。所选情节里这些特征的暂存都齐了，页面会用绿色提示「所选特征已标注完成」；语言列还没进 parquet 时，同一句会说明还要再点「开始」才会写入。页面上的表按 episode、style、将写入的语言列和句子列出已经生成的内容；action、state 和图像在任务结束前不会改，语言列要等写回 parquet 后才变成「已写入」。</li>
         <li>全部阶段结束并校验通过后，语言列才写入 parquet。覆盖模式下重新点「加载」，语言列状态变为已有。生成模式下把路径改成新目录再加载。然后在回放里点 subtask 句子，视频会跳到对应时间。</li>
-        <li>打开「人工编辑」，选同一条。改 subtask 文字，或「添加事件」写一句 interjection。vqa 和 trace 必须填相机名，例如 <code>observation.images.high</code>。点「保存这一条」。只改这一条，其它 episode 保留。再点该条，表格和编辑区应显示刚保存的句子。</li>
+        <li>打开「人工编辑」，选同一条。画面从开头按当前速度播放，速度可选 0.25× 到 4×，暂停后可以再播。拖动进度条时多路一起跳；松开后吸附到最近一帧。时间框可以填秒数（<code>12.5</code>）或分秒（<code>1:02.5</code>），点「定位」或回车后同样吸附到最近一帧，并标出这一刻的 subtask、其它持续标注和同一帧上的事件。改 subtask 文字，或「添加事件」写一句 interjection。vqa 和 trace 必须填相机名，例如 <code>observation.images.high</code>。点「保存这一条」。只改这一条，其它 episode 保留。再点该条，表格和编辑区应显示刚保存的句子。</li>
         <li>标注还在写整表时不要保存。写回和人工保存会抢同一个 parquet。</li>
       </ol>
       <p>基本测试：</p>
