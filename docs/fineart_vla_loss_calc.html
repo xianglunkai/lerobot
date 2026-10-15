@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FineART-VLA · 三损失的逐步计算</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,500;8..60,600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f6f3ec; --ink: #1c1915; --muted: #5c564c; --line: #ddd6c8;
+    --card: #fffdf8; --accent: #8c3a2f; --ok: #1f6b45; --warn: #8a5a12;
+    --code: #f3eee4; --mono: "IBM Plex Mono", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 17px/1.65 "IBM Plex Sans", "PingFang SC", "Noto Sans SC", sans-serif; }
+  header { padding: 48px 8vw 28px; border-bottom: 1px solid var(--line); }
+  header p { max-width: 760px; color: var(--muted); }
+  h1 { font-family: "Source Serif 4", "Songti SC", serif; font-weight: 560;
+    font-size: 40px; line-height: 1.2; margin: 0 0 12px; letter-spacing: -0.02em; }
+  h2 { font-family: "Source Serif 4", serif; font-weight: 560; font-size: 28px; margin: 0 0 12px; }
+  h3 { font-size: 18px; margin: 28px 0 8px; }
+  main { max-width: 920px; margin: 0 auto; padding: 36px 28px 80px; }
+  section { margin: 0 0 48px; }
+  .lead { font-size: 19px; }
+  .answer { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--accent);
+    padding: 16px 20px; border-radius: 8px; }
+  .answer strong { color: var(--accent); }
+  code, .mono { font-family: var(--mono); font-size: 0.86em; }
+  pre { background: #231f1a; color: #f4efe6; padding: 16px 18px; border-radius: 10px;
+    overflow-x: auto; line-height: 1.5; font-size: 13.5px; }
+  pre code { color: inherit; font-size: 13.5px; }
+  .eq { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 18px; font-family: var(--mono); font-size: 14px; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; background: var(--card); font-size: 15px; }
+  th, td { border-bottom: 1px solid var(--line); text-align: left; padding: 8px 10px; vertical-align: top; }
+  th { font-weight: 600; color: var(--muted); font-size: 13px; letter-spacing: 0.04em; }
+  .tag { display: inline-block; padding: 1px 7px; border-radius: 99px; font-family: var(--mono);
+    font-size: 12px; background: #efe7d8; }
+  .zero { color: var(--ok); font-weight: 600; }
+  .keep { color: var(--accent); font-weight: 600; }
+  .note { color: var(--muted); font-size: 15px; }
+  nav a { color: var(--accent); margin-right: 14px; }
+  footer { color: var(--muted); font-size: 14px; border-top: 1px solid var(--line); padding-top: 18px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="tag">fineart_example.py · 第 76–77 行</div>
+  <h1>三份损失怎么算，以及 −100 是什么</h1>
+  <p>按 <code>modeling_fineart_vla.py</code> 的真实张量运算走。公式和源码位置在文末附录。数字例子用缩小的词表，运算和代码逐行相同。</p>
+</header>
+<main>
+<nav>
+  <a href="#ignore">−100</a>
+  <a href="#low">低层 text = 0</a>
+  <a href="#high">高层 CE</a>
+  <a href="#flow">Flow</a>
+  <a href="#fast">FAST</a>
+  <a href="#total">加权</a>
+  <a href="#app">附录</a>
+</nav>
+
+<section id="ignore">
+  <h2>−100 不是类别，是“这一位不算”</h2>
+  <div class="answer">
+    <p class="lead"><code>text_labels</code> 和 FAST 目标里的 <strong>−100</strong> 是 PyTorch <code>cross_entropy(..., ignore_index=-100)</code> 的忽略下标。它不在词表里，不会被当成一个要预测的 token。标成 −100 的位置：分子不加，分母也不计。</p>
+  </div>
+  <p>注释里的“全 −100，数值为 0”就是这个规则的结果。低层样本的语言段没有 Assistant 目标，分词器把整段 <code>text_labels</code> 都写成 −100。CE 仍然被调用，调用之后分子是 0。</p>
+  <p>代码只做三步（<code>_lin_ce_small</code>）：</p>
+<pre><code>logits   = (hidden @ W.T).float()                         # (N, V)
+n_valid  = (labels != -100).sum().clamp(min=1)            # 有效位数，至少为 1
+loss     = cross_entropy(logits, labels,
+                         ignore_index=-100, reduction="sum") / n_valid</code></pre>
+  <p><code>reduction="sum"</code> 先把有效位的负对数似然加起来，再除以有效位数。全是 −100 时，PyTorch 的和是 0；<code>clamp(min=1)</code> 防止除以 0。所以损失是 <span class="zero">0 / 1 = 0</span>，梯度也是 0。z-loss 同样乘上 <code>(labels != -100)</code>，全忽略时也是 0。</p>
+</section>
+
+<section id="low">
+  <h2>低层样本：文本 CE 被调用，结果是 0</h2>
+  <p>index = 0，<code>predict_actions = True</code>，前缀是 <code>User: insert the zip tie tail through the lock, State: …;</code>。没有 <code>target_message_indices</code>，所以没有一个 token 被标成词表 id。</p>
+  <table>
+    <tr><th>移位后的位置</th><th>labels</th><th>是否进入 CE</th></tr>
+    <tr><td>0 … L−2（整段语言）</td><td>−100</td><td>否</td></tr>
+  </table>
+  <div class="eq">n_valid = clamp(0, min=1) = 1<br>CE_sum = 0<br>text_loss = 0 / 1 = 0<br>z_loss = 0</div>
+  <p class="note">这一项仍挂在计算图上（数值 0 的张量），所以 <code>total = 10·flow + 1·0 + 1·fast</code> 可以照常反传。反传只更新 flow 和 FAST 碰到的参数。语言头在这一条样本上没有文本梯度。</p>
+  <h3>缩小后的同一公式</h3>
+  <p>设移位后 4 个位置、词表大小 3。这不是 PaliGemma 的输出，只演示同一行代码。</p>
+  <table>
+    <tr><th>位置</th><th>label</th><th>logits (3 类)</th><th>贡献</th></tr>
+    <tr><td>0</td><td>−100</td><td>任意</td><td>0</td></tr>
+    <tr><td>1</td><td>−100</td><td>任意</td><td>0</td></tr>
+    <tr><td>2</td><td>−100</td><td>任意</td><td>0</td></tr>
+    <tr><td>3</td><td>−100</td><td>任意</td><td>0</td></tr>
+  </table>
+  <div class="eq">text_loss = 0</div>
+  <p>低层真正在学的是下面的 flow 和 FAST。文本标签存在，只是为了让 <code>forward</code> 知道“这批里有语言监督槽位”；槽位全空时，槽位的损失是 0。</p>
+</section>
+
+<section id="high">
+  <h2>高层样本：只有 Assistant 正文做 CE</h2>
+  <p>index = 2 时同一句 subtask 变成目标。分词器把 User 段和 <code>Assistant: </code> 前缀写成 −100，把正文 token 写成真实 id，并在正文末尾加上 EOS。</p>
+<pre><code>User: fasten the zip tie\n          ← 全部 −100
+Assistant:                              ← 这几个前缀 token 也是 −100
+insert the zip tie tail through the lock&lt;eos&gt;   ← 真实 token id，进入 CE</code></pre>
+  <p>交叉熵有一次移位（<code>_shifted_lin_ce</code>）：位置 <em>t</em> 的隐状态预测位置 <em>t+1</em> 的标签。</p>
+  <div class="eq">shift_hidden = hidden[:, :-1]<br>shift_labels = labels[:, 1:]<br>预测的是“下一个 token”，不是当前位置自己</div>
+  <p>所以 <code>Assistant:</code> 最后一个 −100 位置的隐状态，用来预测正文的第一个词。正文各位依次预测下一个词，最后预测 EOS。User 段全程 −100，不进分母。</p>
+  <h3>缩小例子：4 个移位位置里只有 2 个有效</h3>
+  <table>
+    <tr><th>位置</th><th>label</th><th>logits</th><th>−log softmax</th></tr>
+    <tr><td>0 User</td><td class="zero">−100</td><td>略</td><td class="zero">0（忽略）</td></tr>
+    <tr><td>1 “Assistant:” 末</td><td class="zero">−100</td><td>略</td><td class="zero">0（忽略）</td></tr>
+    <tr><td>2 预测 “insert”</td><td class="keep">0</td><td>[2.0, 0.0, 0.0]</td><td>0.2395</td></tr>
+    <tr><td>3 预测下一个词</td><td class="keep">1</td><td>[0.0, 2.0, 0.0]</td><td>0.2395</td></tr>
+  </table>
+  <p>softmax([2, 0, 0]) 在类别 0 上是 e² / (e² + 1 + 1) ≈ 0.7870，负对数 ≈ 0.2395。类别 1 的那一行对称，同样是 0.2395。</p>
+  <div class="eq">n_valid = 2<br>CE_sum = 0.2395 + 0.2395 = 0.4790<br>text_loss = 0.4790 / 2 = 0.2395</div>
+  <p>z-loss 只加在这两个有效位上。默认权重 10⁻⁴：</p>
+  <div class="eq">lse_t = log Σ_v exp(logits_{t,v})<br>z = 10⁻⁴ · (lse₂² + lse₃²) / 2<br>text_loss ← text_loss + z</div>
+  <p>对 [2, 0, 0]，lse = log(e² + 2) ≈ 2.2395，平方 ≈ 5.0156。两项相同，z ≈ 10⁻⁴ × 5.0156 = 5.02×10⁻⁴。它压低 logits 的整体尺度，不改变“哪一类最大”。</p>
+  <p class="note">高层样本 <code>predict_actions = False</code>。若这一批全是高层，<code>forward</code> 不跑动作后缀，flow 与 FAST 直接是 0。若和低层混在同一批，flow / FAST 用样本掩码把高层排除出平均。</p>
+</section>
+
+<section id="flow">
+  <h2>Flow：只在真实动作维上做 MSE</h2>
+  <p>低层样本才走这条。约定是 <code>FlowConvention.NOISE_AT_ONE</code>。</p>
+  <div class="eq">t ~ Uniform(0.001, 1)<br>ε ~ N(0, I)　　形状 (1, 50, 32)<br>x_t = t·ε + (1−t)·a<br>u_t = ε − a<br>v_t = action_out_proj(suffix_out[:, −50:])　　float32</div>
+  <p><code>a</code> 是归一化后的动作，右侧补零到 <code>max_action_dim = 32</code>。损失先按元素 MSE，再切回原始维度 <em>d</em>（双臂 zip-tie 一般是 12 或 14），再对时间和维度求平均：</p>
+  <div class="eq">mse = (v_t − u_t)²　　无归约，形状 (1, 50, 32)<br>flow_i = mean( mse_i[:, :, :d] )<br>flow = Σ_i flow_i · 1[predict_actions_i]  /  max(1, Σ 1[predict_actions])</div>
+  <p>默认 <code>flow_num_repeats = 5</code>：前缀只编码一次，后面接 5 组独立的 (ε, t)，注意力是分块对角，5 个 flow 再平均。文本和 FAST 只用第 0 块的前缀隐状态，不重复 5 次。</p>
+  <h3>一个时间步、两个真实维</h3>
+  <p>设 t = 0.25，a = [0.4, −0.2]，ε = [0.0, 0.8]，网络给出 v = [0.1, 0.5]。</p>
+  <div class="eq">x = 0.25·ε + 0.75·a = [0.30, 0.05]<br>u = ε − a = [−0.4, 1.0]<br>平方误差 = (0.1−(−0.4))² + (0.5−1.0)² = 0.25 + 0.25 = 0.50<br>flow = 0.50 / 2 = 0.25</div>
+  <p class="note">补齐的第 3…32 维不进这个平均。推理时从 t=1 的纯噪声出发，10 步欧拉，每步 Δt = −0.1，x ← x + Δt·v，走到 t=0 得到动作。</p>
+</section>
+
+<section id="fast">
+  <h2>FAST：代码位做 CE，其余位改成 −100</h2>
+  <p>第 77 行的“掩码外写成 −100”发生在 <code>_fast_lin_ce</code>，不是分词器。分词器给出 <code>action.tokens</code> 和 <code>action.code_token_mask</code>。损失里先移位，再：</p>
+<pre><code>shift_valid   = action_code_mask[:, 1:]          # 下一位确实是 FAST 码
+shift_targets = where(shift_valid, action.tokens[:, 1:], -100)</code></pre>
+  <p>前缀里的 subtask、State、以及 FAST 序列里的填充位，目标都变成 −100，和文本 CE 用同一个 <code>ignore_index</code>。有效位按真实码的个数分组，每组</p>
+  <div class="eq">fast_loss = cross_entropy(logits, targets, ignore_index=-100, reduction="sum") / n_valid</div>
+  <p>FAST 不加 z-loss。这一批若没有任何 <code>predict_actions</code> 的样本，函数返回 <code>hidden.sum() * 0</code>：数值 0，但仍在图上。</p>
+  <h3>缩小例子</h3>
+  <table>
+    <tr><th>移位位置</th><th>原 token</th><th>code mask</th><th>送进 CE 的 target</th></tr>
+    <tr><td>语言末尾</td><td>State 的数字</td><td>False</td><td class="zero">−100</td></tr>
+    <tr><td>FAST 码 0</td><td>1024</td><td>True</td><td class="keep">1024</td></tr>
+    <tr><td>FAST 码 1</td><td>1007</td><td>True</td><td class="keep">1007</td></tr>
+    <tr><td>填充</td><td>0</td><td>False</td><td class="zero">−100</td></tr>
+  </table>
+  <div class="eq">n_valid = 2<br>fast_loss = ( ℓ(1024) + ℓ(1007) ) / 2</div>
+  <p>ℓ(id) 是该位置 logits 对这个 id 的负对数似然。1024、1007 落在 FAST 词表段；推理 <code>select_message</code> 会把这段 logits 设成 −∞，避免 subtask 文本抽到动作码。训练 FAST 时这段是正常类别。</p>
+</section>
+
+<section id="total">
+  <h2>加总</h2>
+  <p>低层样本（index 0）在融合前向里：</p>
+  <div class="eq">total = 10 · flow + 1 · text_loss + 1 · fast_loss<br>     = 10 · flow + 1 · 0 + 1 · fast_loss</div>
+  <p>高层样本单独成批时：</p>
+  <div class="eq">total = text_loss　　（flow 权重项与 FAST 项为 0，且不建动作后缀）</div>
+  <p><code>loss_dict</code> 里报给日志的三个数是 <code>detach().mean()</code> 之后的值。<code>total</code> 保留梯度，交给 <code>accelerator.backward</code>。</p>
+</section>
+
+<section id="app">
+  <h2>附录 · 公式与代码</h2>
+  <h3>公式</h3>
+  <table>
+    <tr><th>项</th><th>式子</th><th>忽略规则</th></tr>
+    <tr><td>文本 CE</td><td>Σ<sub>t: y_t≠−100</sub> −log softmax(h<sub>t−1</sub> Wᵀ)<sub>y_t</sub>　/　n_valid</td><td>y=−100 跳过；n_valid≥1</td></tr>
+    <tr><td>z-loss</td><td>α · Σ<sub>有效 t</sub> logsumexp(logits_t)² / n_valid，α=10⁻⁴</td><td>同一张有效掩码</td></tr>
+    <tr><td>Flow</td><td>x_t=tε+(1−t)a，u=ε−a，mean‖v−u‖² over time and dim :d</td><td>predict_actions=False 的样本不进平均</td></tr>
+    <tr><td>FAST CE</td><td>与文本 CE 相同，目标先被 where(mask, id, −100)</td><td>无 z-loss</td></tr>
+    <tr><td>总损失</td><td>10·flow + 1·text + 1·fast</td><td>缺哪支，哪支为 0</td></tr>
+  </table>
+  <h3>代码位置</h3>
+  <table>
+    <tr><th>文件</th><th>行</th><th>在算什么</th></tr>
+    <tr><td><code>processor_fineart_vla.py</code> <code>_encode_messages</code></td><td>约 363–415</td><td>非目标 token 写成 −100；目标正文写成词表 id</td></tr>
+    <tr><td><code>modeling_fineart_vla.py</code> <code>forward</code></td><td>776–881</td><td>决定走融合前向还是纯文本前向</td></tr>
+    <tr><td><code>_lin_ce_small</code></td><td>308–322</td><td>logits、n_valid、ignore_index=−100、z-loss</td></tr>
+    <tr><td><code>_shifted_lin_ce</code></td><td>399–429</td><td>hidden[:, :-1] 对 labels[:, 1:]</td></tr>
+    <tr><td><code>_fast_lin_ce</code></td><td>457–508</td><td>掩码外 where 成 −100，再 CE</td></tr>
+    <tr><td><code>_combined_prefix_and_flow</code></td><td>1011–1015, 1056–1067</td><td>x_t、u_t、切到 original_action_dim 的 MSE</td></tr>
+    <tr><td><code>_amortized_prefix_and_flow</code></td><td>1084–1202</td><td>K=5 次噪声，前缀一次</td></tr>
+  </table>
+<pre><code># _lin_ce_small，文本与（小批量时）FAST 的公共核
+logits  = (flat_hidden @ lm_head_weight.t()).float()
+n_valid = (flat_labels != -100).sum().clamp(min=1)
+loss    = cross_entropy(logits, flat_labels,
+                        ignore_index=-100, reduction="sum") / n_valid
+lse     = logsumexp(logits, dim=-1)          # 仅 text，且 z_loss_weight&gt;0
+valid   = (flat_labels != -100)
+loss    = loss + 1e-4 * (lse² * valid).sum() / n_valid</code></pre>
+</section>
+<footer>
+  对应练习脚本 <code>scripts/fineart_example.py</code> 第 76–77 行。低层文本损失为 0 是忽略位的算术结果，不是分支被跳过。
+</footer>
+</main>
+</body>
+</html>

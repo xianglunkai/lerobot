@@ -1,0 +1,1577 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FineART-VLA 研究报告 · LeRobot</title>
+<style>
+  :root {
+    --bg: #0f1419;
+    --bg-elev: #171d25;
+    --bg-soft: #1e2732;
+    --line: #2a3544;
+    --text: #e8eef5;
+    --muted: #9aabbc;
+    --accent: #3d9b8f;
+    --accent-2: #d4a25a;
+    --danger: #d4776b;
+    --code-bg: #0a0e13;
+    --shadow: 0 12px 40px rgba(0,0,0,.35);
+    --max: 920px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: "IBM Plex Sans", "Noto Sans SC", "Source Han Sans SC", sans-serif;
+    color: var(--text);
+    background:
+      radial-gradient(1200px 600px at 10% -10%, rgba(61,155,143,.18), transparent 55%),
+      radial-gradient(900px 500px at 100% 0%, rgba(212,162,90,.12), transparent 50%),
+      var(--bg);
+    line-height: 1.7;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: var(--max); margin: 0 auto; padding: 0 22px 80px; }
+  header.hero {
+    padding: 56px 0 28px;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 28px;
+  }
+  .eyebrow {
+    font-size: .78rem;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 600;
+  }
+  h1 {
+    font-family: "IBM Plex Serif", "Noto Serif SC", Georgia, serif;
+    font-size: clamp(1.8rem, 4vw, 2.55rem);
+    line-height: 1.25;
+    margin: 10px 0 14px;
+    font-weight: 650;
+  }
+  .lede { color: var(--muted); font-size: 1.05rem; max-width: 48rem; }
+  .meta {
+    display: flex; flex-wrap: wrap; gap: 10px 18px;
+    margin-top: 18px; color: var(--muted); font-size: .9rem;
+  }
+  nav.toc {
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 18px 20px;
+    margin: 24px 0 36px;
+    box-shadow: var(--shadow);
+  }
+  nav.toc h2 { margin: 0 0 10px; font-size: 1rem; }
+  nav.toc ol { margin: 0; padding-left: 1.2rem; columns: 1; }
+  @media (min-width: 720px) { nav.toc ol { columns: 2; column-gap: 28px; } }
+  nav.toc li { margin: .28rem 0; break-inside: avoid; }
+  section { margin: 42px 0; }
+  h2 {
+    font-family: "IBM Plex Serif", "Noto Serif SC", Georgia, serif;
+    font-size: 1.55rem;
+    margin: 0 0 14px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--line);
+  }
+  h3 { font-size: 1.12rem; margin: 26px 0 10px; color: #f2f6fb; }
+  h4 { font-size: .98rem; margin: 18px 0 8px; color: var(--accent-2); }
+  p { margin: 0 0 12px; }
+  ul, ol { margin: 0 0 14px; padding-left: 1.25rem; }
+  li { margin: .28rem 0; }
+  .muted { color: var(--muted); }
+  .callout {
+    border-left: 3px solid var(--accent);
+    background: rgba(61,155,143,.08);
+    padding: 12px 14px;
+    border-radius: 0 10px 10px 0;
+    margin: 14px 0;
+  }
+  .callout.warn {
+    border-left-color: var(--accent-2);
+    background: rgba(212,162,90,.08);
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: .9rem;
+    margin: 12px 0 18px;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  th { background: var(--bg-soft); color: var(--muted); font-weight: 600; }
+  tr:last-child td { border-bottom: 0; }
+  code, kbd {
+    font-family: "IBM Plex Mono", "Source Code Pro", ui-monospace, monospace;
+    font-size: .86em;
+    background: var(--code-bg);
+    padding: .1em .35em;
+    border-radius: 5px;
+  }
+  pre {
+    margin: 12px 0 18px;
+    padding: 14px 16px;
+    overflow: auto;
+    background: var(--code-bg);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    font-family: "IBM Plex Mono", "Source Code Pro", ui-monospace, monospace;
+    font-size: .8rem;
+    line-height: 1.55;
+    color: #d7e2ee;
+  }
+  pre .c { color: #7f93a8; }
+  pre .k { color: #6fc3b5; }
+  pre .s { color: #e0b56c; }
+  .fig {
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 18px;
+    margin: 16px 0 20px;
+    overflow-x: auto;
+  }
+  .fig caption {
+    display: block;
+    margin-top: 12px;
+    color: var(--muted);
+    font-size: .86rem;
+  }
+  .flow {
+    display: grid;
+    gap: 8px;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: .78rem;
+  }
+  .flow .row {
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    gap: 10px;
+    align-items: stretch;
+  }
+  .flow .tag {
+    display: flex; align-items: center; justify-content: center;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--accent-2);
+    font-weight: 600;
+  }
+  .flow .box {
+    background: #121820;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  .arch {
+    display: grid;
+    gap: 10px;
+  }
+  .arch .layer {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px 14px;
+    background: linear-gradient(180deg, #1a222c, #141a22);
+  }
+  .arch .layer strong { color: var(--accent); }
+  .pill-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+  .pill {
+    border: 1px solid var(--line);
+    background: var(--bg-soft);
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: .8rem;
+    color: var(--muted);
+  }
+  .two {
+    display: grid;
+    gap: 14px;
+  }
+  @media (min-width: 760px) {
+    .two { grid-template-columns: 1fr 1fr; }
+  }
+  .panel {
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 14px 16px;
+  }
+  .panel h4 { margin-top: 0; }
+  footer {
+    margin-top: 48px;
+    padding-top: 18px;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: .88rem;
+  }
+  .eq {
+    font-family: "IBM Plex Serif", "Noto Serif SC", Georgia, serif;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px 18px;
+    text-align: center;
+    margin: 14px 0;
+    letter-spacing: .02em;
+    line-height: 1.85;
+  }
+  .eq .tag {
+    display: block;
+    font-family: "IBM Plex Sans", "Noto Sans SC", sans-serif;
+    font-size: .78rem;
+    color: var(--muted);
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+  .eq-block {
+    font-family: "IBM Plex Serif", "Noto Serif SC", Georgia, serif;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin: 12px 0 16px;
+    overflow-x: auto;
+  }
+  .eq-block .line { margin: .35rem 0; white-space: nowrap; }
+  .svg-fig {
+    width: 100%;
+    height: auto;
+    display: block;
+    background: #121820;
+    border-radius: 10px;
+  }
+  .svg-fig text { font-family: "IBM Plex Sans", "Noto Sans SC", sans-serif; }
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 10px 16px;
+    margin-top: 10px; font-size: .82rem; color: var(--muted);
+  }
+  .legend i {
+    display: inline-block; width: 12px; height: 12px;
+    border-radius: 3px; margin-right: 6px; vertical-align: -1px;
+  }
+  .shape-table td:first-child { font-family: "IBM Plex Mono", monospace; font-size: .82rem; }
+  .code-path {
+    font-size: .78rem;
+    color: var(--accent-2);
+    margin: 0 0 6px;
+    font-family: "IBM Plex Mono", monospace;
+  }
+  .subtoc {
+    margin: 8px 0 16px;
+    padding: 10px 14px;
+    background: rgba(61,155,143,.06);
+    border-radius: 10px;
+    font-size: .9rem;
+  }
+  .subtoc a { margin-right: 12px; }
+</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:wght@500;650&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@500;650&display=swap" rel="stylesheet">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#9aabbc"/>
+    </marker>
+  </defs>
+</svg>
+<div class="wrap">
+<header class="hero">
+  <div class="eyebrow">LeRobot · Research Report</div>
+  <h1>FineART-VLA：数据准备、模型架构、训练推理原理与真机应用</h1>
+  <p class="lede">
+    基于 Hugging Face LeRobot 代码库（π0.5 / openpi 派生）整理的技术研究报告。
+    第 4–6 章用架构图、注意力拓扑、流匹配 ODE 与源码路径对照讲解训练/推理数学；
+    并覆盖语言标注、Recipe、Knowledge Insulation、Autosteer 与
+    <code>lerobot-rollout</code> 真机部署。
+  </p>
+  <div class="meta">
+    <span>策略类型：<code>fineart_vla</code></span>
+    <span>基座：π0.5 / PaliGemma + Gemma Expert</span>
+    <span>代码：<code>src/lerobot/policies/fineart_vla/</code></span>
+    <span>许可：Apache 2.0</span>
+  </div>
+</header>
+
+<nav class="toc">
+  <h2>目录</h2>
+  <ol>
+    <li><a href="#s1">1. 摘要与问题设定</a></li>
+    <li><a href="#s2">2. 与 π0.5 的定位差异</a></li>
+    <li><a href="#s3">3. 数据准备与处理</a></li>
+    <li><a href="#s4">4. 模型架构（图解 + 张量形状）</a></li>
+    <li><a href="#s5">5. 训练算法（公式 × 代码）</a></li>
+    <li><a href="#s6">6. 推理算法（公式 × 代码）</a></li>
+    <li><a href="#s12">12. 实现机理与编码技巧</a></li>
+    <li><a href="#s7">7. 关键技术代码实现</a></li>
+    <li><a href="#s8">8. LeRobot 真实机器人应用</a></li>
+    <li><a href="#s9">9. 端到端操作清单</a></li>
+    <li><a href="#s10">10. 故障排查与工程建议</a></li>
+    <li><a href="#s11">11. 参考文献</a></li>
+  </ol>
+</nav>
+
+<section id="s1">
+  <h2>1. 摘要与问题设定</h2>
+  <p>
+    FineART-VLA（Scale AI × Hugging Face）是一条端到端 Vision-Language-Action（VLA）策略：
+    在 π0.5 的「视觉—语言前缀 + 连续动作 Expert」之上，重新打开并训练 PaliGemma 的语言模型头，
+    使同一份 checkpoint 既能生成低层子任务（System 2），又能在该语言条件下用流匹配预测动作（System 1）。
+  </p>
+  <p>
+    中期预训练使用 FineART 数据集：约 <strong>40,543</strong> 条双臂操作轨迹（约 <strong>1,718</strong> 小时），
+    含 <strong>533,913</strong> 条子任务标注。下游在自有 LeRobot 数据集上微调时，必须提供与所选 Recipe 匹配的语言列；
+    策略本身不会从「只有 task 字符串」的普通数据集里自动发明子任务监督。
+  </p>
+  <div class="eq">
+    默认因式分解：&nbsp; π(a | o, subtask) · π(subtask | o, task)
+  </div>
+  <p class="muted">
+    即：高层用任务与观察预测 subtask；低层用当前 subtask、观察与本体状态预测动作块。
+    运行时由 rollout 按节奏交替调用这两条路径，而不是在一次前向里同时吐出文字和动作。
+  </p>
+</section>
+
+<section id="s2">
+  <h2>2. 与 π0.5 的定位差异</h2>
+  <table>
+    <thead>
+      <tr><th>能力</th><th>π0.5 / Pi05</th><th>FineART-VLA</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>动作骨干</td>
+        <td>PaliGemma 前缀 + Gemma Action Expert</td>
+        <td>同一套架构（<code>FineARTVLAPytorch</code> 继承 <code>PI05Pytorch</code>）</td>
+      </tr>
+      <tr>
+        <td>语言头</td>
+        <td>运行时不依赖生成式语言头</td>
+        <td>开启并训练文本 CE；推理可 <code>generate_text()</code></td>
+      </tr>
+      <tr>
+        <td>动作条件</td>
+        <td>Episode 级 task</td>
+        <td>当前生效的低层 subtask + 离散化状态串</td>
+      </tr>
+      <tr>
+        <td>训练目标</td>
+        <td>流匹配动作</td>
+        <td>Flow + Recipe 文本 + 可选 FAST 动作 token</td>
+      </tr>
+      <tr>
+        <td>数据要求</td>
+        <td>图像 / state / action / task</td>
+        <td>同上，外加 <code>language_persistent</code> / <code>language_events</code></td>
+      </tr>
+      <tr>
+        <td>部署形态</td>
+        <td>task → action</td>
+        <td>task → subtask → action（Autosteer / <code>/subtask</code>）</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="callout">
+    选型建议：若任务短、一句话就能驱动整条示教，用 Pi05；若需要中途换指令、分层规划、记忆或 VQA，用 FineART-VLA。
+  </div>
+</section>
+
+<section id="s3">
+  <h2>3. 数据准备与处理</h2>
+
+  <h3>3.1 两层语言列（Layer 1）</h3>
+  <p>
+    LeRobot 在 parquet 帧旁增加两列可选语言结构（见 <code>src/lerobot/datasets/language.py</code>）：
+  </p>
+  <ul>
+    <li><code>language_persistent</code>：整集广播的「状态型」语言。子任务、计划、记忆等从某个时间戳起生效，直到同 style 的下一行替换。</li>
+    <li><code>language_events</code>：只落在触发帧上的「事件型」语言。插话、VQA、语音 <code>say</code>、轨迹 trace 等。</li>
+  </ul>
+  <pre><span class="c"># persistent 行字段</span>
+role, content, style, timestamp, camera, tool_calls
+
+<span class="c"># event 行字段（无 timestamp：帧时间即事件时间）</span>
+role, content, style, camera, tool_calls</pre>
+
+  <h4>Style 与列归属</h4>
+  <table>
+    <thead><tr><th>Style</th><th>列</th><th>camera 规则</th><th>典型用途</th></tr></thead>
+    <tbody>
+      <tr><td><code>subtask</code></td><td>persistent</td><td>必须 <code>null</code></td><td>低层指令时间线（默认配方必需）</td></tr>
+      <tr><td><code>plan</code></td><td>persistent</td><td><code>null</code></td><td>高层计划句</td></tr>
+      <tr><td><code>memory</code></td><td>persistent</td><td><code>null</code></td><td>已完成步骤的记忆摘要</td></tr>
+      <tr><td><code>task_aug</code></td><td>persistent</td><td><code>null</code></td><td>任务改写（常落在 t=0）</td></tr>
+      <tr><td><code>motion</code></td><td>persistent</td><td><code>null</code></td><td>机器人坐标系运动原语（相机无关）</td></tr>
+      <tr><td><code>interjection</code></td><td>events</td><td><code>null</code></td><td>用户插话</td></tr>
+      <tr><td><code>vqa</code> / <code>trace</code></td><td>events</td><td>必须指向 <code>observation.images.*</code></td><td>视角相关问答 / 像素轨迹</td></tr>
+      <tr><td><code>say</code>（tool）</td><td>events</td><td><code>null</code></td><td><code>tool_calls</code> 中的语音原子</td></tr>
+    </tbody>
+  </table>
+  <div class="callout warn">
+    <strong>camera=null 不是缺省错误。</strong>
+    只有 <code>VIEW_DEPENDENT_STYLES = {vqa, trace}</code> 要求非空 camera；
+    <code>subtask</code>/<code>memory</code> 若写了相机名，校验器会直接报错。
+  </div>
+
+  <h3>3.2 时间语义</h3>
+  <p>
+    Persistent 行在采样时刻 <code>t</code> 上取「最新且 <code>timestamp ≤ t</code>」的那条（resolver：<code>active_at(t, style=…)</code>）。
+    Event 行必须精确落在帧时间戳上，没有容差窗口。因此标注流水线应用数据集帧时间做 snap，而不是随意浮点。
+  </p>
+  <div class="fig">
+    <div class="flow">
+      <div class="row"><div class="tag">t = 0.0</div><div class="box">subtask: pick up the zip tie tail</div></div>
+      <div class="row"><div class="tag">t = 7.5</div><div class="box">memory: I picked up the zip tie.<br>subtask: insert the zip tie tail through the lock</div></div>
+      <div class="row"><div class="tag">t = 17.5</div><div class="box">memory: …threaded its tail through the lock.<br>subtask: release the zip tie and retract the arm</div></div>
+      <div class="row"><div class="tag">采样 t=10</div><div class="box">生效 subtask = insert…；生效 memory = I picked up the zip tie.</div></div>
+    </div>
+    <caption>图 1 · Persistent 时间线：列表复制到每一帧，按时间解析「当前生效」行。</caption>
+  </div>
+
+  <h3>3.3 Recipe 渲染（Layer 2 → Layer 3）</h3>
+  <p>
+    数据集本身不绑定某一种训练对话格式。训练时由 Recipe YAML（或内嵌 dict）声明 bindings 与 messages，
+    <code>RenderTrainingMessagesStep</code> 把每帧语言解析成 HF 风格 <code>messages</code>，并附带：
+  </p>
+  <ul>
+    <li><code>message_streams</code>：<code>high_level</code> / <code>low_level</code>，决定是否走动作流损失；</li>
+    <li><code>target_message_indices</code>：哪些 assistant 回合算文本 CE 目标。</li>
+  </ul>
+
+  <h4>默认内嵌配方（30% / 70%）</h4>
+  <p>定义于 <code>FineARTVLAConfig</code> 的 <code>_fineart_vla_default_recipe()</code>：</p>
+  <table>
+    <thead><tr><th>分支</th><th>权重</th><th>输入</th><th>监督</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>high_level_subtask</code></td>
+        <td>0.30</td>
+        <td><code>User: ${task}</code></td>
+        <td><code>Assistant: ${subtask}</code>（文本 CE，不预测动作）</td>
+      </tr>
+      <tr>
+        <td><code>low_level_execution</code></td>
+        <td>0.70</td>
+        <td><code>User: ${subtask}</code> + 离散化 State</td>
+        <td>动作 flow（及可选 FAST）；无文本目标</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h4>扩展配方</h4>
+  <ul>
+    <li><code>configs/recipes/subtask.yaml</code>：与默认相同的核心。</li>
+    <li><code>configs/recipes/subtask_mem.yaml</code>：加入 memory 更新（约 15%）。</li>
+    <li><code>configs/recipes/subtask_mem_vqa_speech.yaml</code>：再加入插话应答与按相机拆分的 VQA。</li>
+    <li><code>configs/recipes/subtask_joint.yaml</code>：同一前缀上联合监督 subtask 文本与动作（需匹配的 runtime 因果标记）。</li>
+  </ul>
+  <div class="callout">
+    默认配方<strong>不读取</strong> memory。数据集里即便有 memory，也只有换成 <code>subtask_mem.yaml</code> 才会进入损失。
+    默认 runtime 控制器也只接受一句 subtask，不会把 memory 直接塞进动作头。
+  </div>
+
+  <h3>3.4 标注流水线</h3>
+  <p>官方路径：</p>
+  <ol>
+    <li>安装 <code>pip install -e ".[annotations]"</code>（或项目 extras）。</li>
+    <li>使用 <code>lerobot-annotate</code> / HF Jobs 启动器 <code>examples/annotations/run_hf_job.py</code>。</li>
+    <li>本地 Web：<code>examples/lerobot_annotate_web/</code>（端口 8766）驱动官方 executor，可选特征
+      <code>subtask, plan, memory, task_aug, interjections, vqa</code>，写入 staging 再落 parquet。</li>
+  </ol>
+  <p>写入语义：</p>
+  <ul>
+    <li>未参与本次 run 的 episode 保留原语言列；</li>
+    <li>参与但无 staging 的 episode 写空列表；</li>
+    <li>特征过滤发生在写 parquet 时（<code>_SelectiveWriter</code>），原始 JSONL 可复用。</li>
+  </ul>
+
+  <h3>3.5 预处理管线（训练侧）</h3>
+  <p><code>make_fineart_vla_pre_post_processors()</code> 组装的输入步骤顺序：</p>
+  <pre>RenameObservations
+→ AddBatchDimension
+→ RelativeActions（可选）
+→ Normalizer
+→ RenderRuntimeMessages   <span class="c"># 推理查询：vqa / next_subtask</span>
+→ RenderTrainingMessages  <span class="c"># 训练：按 recipe 渲染</span>
+→ FineARTVLATextTokenizer <span class="c"># 展平为 "Role: …\n"，打 text_labels</span>
+→ ActionTokenizer（可选 FAST）
+→ Device</pre>
+  <p>
+    低层样本会把归一化 state 离散到 256 档，拼进最后一条 User 文本：
+    <code>…, State: 128 131 140 …;</code>（PI0.5 惯例）。
+  </p>
+</section>
+
+<section id="s4">
+  <h2>4. 模型架构（图解 + 张量形状）</h2>
+  <div class="subtoc">
+    <a href="#s4-1">4.1 总览</a>
+    <a href="#s4-2">4.2 前缀 / 后缀</a>
+    <a href="#s4-3">4.3 注意力拓扑</a>
+    <a href="#s4-4">4.4 Knowledge Insulation</a>
+    <a href="#s4-5">4.5 三头输出</a>
+    <a href="#s4-6">4.6 类与配置</a>
+  </div>
+
+  <h3 id="s4-1">4.1 端到端总览</h3>
+  <p>
+    FineART-VLA 在 π0.5 的「视觉—语言前缀 + 动作 Expert 后缀」上，额外打开 PaliGemma
+    <code>lm_head</code>，形成三条可训练路径。数学上把策略写成因式分解：
+  </p>
+  <div class="eq">
+    <span class="tag">默认概率因式分解</span>
+    π<sub>θ</sub>(a, s | o, g)
+    &nbsp;=&nbsp;
+    π<sub>θ</sub><sup>lang</sup>(s | o, g)
+    &nbsp;·&nbsp;
+    π<sub>θ</sub><sup>act</sup>(a | o, s)
+  </div>
+  <p class="muted">
+    其中 g 是高层目标（task / Autosteer goal），s 是低层 subtask 字符串，
+    a ∈ ℝ<sup>H×d</sup> 是动作块（H=<code>chunk_size</code>=50，d 为机器人动作维，内部 pad 到 <code>max_action_dim</code>=32）。
+    训练时两条路径按 recipe blend 分样本学；推理时由 rollout 交替调用。
+  </p>
+
+  <div class="fig">
+    <svg class="svg-fig" viewBox="0 0 880 420" role="img" aria-label="FineART-VLA architecture">
+      <defs>
+        <linearGradient id="g1" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#1e3a36"/><stop offset="100%" stop-color="#15242a"/>
+        </linearGradient>
+        <linearGradient id="g2" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#3a2e1a"/><stop offset="100%" stop-color="#241c12"/>
+        </linearGradient>
+        <marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L6,3 L0,6 Z" fill="#9aabbc"/>
+        </marker>
+      </defs>
+      <!-- inputs -->
+      <rect x="20" y="40" width="130" height="54" rx="8" fill="#1e2732" stroke="#2a3544"/>
+      <text x="85" y="62" text-anchor="middle" fill="#e8eef5" font-size="13">多路图像</text>
+      <text x="85" y="80" text-anchor="middle" fill="#9aabbc" font-size="11">obs.images.*</text>
+      <rect x="20" y="110" width="130" height="54" rx="8" fill="#1e2732" stroke="#2a3544"/>
+      <text x="85" y="132" text-anchor="middle" fill="#e8eef5" font-size="13">语言 tokens</text>
+      <text x="85" y="150" text-anchor="middle" fill="#9aabbc" font-size="11">recipe 渲染</text>
+      <rect x="20" y="220" width="130" height="54" rx="8" fill="#1e2732" stroke="#2a3544"/>
+      <text x="85" y="242" text-anchor="middle" fill="#e8eef5" font-size="13">带噪动作 x_t</text>
+      <text x="85" y="260" text-anchor="middle" fill="#9aabbc" font-size="11">+ 时间 t</text>
+
+      <line x1="150" y1="67" x2="200" y2="100" stroke="#9aabbc" marker-end="url(#arr)"/>
+      <line x1="150" y1="137" x2="200" y2="120" stroke="#9aabbc" marker-end="url(#arr)"/>
+      <line x1="150" y1="247" x2="200" y2="280" stroke="#9aabbc" marker-end="url(#arr)"/>
+
+      <!-- prefix / suffix embed -->
+      <rect x="200" y="70" width="150" height="90" rx="10" fill="url(#g1)" stroke="#3d9b8f"/>
+      <text x="275" y="100" text-anchor="middle" fill="#6fc3b5" font-size="13" font-weight="600">embed_prefix</text>
+      <text x="275" y="120" text-anchor="middle" fill="#e8eef5" font-size="12">SigLIP + LM emb</text>
+      <text x="275" y="140" text-anchor="middle" fill="#9aabbc" font-size="11">(B, P, D)</text>
+
+      <rect x="200" y="240" width="150" height="90" rx="10" fill="url(#g2)" stroke="#d4a25a"/>
+      <text x="275" y="270" text-anchor="middle" fill="#e0b56c" font-size="13" font-weight="600">embed_suffix</text>
+      <text x="275" y="290" text-anchor="middle" fill="#e8eef5" font-size="12">action_in + AdaRMS</text>
+      <text x="275" y="310" text-anchor="middle" fill="#9aabbc" font-size="11">(B, H, D)</text>
+
+      <line x1="350" y1="115" x2="400" y2="175" stroke="#9aabbc" marker-end="url(#arr)"/>
+      <line x1="350" y1="285" x2="400" y2="215" stroke="#9aabbc" marker-end="url(#arr)"/>
+
+      <!-- joint -->
+      <rect x="400" y="130" width="200" height="130" rx="12" fill="#1a2430" stroke="#6fc3b5" stroke-width="1.5"/>
+      <text x="500" y="160" text-anchor="middle" fill="#6fc3b5" font-size="13" font-weight="600">paligemma_with_expert</text>
+      <text x="500" y="182" text-anchor="middle" fill="#e8eef5" font-size="12">联合 Transformer</text>
+      <text x="500" y="204" text-anchor="middle" fill="#9aabbc" font-size="11">prefix ↔ suffix 注意力</text>
+      <text x="500" y="226" text-anchor="middle" fill="#9aabbc" font-size="11">KI: 阻断 ∇L_flow→prefix</text>
+      <text x="500" y="248" text-anchor="middle" fill="#9aabbc" font-size="11">输出 (prefix_out, suffix_out)</text>
+
+      <line x1="600" y1="160" x2="650" y2="80" stroke="#9aabbc" marker-end="url(#arr)"/>
+      <line x1="600" y1="195" x2="650" y2="195" stroke="#9aabbc" marker-end="url(#arr)"/>
+      <line x1="600" y1="230" x2="650" y2="310" stroke="#9aabbc" marker-end="url(#arr)"/>
+
+      <!-- heads -->
+      <rect x="650" y="40" width="210" height="70" rx="10" fill="#1e2732" stroke="#3d9b8f"/>
+      <text x="755" y="68" text-anchor="middle" fill="#6fc3b5" font-size="13" font-weight="600">lm_head → L_text</text>
+      <text x="755" y="90" text-anchor="middle" fill="#9aabbc" font-size="11">subtask / memory / VQA</text>
+
+      <rect x="650" y="160" width="210" height="70" rx="10" fill="#1e2732" stroke="#d4a25a"/>
+      <text x="755" y="188" text-anchor="middle" fill="#e0b56c" font-size="13" font-weight="600">action_out_proj → L_flow</text>
+      <text x="755" y="210" text-anchor="middle" fill="#9aabbc" font-size="11">v_θ ≈ ε − a</text>
+
+      <rect x="650" y="280" width="210" height="70" rx="10" fill="#1e2732" stroke="#9aabbc"/>
+      <text x="755" y="308" text-anchor="middle" fill="#e8eef5" font-size="13" font-weight="600">FAST + lm_head → L_FAST</text>
+      <text x="755" y="330" text-anchor="middle" fill="#9aabbc" font-size="11">离散动作 token CE</text>
+
+      <text x="440" y="390" fill="#9aabbc" font-size="12">训练：三损失加权求和 · 推理：语言环 / 动作环分时调用</text>
+    </svg>
+    <caption>图 2 · FineART-VLA 架构总览：前缀（绿）与后缀（金）进入联合 Transformer，再分出三头。</caption>
+    <div class="legend">
+      <span><i style="background:#3d9b8f"></i>Prefix / 语言路径</span>
+      <span><i style="background:#d4a25a"></i>Suffix / 动作路径</span>
+      <span><i style="background:#9aabbc"></i>可选 FAST</span>
+    </div>
+  </div>
+
+  <h3 id="s4-2">4.2 前缀与后缀的构造</h3>
+  <h4>Prefix：图像 + 语言</h4>
+  <p class="code-path">pi05/modeling_pi05.py · embed_prefix → FineART 继承并可选叠加因果标记</p>
+  <div class="eq-block">
+    <div class="line">E<sub>img</sub><sup>(c)</sup> = SigLIP(I<sub>c</sub>) ∈ ℝ<sup>B×N<sub>c</sub>×D</sup> &nbsp;&nbsp;（每路相机）</div>
+    <div class="line">E<sub>lang</sub> = Embed<sub>LM</sub>(w) ∈ ℝ<sup>B×L×D</sup></div>
+    <div class="line">E<sub>prefix</sub> = Concat<sub>seq</sub>(E<sub>img</sub><sup>(1)</sup>, …, E<sub>img</sub><sup>(C)</sup>, E<sub>lang</sub>) ∈ ℝ<sup>B×P×D</sup></div>
+  </div>
+  <pre><span class="c"># 概念对应 embed_prefix</span>
+<span class="k">for</span> img_emb, img_mask <span class="k">in</span> zip(self._embed_images(...), img_masks):
+    embs.append(img_emb)          <span class="c"># att_masks 全 0 → 前缀内双向</span>
+lang_emb = self.paligemma_with_expert.embed_language_tokens(tokens)
+embs.append(lang_emb)
+<span class="k">return</span> torch.cat(embs, dim=1), pad_masks, att_masks</pre>
+
+  <h4>Suffix：带噪动作 + 时间条件</h4>
+  <p class="code-path">pi05/modeling_pi05.py · embed_suffix</p>
+  <div class="eq-block">
+    <div class="line">E<sub>act</sub> = ActionInProj(x<sub>t</sub>) ∈ ℝ<sup>B×H×D</sup></div>
+    <div class="line">τ = MLP<sub>time</sub>(SinCos(t)) &nbsp;&nbsp;→ AdaRMS 条件（仅 Expert 侧）</div>
+    <div class="line">att_masks<sub>suffix</sub> = [1, 0, 0, …, 0] &nbsp;&nbsp;（首 token 切断对更早动作的可见性，块内其余双向）</div>
+  </div>
+  <p>
+    前缀 token 的 att 标记为 0（块内全可见），后缀第一个动作位置标记为 1，
+    经 <code>make_att_2d_masks</code> 展开后：<strong>前缀不能看后缀</strong>，后缀可以看全部前缀与本块内允许的动作位置。
+  </p>
+
+  <h3 id="s4-3">4.3 联合注意力拓扑</h3>
+  <div class="fig">
+    <svg class="svg-fig" viewBox="0 0 720 300" role="img" aria-label="attention mask">
+      <text x="360" y="28" text-anchor="middle" fill="#e8eef5" font-size="14" font-weight="600">注意力可见性（行=Query，列=Key）</text>
+      <!-- grid labels -->
+      <text x="210" y="58" text-anchor="middle" fill="#6fc3b5" font-size="12">Prefix keys</text>
+      <text x="430" y="58" text-anchor="middle" fill="#e0b56c" font-size="12">FAST keys</text>
+      <text x="580" y="58" text-anchor="middle" fill="#d4a25a" font-size="12">Action keys</text>
+      <text x="36" y="130" fill="#6fc3b5" font-size="12" transform="rotate(-90 36 130)">Prefix Q</text>
+      <text x="36" y="230" fill="#d4a25a" font-size="12" transform="rotate(-90 36 230)">Action Q</text>
+
+      <!-- prefix→prefix -->
+      <rect x="90" y="70" width="220" height="100" rx="6" fill="#1e3a36" stroke="#3d9b8f"/>
+      <text x="200" y="125" text-anchor="middle" fill="#e8eef5" font-size="12">✓ 双向</text>
+      <!-- prefix→fast -->
+      <rect x="320" y="70" width="120" height="100" rx="6" fill="#1e3a36" stroke="#3d9b8f"/>
+      <text x="380" y="125" text-anchor="middle" fill="#e8eef5" font-size="12">✓</text>
+      <!-- prefix→action -->
+      <rect x="450" y="70" width="220" height="100" rx="6" fill="#2a1a1a" stroke="#d4776b"/>
+      <text x="560" y="125" text-anchor="middle" fill="#d4776b" font-size="12">✗ 不可见</text>
+
+      <!-- action→prefix -->
+      <rect x="90" y="180" width="220" height="90" rx="6" fill="#3a2e1a" stroke="#d4a25a"/>
+      <text x="200" y="230" text-anchor="middle" fill="#e8eef5" font-size="12">✓ 条件化</text>
+      <!-- action→fast blocked -->
+      <rect x="320" y="180" width="120" height="90" rx="6" fill="#2a1a1a" stroke="#d4776b"/>
+      <text x="380" y="220" text-anchor="middle" fill="#d4776b" font-size="11">✗ 屏蔽</text>
+      <text x="380" y="238" text-anchor="middle" fill="#9aabbc" font-size="10">防泄漏</text>
+      <!-- action→action -->
+      <rect x="450" y="180" width="220" height="90" rx="6" fill="#3a2e1a" stroke="#d4a25a"/>
+      <text x="560" y="220" text-anchor="middle" fill="#e8eef5" font-size="12">块对角</text>
+      <text x="560" y="240" text-anchor="middle" fill="#9aabbc" font-size="10">K-repeat 互不可见</text>
+    </svg>
+    <caption>图 3 · 训练时注意力掩码。代码在 <code>_combined_prefix_and_flow</code> / <code>_amortized_prefix_and_flow</code> 里把 suffix→FAST 置 False，并把 K 组动作块做成 block-diagonal。</caption>
+  </div>
+  <pre><span class="c"># modeling_fineart_vla.py · _combined_prefix_and_flow</span>
+<span class="k">if</span> fast_len &gt; 0:
+    att_2d_masks[:, fast_end:, fast_start:fast_end] = False  <span class="c"># 动作看不到 FAST</span>
+<span class="c"># amortized 路径：prefix 行对动作全 0；动作行只看 prefix + 自己的那一块</span>
+action_to_action = self._flow_block_diag[None].expand(...)</pre>
+
+  <h3 id="s4-4">4.4 Knowledge Insulation</h3>
+  <p>
+    目标：连续动作损失不破坏预训练 VLM。设前缀参数为 φ，Expert / 动作投影为 ψ。
+  </p>
+  <div class="eq">
+    <span class="tag">KI 打开时的梯度约束</span>
+    ∂L<sub>flow</sub> / ∂φ &nbsp;=&nbsp; 0，&nbsp;&nbsp;
+    ∂L<sub>text</sub> / ∂φ &nbsp;允许非零
+  </div>
+  <p>实现两道闸：</p>
+  <ol>
+    <li>flow-only（无 text/FAST 标签）时 <code>embed_prefix</code> 包在 <code>torch.no_grad()</code>；</li>
+    <li>联合层传入 <code>suppress_prefix_grads=True</code>，在注意力里切断动作→前缀 K/V 的反传。</li>
+  </ol>
+  <pre><span class="c"># FineARTVLAPytorch.forward / Policy._compute_all_losses_fused</span>
+suppress_prefix = knowledge_insulation <span class="k">and</span> text_labels <span class="k">is</span> None <span class="k">and</span> action_tokens <span class="k">is</span> None
+<span class="k">with</span> torch.no_grad() <span class="k">if</span> suppress_prefix <span class="k">else</span> nullcontext():
+    prefix_embs, ... = embed_prefix(...)
+ki_kwargs = {<span class="s">"suppress_prefix_grads"</span>: True} <span class="k">if</span> suppress_prefix <span class="k">else</span> {}
+(prefix_out, suffix_out), _ = paligemma_with_expert.forward(..., **ki_kwargs)</pre>
+
+  <h3 id="s4-5">4.5 三头输出与张量形状</h3>
+  <table class="shape-table">
+    <thead><tr><th>符号 / 张量</th><th>形状</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr><td><code>images[c]</code></td><td>(B, C, H, W) 或 (B,3,H,W)</td><td>各路相机</td></tr>
+      <tr><td><code>tokens</code> / <code>OBS_LANGUAGE_TOKENS</code></td><td>(B, L)</td><td>L≤tokenizer_max_length（FineART 常 256）</td></tr>
+      <tr><td><code>prefix_embs</code></td><td>(B, P, D)</td><td>P = Σ N<sub>c</sub> + L（+ 可选 FAST）</td></tr>
+      <tr><td><code>actions</code> / <code>x_t</code></td><td>(B, H, d<sub>pad</sub>)</td><td>H=50，d<sub>pad</sub>=32</td></tr>
+      <tr><td><code>suffix_embs</code></td><td>(B, H, D) 或 (B, K·H, D)</td><td>K=<code>flow_num_repeats</code></td></tr>
+      <tr><td><code>v_t</code></td><td>(B, H, d<sub>pad</sub>)</td><td>预测速度场，损失时裁到真实 d</td></tr>
+      <tr><td><code>text_labels</code></td><td>(B, L)</td><td>非目标位置为 -100</td></tr>
+      <tr><td><code>action_tokens</code></td><td>(B, F)</td><td>FAST 码序列</td></tr>
+    </tbody>
+  </table>
+
+  <h3 id="s4-6">4.6 类继承与关键超参</h3>
+  <pre>FineARTVLAConfig  ⊂  PI05Config
+FineARTVLAPytorch ⊂  PI05Pytorch     <span class="c"># KI、denoise crop KV、sample_actions 因果标记</span>
+FineARTVLAPolicy  ⊂  PI05Policy      <span class="c"># 三损失 forward；generate_text / select_message</span></pre>
+  <table>
+    <thead><tr><th>超参</th><th>默认</th><th>作用</th></tr></thead>
+    <tbody>
+      <tr><td><code>chunk_size</code> / <code>n_action_steps</code></td><td>50</td><td>动作块长度 H</td></tr>
+      <tr><td><code>num_inference_steps</code></td><td>10</td><td>Euler 积分步数</td></tr>
+      <tr><td><code>flow_loss_weight</code></td><td>10</td><td>λ<sub>flow</sub></td></tr>
+      <tr><td><code>text_loss_weight</code></td><td>1</td><td>λ<sub>text</sub></td></tr>
+      <tr><td><code>fast_action_loss_weight</code></td><td>1</td><td>λ<sub>fast</sub></td></tr>
+      <tr><td><code>flow_num_repeats</code></td><td>5</td><td>共享前缀上的独立 denoise 次数 K</td></tr>
+      <tr><td><code>knowledge_insulation</code></td><td>true</td><td>阻断动作梯度进 VLM</td></tr>
+      <tr><td><code>fast_skip_tokens</code></td><td>1152</td><td>FAST id 与 &lt;loc&gt; 分离</td></tr>
+      <tr><td><code>text_ce_z_loss_weight</code></td><td>1e-4</td><td>PaLM 风格 z-loss</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="s5">
+  <h2>5. 训练算法（公式 × 代码）</h2>
+  <div class="subtoc">
+    <a href="#s5-1">5.1 总损失</a>
+    <a href="#s5-2">5.2 流匹配</a>
+    <a href="#s5-3">5.3 文本 CE</a>
+    <a href="#s5-4">5.4 FAST</a>
+    <a href="#s5-5">5.5 融合步</a>
+    <a href="#s5-6">5.6 训练命令</a>
+  </div>
+
+  <h3 id="s5-1">5.1 总目标</h3>
+  <div class="eq">
+    <span class="tag">加权多任务损失</span>
+    ℒ(θ) = λ<sub>flow</sub> ℒ<sub>flow</sub>
+    + λ<sub>text</sub> ℒ<sub>text</sub>
+    + λ<sub>fast</sub> ℒ<sub>FAST</sub>
+  </div>
+  <p>
+    默认 λ<sub>flow</sub>=10，λ<sub>text</sub>=1，λ<sub>fast</sub>=1。
+    Recipe blend 决定每个样本启用哪些项：high_level 样本通常只有 ℒ<sub>text</sub>；
+    low_level 样本有 ℒ<sub>flow</sub>（+ 可选 ℒ<sub>FAST</sub>），文本标签为空。
+  </p>
+
+  <div class="fig">
+    <svg class="svg-fig" viewBox="0 0 860 220" role="img" aria-label="training batch routing">
+      <rect x="20" y="30" width="160" height="160" rx="12" fill="#1e2732" stroke="#2a3544"/>
+      <text x="100" y="70" text-anchor="middle" fill="#e8eef5" font-size="13" font-weight="600">Batch 样本</text>
+      <text x="100" y="100" text-anchor="middle" fill="#9aabbc" font-size="11">recipe blend</text>
+      <text x="100" y="120" text-anchor="middle" fill="#9aabbc" font-size="11">按 index 确定性</text>
+      <text x="100" y="140" text-anchor="middle" fill="#9aabbc" font-size="11">选中一支</text>
+
+      <line x1="180" y1="80" x2="230" y2="60" stroke="#9aabbc" marker-end="url(#arr)"/>
+      <line x1="180" y1="110" x2="230" y2="110" stroke="#9aabbc" marker-end="url(#arr)"/>
+      <line x1="180" y1="150" x2="230" y2="170" stroke="#9aabbc" marker-end="url(#arr)"/>
+
+      <rect x="230" y="30" width="180" height="55" rx="8" fill="#1e3a36" stroke="#3d9b8f"/>
+      <text x="320" y="55" text-anchor="middle" fill="#6fc3b5" font-size="12">30% high_level</text>
+      <text x="320" y="72" text-anchor="middle" fill="#9aabbc" font-size="11">task → subtask</text>
+
+      <rect x="230" y="95" width="180" height="55" rx="8" fill="#3a2e1a" stroke="#d4a25a"/>
+      <text x="320" y="120" text-anchor="middle" fill="#e0b56c" font-size="12">70% low_level</text>
+      <text x="320" y="137" text-anchor="middle" fill="#9aabbc" font-size="11">subtask → action</text>
+
+      <rect x="230" y="160" width="180" height="40" rx="8" fill="#1e2732" stroke="#2a3544"/>
+      <text x="320" y="185" text-anchor="middle" fill="#9aabbc" font-size="11">扩展配方：mem / VQA…</text>
+
+      <line x1="410" y1="57" x2="470" y2="57" stroke="#9aabbc" marker-end="url(#arr)"/>
+      <line x1="410" y1="122" x2="470" y2="122" stroke="#9aabbc" marker-end="url(#arr)"/>
+
+      <rect x="470" y="30" width="170" height="55" rx="8" fill="#121820" stroke="#3d9b8f"/>
+      <text x="555" y="62" text-anchor="middle" fill="#e8eef5" font-size="12">ℒ_text  only</text>
+      <text x="555" y="78" text-anchor="middle" fill="#9aabbc" font-size="10">predict_actions=False</text>
+
+      <rect x="470" y="95" width="170" height="55" rx="8" fill="#121820" stroke="#d4a25a"/>
+      <text x="555" y="120" text-anchor="middle" fill="#e8eef5" font-size="12">ℒ_flow (+ FAST)</text>
+      <text x="555" y="138" text-anchor="middle" fill="#9aabbc" font-size="10">predict_actions=True</text>
+
+      <line x1="640" y1="90" x2="700" y2="90" stroke="#9aabbc" marker-end="url(#arr)"/>
+      <rect x="700" y="55" width="140" height="70" rx="10" fill="#1a2430" stroke="#6fc3b5"/>
+      <text x="770" y="85" text-anchor="middle" fill="#6fc3b5" font-size="12" font-weight="600">Σ λ · ℒ</text>
+      <text x="770" y="105" text-anchor="middle" fill="#9aabbc" font-size="11">backward</text>
+    </svg>
+    <caption>图 4 · 一个 batch 内不同样本启用不同损失项；路由掩码是 <code>predict_actions</code> / <code>text_labels</code>。</caption>
+  </div>
+
+  <h3 id="s5-2">5.2 流匹配动作损失（NOISE_AT_ONE）</h3>
+  <p>
+    FineART / π0.5 使用 <code>FlowConvention.NOISE_AT_ONE</code>：
+    t=1 是纯噪声，t=0 是干净动作。直线插值路径与目标速度场为：
+  </p>
+  <div class="eq-block">
+    <div class="line">x<sub>t</sub> = t · ε + (1 − t) · a，&nbsp;&nbsp; ε ∼ 𝒩(0, I)</div>
+    <div class="line">u<sub>t</sub> ≜ dx<sub>t</sub>/dt = ε − a &nbsp;&nbsp;（与 t 无关的常速度）</div>
+    <div class="line">v<sub>θ</sub>(x<sub>t</sub>, t | o, lang) ≈ u<sub>t</sub></div>
+    <div class="line">ℒ<sub>flow</sub> = 𝔼<sub>a,ε,t,o</sub>
+      [ ‖ v<sub>θ</sub>(x<sub>t</sub>, t | o, lang) − (ε − a) ‖<sub>2</sub><sup>2</sup> ]
+      &nbsp;（对真实动作维求均值）</div>
+  </div>
+  <p class="code-path">modeling_fineart_vla.py · FineARTVLAPytorch.forward / _combined_prefix_and_flow</p>
+  <pre>time_expanded = time[:, None, None]          <span class="c"># (B,1,1)</span>
+x_t = time_expanded * noise + (1 - time_expanded) * actions
+u_t = noise - actions
+...
+v_t = self.action_out_proj(suffix_out[:, -chunk_size:])
+flow_per_dim = F.mse_loss(u_t, v_t, reduction=<span class="s">"none"</span>)
+flow_per_dim = flow_per_dim[:, :, :original_action_dim]  <span class="c"># 去掉 pad</span>
+per_sample = flow_per_dim.mean(dim=(1, 2))
+ℒ_flow = _reduce_action_loss(per_sample, predict_actions_t)</pre>
+
+  <h4>K-repeat 摊销</h4>
+  <p>
+    <code>flow_num_repeats=K</code>（默认 5）：对同一前缀独立抽 K 组 (ε, t)，
+    把 K 个 suffix 拼成长度 K·H，注意力块对角，使各组互不可见。损失对 K 维再平均：
+  </p>
+  <div class="eq">
+    ℒ<sub>flow</sub><sup>(amort)</sup>
+    = (1/K) Σ<sub>k=1</sub><sup>K</sup>
+    ‖ v<sub>θ</sub>(x<sub>t</sub><sup>(k)</sup>, t<sup>(k)</sup>) − u<sup>(k)</sup> ‖<sup>2</sup>
+  </div>
+  <p class="muted">前缀只编一次，相当于用 K 倍动作监督摊薄昂贵的视觉—语言编码。</p>
+
+  <h3 id="s5-3">5.3 文本交叉熵 + z-loss</h3>
+  <p>预处理把 chat 展平并打标：</p>
+  <div class="eq-block">
+    <div class="line">prompt = 「User: …\nAssistant: …\n」</div>
+    <div class="line">labels<sub>i</sub> = w<sub>i</sub> 若位置 i ∈ 目标 span，否则 −100</div>
+    <div class="line">ℒ<sub>CE</sub> = − Σ<sub>i: labels<sub>i</sub>≠−100</sub> log p<sub>θ</sub>(w<sub>i</sub> | w<sub>&lt;i</sub>, images)</div>
+    <div class="line">ℒ<sub>text</sub> = ℒ<sub>CE</sub> + α · (log Σ<sub>v</sub> e<sup>z<sub>v</sub></sup>)<sup>2</sup>
+      &nbsp;&nbsp;（α=<code>text_ce_z_loss_weight</code>=1e-4）</div>
+  </div>
+  <p class="code-path">processor_fineart_vla.py · FineARTVLATextTokenizerStep · _format_messages</p>
+  <pre>header = f<span class="s">"{role.capitalize()}: "</span>
+body = content + eos_token <span class="k">if</span> i <span class="k">in</span> target_indices <span class="k">else</span> content
+<span class="c"># 只对 target span 内 token 写 labels = input_ids，其余 -100</span></pre>
+  <p class="code-path">modeling_fineart_vla.py · _prefix_ce_losses / _shifted_lin_ce</p>
+  <pre>text_hidden = prefix_out[:, -lang_len:, :]     <span class="c"># 有 FAST 时先切开</span>
+text_loss = _shifted_lin_ce(text_hidden, lm_head.weight, text_labels,
+                            z_loss_weight=α)</pre>
+  <div class="two">
+    <div class="panel">
+      <h4>30% · 高层样本</h4>
+      <pre>User: fasten the zip tie
+Assistant: insert the zip tie
+           tail through the lock&lt;eos&gt;</pre>
+      <p class="muted">监督 Assistant；<code>predict_actions=False</code>。</p>
+    </div>
+    <div class="panel">
+      <h4>70% · 低层样本</h4>
+      <pre>User: insert …, State: 128 131 …;</pre>
+      <p class="muted">无文本目标；state 为 256-bin 离散化串。</p>
+    </div>
+  </div>
+
+  <h3 id="s5-4">5.4 FAST 离散动作 CE</h3>
+  <div class="eq-block">
+    <div class="line">z = FASTEncode(a) ∈ {1…V<sub>F</sub>}<sup>F</sup></div>
+    <div class="line">把 z 嵌进前缀末端，用同一 lm_head：</div>
+    <div class="line">ℒ<sub>FAST</sub> = − Σ<sub>j∈code</sub> log p<sub>θ</sub>(z<sub>j</sub> | prefix, z<sub>&lt;j</sub>)</div>
+  </div>
+  <p>
+    段感知掩码保证：语言位置看不到 FAST，动作后缀也看不到 FAST，
+    因此可与 ℒ<sub>text</sub> / ℒ<sub>flow</sub> 共享一次前向而不「偷看答案」。
+    id 偏移由 <code>fast_skip_tokens=1152</code> 控制，避开 <code>&lt;loc&gt;</code> 段。
+  </p>
+
+  <h3 id="s5-5">5.5 融合训练步（代码路径）</h3>
+  <p class="code-path">FineARTVLAPolicy.forward</p>
+  <pre>predict_any = predict_actions <span class="k">is</span> None <span class="k">or</span> predict_actions.any()
+run_flow = flow_loss_weight &gt; 0 <span class="k">and</span> predict_any
+run_text = text_loss_weight &gt; 0 <span class="k">and</span> text_labels <span class="k">is not</span> None
+run_fast = enable_fast_action_loss <span class="k">and</span> fast_action_loss_weight &gt; 0 <span class="k">and</span> predict_any
+
+<span class="k">if</span> run_flow:
+    flow, text, fast = self._compute_all_losses_fused(...)  <span class="c"># 共享 prefix</span>
+    total = λ_flow*flow + λ_text*text + λ_fast*fast
+<span class="k">elif</span> run_text <span class="k">or</span> run_fast:
+    text, fast = self._compute_text_and_fast_loss(...)      <span class="c"># 无动作后缀</span></pre>
+  <ol>
+    <li>无 recipe 标签且未开 FAST → 退回纯 <code>PI05Policy.forward</code>。</li>
+    <li>需要 flow → 走 fused（可 K-repeat）。</li>
+    <li>纯文本 / FAST → 跳过 suffix，省算力。</li>
+    <li>KI + 纯 flow → 前缀无梯度，可跳过死掉的 vision backward。</li>
+  </ol>
+
+  <h3 id="s5-6">5.6 初始化与训练命令</h3>
+  <ul>
+    <li><code>--policy.path=lerobot/fineart_vla_base</code>：FineART mid-train，保留 FAST 布局与 recipe。</li>
+    <li><code>--policy.type=fineart_vla --policy.pretrained_path=lerobot/pi05_base</code>：从 π0.5 转换；缺 lm_head 时用 embed_tokens 克隆初始化。</li>
+  </ul>
+  <pre>lerobot-train \
+  --dataset.repo_id=${HF_USER}/my_language_annotated_dataset \
+  --policy.path=lerobot/fineart_vla_base \
+  --policy.tokenizer_max_length=256 \
+  --policy.dtype=bfloat16 --policy.device=cuda \
+  --policy.freeze_vision_encoder=false \
+  --policy.gradient_checkpointing=true \
+  --batch_size=8 --steps=30000 \
+  --output_dir=outputs/fineart_vla --wandb.enable=true</pre>
+</section>
+
+<section id="s6">
+  <h2>6. 推理算法（公式 × 代码）</h2>
+  <div class="subtoc">
+    <a href="#s6-1">6.1 双环</a>
+    <a href="#s6-2">6.2 语言生成</a>
+    <a href="#s6-3">6.3 动作 Euler</a>
+    <a href="#s6-4">6.4 Autosteer</a>
+    <a href="#s6-5">6.5 衔接</a>
+  </div>
+
+  <h3 id="s6-1">6.1 双环、双速率</h3>
+  <p>推理把训练时的因式分解拆成两次独立调用（由 rollout 编排，模型不会在 <code>select_action</code> 里偷偷再生成文字）：</p>
+  <div class="eq">
+    <span class="tag">推理调用</span>
+    s ← GenerateText(o, g)&nbsp;&nbsp;;&nbsp;&nbsp;
+    a ← EulerIntegrate(v<sub>θ</sub>(· | o, s), ε, N)
+  </div>
+  <table>
+    <thead><tr><th>环路</th><th>触发</th><th>API</th><th>输出</th><th>典型耗时</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>语言</td>
+        <td>Autosteer 到期 / <code>/vqa</code></td>
+        <td><code>generate_text</code></td>
+        <td>subtask 字符串</td>
+        <td>数百 ms–数 s</td>
+      </tr>
+      <tr>
+        <td>动作</td>
+        <td>控制 tick / RTC 填队列</td>
+        <td><code>select_action</code> → <code>sample_actions</code></td>
+        <td>a ∈ ℝ<sup>H×d</sup></td>
+        <td>N 次 denoise（默认 N=10）</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="fig">
+    <svg class="svg-fig" viewBox="0 0 880 260" role="img" aria-label="dual loop timeline">
+      <text x="40" y="30" fill="#6fc3b5" font-size="13" font-weight="600">语言环</text>
+      <rect x="40" y="45" width="90" height="36" rx="6" fill="#1e3a36" stroke="#3d9b8f"/>
+      <text x="85" y="68" text-anchor="middle" fill="#e8eef5" font-size="11">gen s₁</text>
+      <rect x="320" y="45" width="90" height="36" rx="6" fill="#1e3a36" stroke="#3d9b8f"/>
+      <text x="365" y="68" text-anchor="middle" fill="#e8eef5" font-size="11">gen s₂</text>
+      <rect x="600" y="45" width="90" height="36" rx="6" fill="#1e3a36" stroke="#3d9b8f"/>
+      <text x="645" y="68" text-anchor="middle" fill="#e8eef5" font-size="11">gen s₃</text>
+      <line x1="130" y1="63" x2="320" y2="63" stroke="#3d9b8f" stroke-dasharray="4 4"/>
+      <line x1="410" y1="63" x2="600" y2="63" stroke="#3d9b8f" stroke-dasharray="4 4"/>
+      <text x="225" y="55" text-anchor="middle" fill="#9aabbc" font-size="10">autosteer_interval_s</text>
+
+      <text x="40" y="130" fill="#e0b56c" font-size="13" font-weight="600">动作环</text>
+      <rect x="140" y="145" width="50" height="28" rx="4" fill="#3a2e1a" stroke="#d4a25a"/>
+      <rect x="195" y="145" width="50" height="28" rx="4" fill="#3a2e1a" stroke="#d4a25a"/>
+      <rect x="250" y="145" width="50" height="28" rx="4" fill="#3a2e1a" stroke="#d4a25a"/>
+      <text x="220" y="195" text-anchor="middle" fill="#9aabbc" font-size="11">条件：task 槽 = s₁</text>
+      <rect x="420" y="145" width="50" height="28" rx="4" fill="#3a2e1a" stroke="#d4a25a"/>
+      <rect x="475" y="145" width="50" height="28" rx="4" fill="#3a2e1a" stroke="#d4a25a"/>
+      <rect x="530" y="145" width="50" height="28" rx="4" fill="#3a2e1a" stroke="#d4a25a"/>
+      <text x="500" y="195" text-anchor="middle" fill="#9aabbc" font-size="11">条件：task 槽 = s₂</text>
+
+      <line x1="85" y1="81" x2="165" y2="145" stroke="#9aabbc" stroke-dasharray="3 3"/>
+      <line x1="365" y1="81" x2="445" y2="145" stroke="#9aabbc" stroke-dasharray="3 3"/>
+      <text x="40" y="230" fill="#9aabbc" font-size="12">set_task(s) 把语言环输出写入任务槽；动作环每步只读该槽 + 当前观测</text>
+    </svg>
+    <caption>图 5 · 语言慢、动作快：间隔只在 subtask <em>应用之后</em>重新计时，慢生成不会饿死控制。</caption>
+  </div>
+
+  <h3 id="s6-2">6.2 语言生成（自回归 + KV cache）</h3>
+  <p>
+    Autosteer 把 goal 放进 <code>QUERY_TEXT</code>，<code>RenderRuntimeMessagesStep</code> 用 checkpoint 的 recipe
+    取出监督 <code>${subtask}</code> 之前的 turns 作为 prompt（通常就是 <code>User: {goal}</code>），
+    再 tokenize。生成过程：
+  </p>
+  <div class="eq-block">
+    <div class="line">1) 编码多模态前缀 E<sub>prefix</sub>，建立 KV cache</div>
+    <div class="line">2) 对步 n=1…N<sub>max</sub>：</div>
+    <div class="line">&nbsp;&nbsp;&nbsp;logits = lm_head(h<sub>last</sub>)</div>
+    <div class="line">&nbsp;&nbsp;&nbsp;屏蔽 FAST 词表段；可选屏蔽 &lt;loc&gt;（subtask 时 <code>suppress_loc_tokens=True</code>）</div>
+    <div class="line">&nbsp;&nbsp;&nbsp;w<sub>n</sub> = argmax(logits) &nbsp;或&nbsp; nucleus(softmax(logits/T))</div>
+    <div class="line">&nbsp;&nbsp;&nbsp;若 w<sub>n</sub>=EOS 则停；否则只把新 token 嵌入送进 cache</div>
+    <div class="line">3) decode(w<sub>1:n</sub>) → subtask 字符串</div>
+  </div>
+  <p class="code-path">modeling_fineart_vla.py · select_message</p>
+  <pre><span class="k">for</span> _ <span class="k">in</span> range(max_new_tokens):
+    <span class="k">if</span> cache <span class="k">is</span> None:
+        step_embs = current_embs                  <span class="c"># 整段前缀</span>
+    <span class="k">else</span>:
+        step_embs = new_emb                       <span class="c"># 仅新 token</span>
+    (vlm_out, _), cache = backbone.forward(
+        inputs_embeds=[step_embs, None], past_key_values=cache, use_cache=True)
+    last = _last_valid_prefix_hidden(vlm_out, current_pad)  <span class="c"># 避开右 padding</span>
+    logits = lm_head(last)[:, -1]
+    logits[..., fast_lo:256000] = -inf            <span class="c"># 抑制 FAST 泄漏</span>
+    <span class="k">if</span> suppress_loc_tokens:
+        logits[..., 256000:257024] = -inf
+    tok = argmax_or_sample(logits)
+    <span class="k">if</span> tok == eos: <span class="k">break</span>
+    new_emb = backbone.embed_language_tokens(tok)</pre>
+
+  <h3 id="s6-3">6.3 动作采样：ODE 的 Euler 积分</h3>
+  <p>
+    训练学到速度场 v<sub>θ</sub> ≈ ε − a。推理从纯噪声 x<sub>1</sub>=ε 出发，沿同一约定积分到 t=0：
+  </p>
+  <div class="eq-block">
+    <div class="line">x<sub>1</sub> = ε ∼ 𝒩(0, I)</div>
+    <div class="line">Δt = −1/N &nbsp;&nbsp;（N=<code>num_inference_steps</code>，默认 10）</div>
+    <div class="line">对 k = 0…N−1：&nbsp; t<sub>k</sub> = 1 + k·Δt</div>
+    <div class="line">&nbsp;&nbsp;&nbsp;v<sub>k</sub> = v<sub>θ</sub>(x<sub>t<sub>k</sub></sub>, t<sub>k</sub> | o, s)</div>
+    <div class="line">&nbsp;&nbsp;&nbsp;x ← x + Δt · v<sub>k</sub></div>
+    <div class="line">得到 x<sub>0</sub> ≈ â</div>
+  </div>
+  <div class="fig">
+    <svg class="svg-fig" viewBox="0 0 720 240" role="img" aria-label="euler flow">
+      <line x1="80" y1="180" x2="640" y2="180" stroke="#2a3544"/>
+      <line x1="80" y1="40" x2="80" y2="180" stroke="#2a3544"/>
+      <text x="640" y="200" fill="#9aabbc" font-size="12">t</text>
+      <text x="50" y="50" fill="#9aabbc" font-size="12">x</text>
+      <text x="100" y="200" fill="#e0b56c" font-size="12">t=1 噪声</text>
+      <text x="560" y="200" fill="#6fc3b5" font-size="12">t=0 动作</text>
+      <!-- path -->
+      <path d="M120,60 C200,70 280,90 360,120 S520,160 600,170" fill="none" stroke="#d4a25a" stroke-width="2.5"/>
+      <!-- euler steps -->
+      <circle cx="120" cy="62" r="5" fill="#d4a25a"/>
+      <circle cx="200" cy="78" r="4" fill="#e0b56c"/>
+      <circle cx="280" cy="98" r="4" fill="#e0b56c"/>
+      <circle cx="360" cy="120" r="4" fill="#e0b56c"/>
+      <circle cx="440" cy="142" r="4" fill="#e0b56c"/>
+      <circle cx="520" cy="158" r="4" fill="#e0b56c"/>
+      <circle cx="600" cy="170" r="5" fill="#3d9b8f"/>
+      <text x="360" y="30" text-anchor="middle" fill="#e8eef5" font-size="13">x ← x + Δt · v_θ(x,t | o,s) ，N 步</text>
+      <text x="200" y="220" fill="#9aabbc" font-size="11">每步：embed_suffix → Expert(前缀 KV) → action_out_proj</text>
+    </svg>
+    <caption>图 6 · NOISE_AT_ONE 下的 Euler 去噪轨迹。实现：<code>euler_integrate</code> + FineART 的 <code>denoise_step</code>。</caption>
+  </div>
+  <p class="code-path">pi05/modeling_pi05.py · sample_actions → common/flow_matching.py · euler_integrate</p>
+  <pre><span class="c"># 1) 前缀只跑一次，缓存 KV</span>
+_, past_key_values = paligemma_with_expert.forward(
+    inputs_embeds=[prefix_embs, None], use_cache=True)
+<span class="c"># 2) Euler</span>
+<span class="k">return</span> euler_integrate(
+    <span class="k">lambda</span> x_t, t: self.denoise_step(prefix_pad_masks, past_key_values, x_t, t),
+    noise, num_steps=N)</pre>
+  <p class="code-path">modeling_fineart_vla.py · denoise_step（相对 Pi05 的关键优化）</p>
+  <pre>suffix_embs, ... = self.embed_suffix(x_t, timestep)
+outputs, _ = paligemma_with_expert.forward(
+    past_key_values=past_key_values,
+    inputs_embeds=[None, suffix_embs],   <span class="c"># 复用前缀 KV</span>
+)
+past_key_values.crop(prefix_len)         <span class="c"># 丢掉本步 suffix cache，勿整份 clone</span>
+<span class="k">return</span> self.action_out_proj(suffix_out[:, -chunk_size:])</pre>
+
+  <h3 id="s6-4">6.4 Autosteer 状态机与代码</h3>
+  <div class="fig">
+    <div class="flow">
+      <div class="row"><div class="tag">1. 设定</div><div class="box"><code>start_autosteer(goal, interval)</code> → 保存 goal，<code>due_at=now</code></div></div>
+      <div class="row"><div class="tag">2. 轮询</div><div class="box">控制线程 <code>pump_query</code> → <code>_poll_autosteer</code> 到期则排队 <code>NEXT_SUBTASK</code></div></div>
+      <div class="row"><div class="tag">3. 生成</div><div class="box"><code>_generate_text</code> → <code>policy.generate_text</code>（可能数秒）</div></div>
+      <div class="row"><div class="tag">4. 应用</div><div class="box"><code>_apply_subtask</code>：核对 goal 仍存活 → <code>set_task(s)</code> → <code>due_at=now+interval</code></div></div>
+      <div class="row"><div class="tag">5. 执行</div><div class="box">动作环读任务槽；sync 路径 task 变化时 <code>drop_queued_actions()</code></div></div>
+    </div>
+    <caption>图 7 · Autosteer 与动作环的衔接。源码：<code>rollout/inference/base.py</code>。</caption>
+  </div>
+  <pre><span class="c"># rollout/inference/base.py · _apply_subtask</span>
+<span class="k">with</span> self._query_lock:
+    live = self._autosteer_goal == query.text
+    <span class="k">if</span> live:
+        self.set_task(subtask)
+        self._autosteer_due_at = time.perf_counter() + self._autosteer_interval_s</pre>
+  <div class="callout warn">
+    生成不加锁；应用时再核对 goal，防止过期计划覆盖用户刚用 <code>/subtask</code> 写入的指令。
+    规划失败会停掉 sequencer，而不是带着空指令继续跑。
+  </div>
+
+  <h3 id="s6-5">6.5 训练分布与推理分布如何对齐</h3>
+  <table>
+    <thead><tr><th>环节</th><th>训练</th><th>推理</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>高层语言</td>
+        <td>Teacher forcing：Assistant 目标写进 labels</td>
+        <td>自回归 <code>generate_text</code>，prompt 止于 Assistant:</td>
+      </tr>
+      <tr>
+        <td>低层条件</td>
+        <td>标注里的 active subtask + State 串</td>
+        <td>任务槽里的生成/手写 subtask + 当前 State</td>
+      </tr>
+      <tr>
+        <td>动作</td>
+        <td>随机 t 上回归 u<sub>t</sub></td>
+        <td>从 t=1 积分到 0，N 步 Euler</td>
+      </tr>
+      <tr>
+        <td>Recipe</td>
+        <td>blend 采样分支</td>
+        <td>checkpoint 内嵌同一 recipe dict</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    <code>/subtask</code> 与 Autosteer 共用任务槽；手动设置会 <code>stop_autosteer()</code>。
+    Sync：换指令丢队列。RTC：新块与残留前缀混合，切换更平滑。
+  </p>
+</section>
+
+<section id="s12">
+  <h2>12. 实现机理与编码技巧</h2>
+  <p>
+    这一章对着 <code>modeling_fineart_vla.py</code> 和
+    <code>pi05/modeling_pi05.py</code> 的 <code>compute_layer_complete</code>，把「数值上等价、梯度上不等价」的技巧拆开。
+    读代码时按这个顺序：损失路由 → 知识隔离 → 因果标记 → FAST 防泄漏 → CE 分发 → 推理缓存。
+  </p>
+
+  <h3>12.1 两级知识隔离：前向不变，梯度被切开</h3>
+  <p>
+    Knowledge Insulation 的论文要求是：动作损失不能通过注意力改写预训练 VLM，但前向输出必须和「不隔离」时一样。
+    实现拆成两级，不要混成一件事。
+  </p>
+  <div class="eq">
+    <span class="tag">动作 query 看到的 K/V</span>
+    K<sub>action</sub> = [detach(K<sub>VLM</sub>) ; K<sub>expert</sub>]，
+    V<sub>action</sub> 同样。<br>
+    VLM query 仍使用未 detach 的 K/V。
+  </div>
+  <p class="code-path">pi05/modeling_pi05.py · compute_layer_complete，约 275–290 行</p>
+  <pre>prefix_len = inputs_embeds[0].shape[1]
+key_for_action = cat([key_states[:, :, :prefix_len].detach(), key_states[:, :, prefix_len:]], dim=2)
+value_for_action = cat([value_states[:, :, :prefix_len].detach(), value_states[:, :, prefix_len:]], dim=2)
+att_vlm = attend(q_vlm, key_states, value_states, ...)          <span class="c"># 文本损失仍能更新 VLM</span>
+att_action = attend(q_action, key_for_action, value_for_action, ...)  <span class="c"># flow 梯度停在 detach</span></pre>
+  <p>
+    <code>detach</code> 不改变数值，只切断动作 query 对 VLM K/V 的反传。VLM 自己的 query 仍走未 detach 的 K/V，
+    所以 <code>L_text</code> 和 <code>L_FAST</code> 可以训练 PaliGemma。这也是配置里禁止
+    <code>train_expert_only=true</code> 同时又开文本/FAST 的原因：那会冻住文本损失要更新的塔。
+  </p>
+  <p>
+    第二级只在「这一步根本没有文本/FAST 标签」时打开：<code>suppress_prefix_grads=True</code>。
+    此时前缀 embedding 和 VLM 流包进 <code>torch.no_grad()</code>，省掉一条数学上已经是死图的反向。
+    有文本标签时这一级必须关掉，否则 <code>L_text</code> 也没梯度。
+  </p>
+  <div class="callout">
+    开关在 <code>FineARTVLAPolicy.__init__</code>：
+    <code>self.model.paligemma_with_expert.knowledge_insulation = config.knowledge_insulation</code>。
+    库存 Pi05 这条标志是关的。Flex / manual attention / FlashRT AdaRMS 都要求 KI 打开，否则配置直接报错。
+  </div>
+
+  <h3>12.2 目标 span 改成因果，提示仍双向</h3>
+  <p>
+    π0.5 的图像+语言前缀默认是双向注意力（<code>embed_prefix</code> 里 att 标记全 0）。
+    自回归文本损失不能让第 i 个目标 token 看见 i+1。技巧是不重写整段 mask，只把「labels ≠ -100」的位置 OR 进因果标记：
+  </p>
+  <pre><span class="c"># _mark_target_span_causal</span>
+target = text_labels[:, :n] != -100
+att[:, lang_start:lang_start+n] = att[:, lang_start:lang_start+n] | target</pre>
+  <p>
+    <code>make_att_2d_masks</code> 把这些 1 解释成「新的注意力段起点」，于是 prompt 仍双向，被监督的 assistant 片段变成因果。
+    推理若走 joint-sequence（生成的 subtask 留在前缀里再出动作），必须用同一套标记：
+    <code>sample_actions(..., lang_causal_marks=...)</code> 在 <code>embed_prefix</code> 末尾调用
+    <code>_apply_causal_language_marks</code>。否则训练时因果、推理时双向，分布对不上。
+  </p>
+
+  <h3>12.3 FAST 三处防泄漏</h3>
+  <ol>
+    <li>
+      <strong>动作 query 看不见 FAST token。</strong>
+      <code>att_2d_masks[:, fast_end:, fast_start:fast_end] = False</code>。
+      否则 flow 头可以直接读出离散动作码，连续损失变成抄答案。
+    </li>
+    <li>
+      <strong>RoPE 位置从非 FAST 前缀重新起算。</strong>
+      训练时 FAST 占了一段序列位置；推理出动作时没有 FAST。
+      若 suffix 的 position id 接着 FAST 往下数，和推理不一致。代码把每个 flow 块的位置设成
+      <code>non_fast_valid + cumsum(suffix_pad) - 1</code>。
+    </li>
+    <li>
+      <strong>生成文本时屏蔽 FAST 和可选的 loc 段。</strong>
+      <code>select_message</code> 把 <code>[fast_lo, 256000)</code> 的 logits 打成 −∞；
+      subtask/memory/plan 还可屏蔽 <code>[256000, 257024)</code> 的 <code>&lt;loc&gt;</code>。
+      VQA 不能屏蔽 loc，答案本身就要这些 token。
+      <code>fast_skip_tokens=1152</code> 就是为了让 FAST 码和 loc 不占同一行嵌入。
+    </li>
+  </ol>
+
+  <h3>12.4 文本 CE：移位、分桶、z-loss</h3>
+  <div class="eq-block">
+    <div class="line">shift：hidden[:, :-1] 预测 labels[:, 1:]（标准 next-token）</div>
+    <div class="line">有效位以外 labels = −100，cross_entropy 的 ignore_index</div>
+    <div class="line">z-loss：α · mean( logsumexp(logits)² )，α = 1e-4，只加在有效位上</div>
+  </div>
+  <p>分发器 <code>_lin_ce_flat</code> 按行数选实现，避免一种 kernel 打所有形状：</p>
+  <ul>
+    <li>有效行数 ≤ 2048：物化 <code>hidden @ Wᵀ</code>，在 FP32 logits 上算 CE。可选 <code>torch.compile</code>，但 compile 函数懒加载，import 模块时不碰 Dynamo。</li>
+    <li>更长且稀疏：先扔掉 −100 行，再补到 2 的幂（<code>1 &lt;&lt; bit_length</code>），让 compile 的形状稳定，padding 行仍标 −100。</li>
+    <li>再长：走 Liger 的 fused linear CE，不物化整张词表 logits。<code>lse_square_scale</code> 就是 z-loss。</li>
+  </ul>
+  <p>
+    FAST 的 CE 多一步：按每个样本的有效 token 数分组，同长度的样本拼成一块再算。
+    掩码写进 labels（<code>where(valid, id, -100)</code>），避免为了 mask 做一次 GPU→CPU 同步，也方便图捕获。
+  </p>
+
+  <h3>12.5 K 次 flow 共用一个前缀</h3>
+  <p>
+    <code>flow_num_repeats=5</code> 时，前缀编码一次，K 组独立 (ε, t) 的 suffix 在序列维拼成 <code>K·H</code>。
+    注意力是块对角：第 k 组动作只看前缀（且不看 FAST）和自己这 H 步，组与组互不可见。
+    损失对 K 平均。数值上等价于 K 次独立 flow，算力上前缀只付一次。
+  </p>
+  <p>
+    FlexAttention 只在 KI 且 K&gt;1 时允许打开。mask 用两个 block mask：VLM 行、动作行。
+    消费级 GPU 共享内存 &lt; 128KB 时把 tile 缩到 <code>BLOCK_M1=32</code> 等，否则 head_dim=256 的反向会爆。
+    Flex 和 manual attention 互斥。manual 路径把 softmax 放在 FP32，专门对付低 flow timestep、大 QK 时 BF16 softmax 的梯度问题。
+    类属性 <code>fp32_joint_attention = True</code> 是同一动机在默认 SDPA 路径上的开关。
+  </p>
+
+  <h3>12.6 推理：crop 而不是 clone</h3>
+  <p>
+    Pi05 的 <code>denoise_step</code> 每步 <code>clone_past_key_values</code>，因为 suffix 会把 K/V 追加进 cache。
+    FineART 在 Expert 前向之后调用 <code>past_key_values.crop(prefix_len)</code>，把刚追加的 suffix 裁掉，前缀 cache 原地复用。
+    语言生成则相反：第一步跑完整前缀并 <code>use_cache=True</code>，之后每步只送一个新 token。
+    右 padding 的 prompt 不能从最后一列取 logits，所以用 <code>_last_valid_prefix_hidden</code> 按 attention mask 取最后一个有效位置。
+  </p>
+  <pre><span class="c"># denoise_step 末尾</span>
+past_key_values.crop(prefix_len)
+<span class="k">return</span> self.action_out_proj(suffix_out[:, -chunk_size:])
+
+<span class="c"># select_message：cache 命中后</span>
+step_embs = new_emb
+att_2d = current_pad[:, None, :]          <span class="c"># 新 token 能看见全部已有 key</span>
+last = _last_valid_prefix_hidden(vlm_out, current_pad)</pre>
+
+  <h3>12.7 优化器分组与缺头初始化</h3>
+  <p>
+    <code>get_optim_params</code> 把参数拆成最多四组，余弦调度对每组乘同一个 lambda，比例在衰减中保持不变：
+  </p>
+  <table>
+    <thead><tr><th>组</th><th>匹配</th><th>学习率</th></tr></thead>
+    <tbody>
+      <tr><td>backbone</td><td>PaliGemma 除 lm_head / embed_tokens</td><td>base × backbone_lr_scale</td></tr>
+      <tr><td>action_expert</td><td>Gemma expert、action 投影</td><td>base × action_expert_lr_scale</td></tr>
+      <tr><td>conditioning</td><td>time MLP、AdaRMS 的 dense（仅 scale≠1 时拆出）</td><td>expert × conditioning_lr_scale</td></tr>
+      <tr><td>lm_head</td><td>lm_head 与 embed_tokens 绑在同一组</td><td>base × lm_head_lr_scale</td></tr>
+    </tbody>
+  </table>
+  <p>
+    从 <code>pi05_base</code> 加载时，π0.5 权重里常常没有训练过的 <code>lm_head</code>。
+    <code>_prepare_pretrained_state_dict</code> 在缺键时把 <code>embed_tokens.weight</code> clone 过去，
+    避免语言头随机初始化把已经对齐的嵌入空间打散。tied embedding 和 head 放进同一优化器组，是为了之后若解绑也不会用两个学习率拧着更新。
+  </p>
+
+  <h3>12.8 融合核刻意没开的部分</h3>
+  <p>
+    <code>use_liger_kernels</code> 只融合 PaliGemma 的 RoPE 和 GeGLU。
+    LayerNorm / RMSNorm 在 SigLIP 的形状上变慢，交叉熵也关掉，因为文本损失走自己的 <code>_lin_ce_flat</code>。
+    Liger 会改进程内的 transformers，同进程里别的 PaliGemma 策略也会被换 kernel。
+    FlashRT AdaRMS 只包 Expert 的条件归一化，失败则退回 eager，不让可选依赖挡住训练。
+  </p>
+
+  <h3>12.9 读代码时的检查单</h3>
+  <ol>
+    <li><code>FineARTVLAPolicy.forward</code>：这一 step 的 <code>run_flow / run_text / run_fast</code> 哪个为真。</li>
+    <li><code>suppress_prefix_grads</code> 是否因为存在文本标签而是 False。</li>
+    <li>注意力里 suffix→FAST 是否被置 False，suffix 的 RoPE 是否从非 FAST 前缀重起。</li>
+    <li>文本 labels 是否只覆盖 assistant 目标，并且该 span 被标成因果。</li>
+    <li>推理 <code>generate_text</code> 是否屏蔽了 FAST 段；VQA 是否保留了 loc。</li>
+    <li><code>denoise_step</code> 是否 <code>crop</code> 而不是把前缀 cache 拷走。</li>
+    <li>checkpoint 里的 <code>recipe</code> 是否已经内嵌（<code>recipe_path</code> 在保存前被清空），推理 prompt 才和训练一致。</li>
+  </ol>
+</section>
+
+<section id="s7">
+  <h2>7. 关键技术代码实现</h2>
+
+  <h3>7.1 模块地图</h3>
+  <table>
+    <thead><tr><th>路径</th><th>职责</th></tr></thead>
+    <tbody>
+      <tr><td><code>policies/fineart_vla/configuration_fineart_vla.py</code></td><td>配置、默认 recipe、损失与 FAST/KI 开关</td></tr>
+      <tr><td><code>policies/fineart_vla/modeling_fineart_vla.py</code></td><td>核心模型与 Policy；三损失；generate_text</td></tr>
+      <tr><td><code>policies/fineart_vla/processor_fineart_vla.py</code></td><td>预/后处理；文本 tokenize；工厂</td></tr>
+      <tr><td><code>policies/fineart_vla/fit_fast_tokenizer.py</code></td><td>按数据集拟合 FAST</td></tr>
+      <tr><td><code>datasets/language.py</code> / <code>language_render.py</code></td><td>语言 schema 与时间解析</td></tr>
+      <tr><td><code>datasets/recipe.py</code></td><td>Recipe 解析、blend、prompt_turns</td></tr>
+      <tr><td><code>processor/render_messages_processor.py</code></td><td>训练/运行时消息渲染</td></tr>
+      <tr><td><code>configs/recipes/*.yaml</code></td><td>可共享配方</td></tr>
+      <tr><td><code>rollout/inference/base.py</code></td><td>Autosteer、set_task、查询通道</td></tr>
+      <tr><td><code>rollout/inference/{sync,rtc}.py</code></td><td>同步 / RTC 引擎的动作与文本路径</td></tr>
+      <tr><td><code>rollout/interactive.py</code></td><td><code>/autosteer</code> <code>/subtask</code> <code>/vqa</code> 命令</td></tr>
+      <tr><td><code>examples/lerobot_annotate_web/</code></td><td>本地标注 Web + 官方 pipeline</td></tr>
+    </tbody>
+  </table>
+
+  <h3>7.2 策略前向（损失路由）</h3>
+  <pre><span class="c"># FineARTVLAPolicy.forward 核心分支（概念摘录）</span>
+predict_any = predict_actions is None or predict_actions.any()
+run_flow = flow_loss_weight &gt; 0 and predict_any
+run_text = text_loss_weight &gt; 0 and text_labels is not None
+run_fast = enable_fast_action_loss and fast_action_loss_weight &gt; 0 and predict_any
+
+<span class="k">if</span> run_flow:
+    flow, text, fast = self._compute_all_losses_fused(...)
+    total = λ_flow*flow + λ_text*text + λ_fast*fast
+<span class="k">elif</span> run_text or run_fast:
+    text, fast = self._compute_text_and_fast_loss(...)  <span class="c"># 无动作后缀</span></pre>
+
+  <h3>7.3 文本 tokenize 与状态注入</h3>
+  <pre><span class="c"># FineARTVLATextTokenizerStep._encode_messages</span>
+<span class="c"># 仅 low_level stream 在最后一条 User 后追加离散化 State</span>
+<span class="k">if</span> state_row is not None and any(s == <span class="s">"low_level"</span> for s in message_streams):
+    state_str = discretize_state_str(state_row)
+    user.content = f<span class="s">"{base}, State: {state_str};"</span>
+
+prompt, spans = _format_messages(messages, target_indices, eos_token)
+<span class="c"># 运行时无 labels 时补 "Assistant:" 前缀，对齐训练时目标前位置</span></pre>
+
+  <h3>7.4 Autosteer 应用子任务</h3>
+  <pre><span class="c"># rollout/inference/base.py · _apply_subtask</span>
+<span class="k">with</span> self._query_lock:
+    live = self._autosteer_goal == query.text
+    <span class="k">if</span> live:
+        self.set_task(subtask)  <span class="c"># 写入动作环将读取的指令</span>
+        self._autosteer_due_at = time.perf_counter() + self._autosteer_interval_s</pre>
+  <p>
+    生成过程不加锁、可能持续数秒；应用时再次核对 goal 是否仍是发起该次查询的那个，
+    防止过期计划覆盖用户刚用 <code>/subtask</code> 写入的新指令。
+  </p>
+
+  <h3>7.5 Denoise 一步（推理）</h3>
+  <pre><span class="c"># FineARTVLAPytorch.denoise_step</span>
+suffix_embs, ... = self.embed_suffix(x_t, timestep)
+outputs_embeds, _ = self.paligemma_with_expert.forward(
+    past_key_values=past_key_values,
+    inputs_embeds=[None, suffix_embs],  <span class="c"># 复用前缀 KV</span>
+    ...
+)
+past_key_values.crop(prefix_len)  <span class="c"># 丢掉本步 suffix cache</span>
+<span class="k">return</span> self.action_out_proj(suffix_out)</pre>
+
+  <h3>7.6 可选训练加速后端</h3>
+  <div class="pill-row">
+    <span class="pill">use_liger_kernels</span>
+    <span class="pill">use_flashrt_adarms</span>
+    <span class="pill">use_compiled_text_ce</span>
+    <span class="pill">use_compiled_vision</span>
+    <span class="pill">use_flex_attention</span>
+    <span class="pill">use_manual_attention</span>
+  </div>
+  <p class="muted">
+    默认关闭可选后端；文档建议的较优组合是 compiled text CE + FlashRT AdaRMS，
+    Flex/manual attention 与 compiled vision 关闭。Flex 与 manual 互斥，且依赖 KI。
+  </p>
+</section>
+
+<section id="s8">
+  <h2>8. LeRobot 真实机器人应用</h2>
+
+  <h3>8.1 部署拓扑</h3>
+  <div class="fig">
+    <div class="flow">
+      <div class="row"><div class="tag">硬件层</div><div class="box">Robot（SO-100 / LeKiwi / OMX…）+ Cameras + Motors</div></div>
+      <div class="row"><div class="tag">观测</div><div class="box"><code>build_dataset_frame</code> → 与训练同名的图像/state 特征</div></div>
+      <div class="row"><div class="tag">推理引擎</div><div class="box"><code>SyncInferenceEngine</code> 或 <code>RTCInferenceEngine</code></div></div>
+      <div class="row"><div class="tag">策略</div><div class="box">FineART-VLA checkpoint + 保存的 recipe / FAST tokenizer</div></div>
+      <div class="row"><div class="tag">交互</div><div class="box"><code>lerobot-rollout --interactive=true</code>：/start /autosteer /subtask /vqa /reset /stop</div></div>
+      <div class="row"><div class="tag">策略变体</div><div class="box">Base（只跑）/ Sentry·Highlight·DAgger（边跑边录）</div></div>
+    </div>
+    <caption>图 8 · 真机部署数据流。</caption>
+  </div>
+
+  <h3>8.2 推荐启动参数</h3>
+  <pre>lerobot-rollout \
+  --robot.type=... \
+  --robot.port=... \
+  --cameras... \
+  --policy.path=outputs/fineart_vla/checkpoints/last/pretrained_model \
+  --inference.type=rtc \          <span class="c"># 或 sync</span>
+  --interactive=true \
+  --autosteer_interval_s=3 \
+  --fps=30</pre>
+  <p>交互会话内：</p>
+  <pre>/start
+/autosteer fasten the zip tie
+<span class="c"># 终端会陆续打印 Autosteer subtask: '…'</span>
+/subtask release the zip tie and retract the arm   <span class="c"># 人工接管</span>
+/autosteer off
+/stop</pre>
+
+  <h3>8.3 Sync vs RTC</h3>
+  <table>
+    <thead><tr><th></th><th>Sync</th><th>RTC</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>策略线程</td>
+        <td>控制线程内联推理</td>
+        <td>后台线程产动作块，控制线程只消费队列</td>
+      </tr>
+      <tr>
+        <td>文本查询</td>
+        <td>同线程 <code>_service_query</code></td>
+        <td>RTC 线程服务；控制线程 <code>pump_query</code> 交付答案</td>
+      </tr>
+      <tr>
+        <td>换 subtask</td>
+        <td>丢弃已算好的动作队列</td>
+        <td>新块与残留前缀混合，切换更连续</td>
+      </tr>
+      <tr>
+        <td>适用</td>
+        <td>调试、低延迟要求不苛刻</td>
+        <td>真机连续控制、语言生成较长时更稳</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>8.4 与相机 / 动作空间对齐</h3>
+  <ul>
+    <li>部署相机键名、分辨率、归一化统计必须与训练 <code>dataset_stats</code> 一致。</li>
+    <li>相对动作（<code>use_relative_actions</code>）时，后处理 <code>AbsoluteActionsProcessorStep</code> 把增量还原到关节/末端绝对量。</li>
+    <li>多相机 VQA 配方里的 <code>camera=observation.images.front</code> 等必须在真机特征里真实存在；本地 zip-tie 数据集常用 <code>high/left/right</code>，配方要改键名。</li>
+  </ul>
+
+  <h3>8.5 从采集到上机的闭环</h3>
+  <ol>
+    <li><strong>采集</strong>：遥操作录 LeRobot v3 数据集（图像 + state + action + task）。</li>
+    <li><strong>标注</strong>：至少连续 subtask；需要记忆/插话/VQA 时再勾选对应特征。</li>
+    <li><strong>人工抽检</strong>：边界时间、覆盖完整性、camera 字段合法性。</li>
+    <li><strong>训练</strong>：从 <code>fineart_vla_base</code> 或 <code>pi05_base</code> 微调；确认 W&amp;B 样例里 prompt/target/action 正确。</li>
+    <li><strong>上机</strong>：同构硬件 + interactive rollout；先 <code>/subtask</code> 验证动作环，再开 Autosteer。</li>
+    <li><strong>迭代</strong>：失败片段可 DAgger/Highlight 录回，补标后继续训。</li>
+  </ol>
+</section>
+
+<section id="s9">
+  <h2>9. 端到端操作清单</h2>
+  <div class="two">
+    <div class="panel">
+      <h4>环境</h4>
+      <pre>pip install -e ".[fineart_vla]"
+<span class="c"># 可选融合核</span>
+pip install -e ".[fineart_vla_kernels]"
+pip install -e ".[annotations]"</pre>
+    </div>
+    <div class="panel">
+      <h4>本地标注 Web</h4>
+      <pre>python examples/lerobot_annotate_web/app.py
+<span class="c"># http://127.0.0.1:8766</span>
+<span class="c"># 开始 / 暂停 / 继续 / 结束</span></pre>
+    </div>
+    <div class="panel">
+      <h4>最小可用语言特征</h4>
+      <p>默认 FineART：只要连续 <code>subtask</code>。<br>
+      记忆训练：加 <code>memory</code> + <code>subtask_mem.yaml</code>。<br>
+      完整能力：<code>subtask_mem_vqa_speech.yaml</code> + 对应 events。</p>
+    </div>
+    <div class="panel">
+      <h4>上机最短路径</h4>
+      <pre>/start
+/subtask pick up the zip tie tail
+<span class="c"># 确认手臂跟随后再：</span>
+/autosteer fasten the zip tie</pre>
+    </div>
+  </div>
+</section>
+
+<section id="s10">
+  <h2>10. 故障排查与工程建议</h2>
+  <table>
+    <thead><tr><th>现象</th><th>优先检查</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>没有 text_loss / 不会生成 subtask</td>
+        <td>语言列是否存在；recipe 能否 bind；<code>text_loss_weight&gt;0</code>；checkpoint 是否带 recipe</td>
+      </tr>
+      <tr>
+        <td>subtask 像样但动作失败</td>
+        <td>子任务时间边界；state/action 归一化；低层样本是否真的在训（70% 分支）</td>
+      </tr>
+      <tr>
+        <td>文本塌缩成重复或 loc token</td>
+        <td>文本目标覆盖；<code>lm_head_lr_scale</code>；flow/text/FAST 权重；生成时对非 VQA 开 <code>suppress_loc_tokens</code></td>
+      </tr>
+      <tr>
+        <td>flow 梯度爆炸</td>
+        <td>FineART 在 KI-off 联合注意力上用 FP32 math SDPA；分项监控 <code>flow_loss</code>/<code>text_loss</code></td>
+      </tr>
+      <tr>
+        <td>OOM</td>
+        <td>先降 batch，再开 gradient checkpointing；勿盲目全开 compiled/flex</td>
+      </tr>
+      <tr>
+        <td>真机慢</td>
+        <td>分开量语言延迟与动作延迟；调大 <code>autosteer_interval_s</code>；减小 <code>num_inference_steps</code></td>
+      </tr>
+      <tr>
+        <td>Autosteer 失败即停</td>
+        <td>设计如此：规划失败会停 sequencer，避免带着坏指令继续跑</td>
+      </tr>
+      <tr>
+        <td>memory 标注了但不生效</td>
+        <td>默认 recipe 与默认 runtime 都不消费 memory；需自定义 recipe + memory-aware 控制器</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="callout warn">
+    <code>memory_scratchpad=true</code> 的旧 checkpoint 会拒绝把组合响应直接交给共享 Autosteer：
+    共享 runtime 只接受一句 subtask。组合记忆需要定制控制器。
+  </div>
+</section>
+
+<section id="s11">
+  <h2>11. 参考文献与源码锚点</h2>
+  <h3>论文 / 资源</h3>
+  <ul>
+    <li>Choghari et al., <em>FineART: Fine-Grained Annotated Robotic Trajectory Dataset and Vision-Language-Action Model for Bimanual Manipulation</em>, 2026.</li>
+    <li>Physical Intelligence, π₀.₅ — <a href="https://arxiv.org/abs/2504.16054">arXiv:2504.16054</a></li>
+    <li>Knowledge Insulation — <a href="https://arxiv.org/abs/2505.23705">arXiv:2505.23705</a></li>
+    <li>openpi — <a href="https://github.com/Physical-Intelligence/openpi">github.com/Physical-Intelligence/openpi</a></li>
+    <li>LeRobot 文档：<code>docs/source/fineart_vla.mdx</code>、<code>language_and_recipes.mdx</code>、<code>inference.mdx</code></li>
+  </ul>
+  <h3>本仓库阅读顺序（建议）</h3>
+  <ol>
+    <li><code>configuration_fineart_vla.py</code> — 默认 recipe 与超参</li>
+    <li><code>processor_fineart_vla.py</code> — 数据如何变成 tokens / labels</li>
+    <li><code>modeling_fineart_vla.py</code> — 损失与 denoise / generate_text</li>
+    <li><code>datasets/language.py</code> + <code>configs/recipes/*.yaml</code> — 数据契约</li>
+    <li><code>rollout/inference/base.py</code> + <code>interactive.py</code> — 真机分层控制</li>
+  </ol>
+  <pre>@misc{choghari2026fineart,
+  title  = {FineART: Fine-Grained Annotated Robotic Trajectory Dataset
+            and Vision-Language-Action Model for Bimanual Manipulation},
+  author = {Choghari, Jade and Kooijmans, Pepijn and Agarwal, Mansi
+            and Ciftci, Yusuf Umut and Doriwala, Aseem and Weaver, Catherine
+            and Sivapurapu, Mouli and Yang, Kai and Lee, Jackson
+            and Wolf, Thomas and Mannam, Pragna},
+  year   = {2026},
+}</pre>
+</section>
+
+<footer>
+  <p>
+    本报告根据 LeRobot 仓库当前实现整理，用于工程理解与二次开发；
+    若与上游文档冲突，以仓库源码与官方 <code>docs/source/fineart_vla.mdx</code> 为准。
+  </p>
+  <p>文件位置：<code>docs/fineart_vla_research_report.html</code> · 浏览器直接打开即可。</p>
+</footer>
+</div>
+</body>
+</html>
