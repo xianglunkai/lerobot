@@ -232,7 +232,26 @@ video {
   background: #050505;
   object-fit: contain;
 }
-input[type="range"] { padding: 0; accent-color: var(--accent); }
+input[type="range"] { padding: 0; accent-color: var(--accent); cursor: pointer; }
+.rate-field { flex: 0 0 120px; }
+.time-field { flex: 0 0 168px; }
+.current-readout {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid rgba(6, 182, 212, .45);
+  border-radius: 12px;
+  background: rgba(6, 182, 212, .08);
+  line-height: 1.5;
+}
+.current-readout b { color: var(--accent-2); }
+.edit-row.current {
+  border-radius: 12px;
+  background: rgba(6, 182, 212, .12);
+  box-shadow: inset 0 0 0 1px rgba(6, 182, 212, .7);
+}
 
 .table-wrap { overflow: auto; max-height: 520px; border: 1px solid var(--border); border-radius: 12px; }
 table { width: 100%; border-collapse: collapse; font-size: .85rem; }
