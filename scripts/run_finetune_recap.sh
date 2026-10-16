@@ -2,9 +2,9 @@
 
 # ==================== 选择性执行开关 ====================
 # 设置为 true 表示执行该步骤，设置为 false 表示跳过
-RUN_VALUE_FUNCTION_TRAINING=true
+RUN_VALUE_FUNCTION_TRAINING=false
 RUN_VALUE_FUNCTION_INFER=true
-RUN_RECOMPUTE_STATS=true
+RUN_RECOMPUTE_STATS=false
 RUN_VLA_TRAIN=false
 
 # ======================================================
@@ -24,7 +24,7 @@ export HF_DATASETS_CACHE=/workspace/huggingface/.cache
 export HF_LEROBOT_HOME=/workspace/huggingface/lerobot
 export HF_HOME=/workspace/huggingface
 
-export repo_id=screw_sorting_single_sft_ep280_v30_steam
+export repo_id=screw_sorting_single_sft_ep279_annotated_v30
 
 export k=1
 
@@ -58,9 +58,9 @@ export RECAP_USE_EXISTING_ADVANTAGE=false
 # 数据集优势相关列名（与 parquet / info.json features 一致）
 export ACP_ADVANTAGE_FIELD=advantage_continuous
 export ACP_INDICATOR_FIELD=complementary_info.acp_indicator
-export INDICATOR_DROPOUT_PROB=0.1
+export INDICATOR_DROPOUT_PROB=0.3
 export POSITIVE_ONLY_CONDITIONAL=true
-export FORCE_INTERVENTION_POSITIVE=true
+export FORCE_INTERVENTION_POSITIVE=false
 
 # 原子子任务条件（scheme A）：high-level + Subtask，训练时按概率丢掉 Subtask
 export CONDITION_ON_SUBTASK=false
@@ -83,13 +83,14 @@ if [ "$RUN_VALUE_FUNCTION_TRAINING" = true ]; then
         $(which lerobot-value-train) \
         --batch_size=32 \
         --num_workers=4 \
-        --steps=8000 \
+        --steps=2000 \
         --log_freq=200 \
-        --save_freq=10000 \
+        --save_freq=1000 \
         --rename_map='{"observation.images.cam_high":"observation.images.high","observation.images.cam_left_wrist":"observation.images.left","observation.images.cam_right_wrist":"observation.images.right","observation.state":"observation.state","action":"action"}' \
         --dataset.repo_id=${HF_LEROBOT_HOME}/${repo_id} \
         --value.type=pistar06 \
         --value.push_to_hub=false \
+        --value.include_state_in_prompt=false \
         --value.input_features='{
                 "observation.images.high": {"type": "VISUAL", "shape": [480, 640, 3]},
                 "observation.images.right": {"type": "VISUAL", "shape": [480, 640, 3]},
@@ -166,7 +167,7 @@ if [ "$RUN_VALUE_FUNCTION_INFER" = true ]; then
             --acp.indicator_field=${ACP_INDICATOR_FIELD} \
             --acp.force_intervention_positive=${FORCE_INTERVENTION_POSITIVE} \
             --viz.enable=true \
-            --viz.episodes=10,42 \
+            --viz.episodes=1,50,100,150,200,250 \
             --viz.video_keys=observation.images.high,observation.images.right \
             --viz.overwrite=true \
             --viz.smooth_window=5 \
