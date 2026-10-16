@@ -1451,10 +1451,13 @@ def hil_collect(cfg: HILConfig) -> LeRobotDataset:
                             episode_success,
                         )
 
-                # Execute a few seconds without recording to give time to manually reset the environment
+                # s/f and timeout only leave the rollout. Home before the human
+                # reset period; the loop-start home still runs for the next episode.
                 if not events["stop_recording"] and (
                     (recorded < cfg.dataset.num_episodes)
                 ):
+                    if policy is not None:
+                        robot_raw.reset_to_default_positions()
                     log_say("Reset the environment", cfg.play_sounds)
                     reset_loop(robot, teleop, events, cfg.dataset.fps)
 
