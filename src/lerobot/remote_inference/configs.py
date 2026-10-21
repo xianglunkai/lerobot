@@ -39,6 +39,10 @@ class ModelConfig:
     device: str = "cuda"
     # TF32 in float32 matmuls and cuDNN convolutions on Ampere and newer GPUs.
     tf32: bool | None = True
+    # Optional overrides for checkpoints that store another machine's tokenizer
+    # path or compile mode. None keeps the saved config.
+    text_tokenizer_name: str | None = None
+    compile_mode: str | None = None
 
 
 @dataclass

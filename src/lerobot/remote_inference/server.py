@@ -25,6 +25,7 @@ import logging
 import math
 import time
 from collections import OrderedDict, deque
+from collections.abc import Callable
 from concurrent.futures import Future
 from dataclasses import asdict, dataclass, field
 from queue import Empty, Full, Queue
@@ -97,6 +98,7 @@ class _Session:
     cleanup_reason: str | None = None
     cleanup_queue_blocked: bool = False
     last_sequence: int = -1
+    open_request_id: str = ""
 
 
 @dataclass
@@ -139,8 +141,14 @@ class SessionWorker:
         idle_timeout_s: float = 10.0,
         max_input_chars: int = DEFAULT_MAX_TEXT_INPUT_CHARS,
         max_output_chars: int = DEFAULT_MAX_TEXT_OUTPUT_CHARS,
+        boot_fn: Callable[[], None] | None = None,
     ) -> None:
-        """Start the single policy worker with bounded command and identity bookkeeping."""
+        """Start the single policy worker with bounded command and identity bookkeeping.
+
+        ``boot_fn`` runs once on the worker thread before any session work. Use it
+        to capture ``reduce-overhead`` CUDA graphs on the same thread that serves
+        inference. Construction blocks until ``boot_fn`` finishes.
+        """
         self.runner = runner
         self.instance_id = uuid4().hex
         self.deployment = deployment
@@ -171,8 +179,17 @@ class SessionWorker:
         self._reset_summary(time.monotonic())
         self._active_operation: str | None = None
         self._stopping = Event()
+        self._boot_fn = boot_fn
+        self._boot_done = Event()
+        self._boot_error: BaseException | None = None
         self._thread = Thread(target=self._run, name="PolicyWorker", daemon=True)
         self._thread.start()
+        if boot_fn is not None:
+            self._boot_done.wait()
+            if self._boot_error is not None:
+                self._stopping.set()
+                self._thread.join(timeout=1)
+                raise RuntimeError(f"Policy worker boot failed: {self._boot_error}") from self._boot_error
 
     def _reset_summary(self, now: float) -> None:
         """Start a new logging interval without discarding the rolling latency window."""
@@ -289,7 +306,7 @@ class SessionWorker:
                         raise ProtocolError(ErrorCode.MALFORMED, "Open operation ID is required")
                     if message.request_id in self._opens:
                         return self._opens[message.request_id]
-                    if self._session is not None:
+                    if self._session is not None and not self._session.closing:
                         state = self._session_diagnostics_locked()
                         detail = (
                             f"Deployment owned by session={state['owner']}; "
@@ -298,8 +315,8 @@ class SessionWorker:
                             f"absence_grace_remaining_s={state['absence_grace_remaining_s']} "
                             f"cleanup_pending={state['cleanup_pending']} "
                             f"inference_pending={state['inference_pending']}. "
-                            "A new session requires the previous owner's close/reset to finish; "
-                            "unfinished model calls are never taken over."
+                            "The server stays up. Stop the current client, or wait for its "
+                            "absence cleanup, before another client can connect."
                         )
                         logger.info("Session admission blocked instance=%s %s", self.instance_id, detail)
                         raise ProtocolError(
@@ -313,13 +330,15 @@ class SessionWorker:
                     if self._commands.full():
                         raise ProtocolError(ErrorCode.BUSY, "Policy command queue is full")
                     self._validate_open(message.body)
-                    self._session = _Session(
-                        uuid4().hex,
-                        mode=ExecutionMode(message.body["mode"]),
-                        chunk_settings=message.body.get("chunk_settings", default_chunk_settings()),
-                    )
-                    self._seen.clear()
-                    self._controls.clear()
+                    if self._session is None:
+                        self._install_session_locked(message)
+                    else:
+                        logger.info(
+                            "Next client queued behind session=%s instance=%s; "
+                            "admission follows the in-flight model call",
+                            self._session.identity,
+                            self.instance_id,
+                        )
                     _remember(self._opens, message.request_id, future, 32)
                 else:
                     if (
@@ -516,6 +535,17 @@ class SessionWorker:
             if model is not None and canonical is not None and len(model) != len(canonical):
                 raise ProtocolError(ErrorCode.MALFORMED, "Continuation spaces must cover identical steps")
 
+    def _install_session_locked(self, message: Envelope) -> None:
+        """Own the deployment for one OPEN. Caller holds ``self._lock`` and has validated the body."""
+        self._session = _Session(
+            uuid4().hex,
+            mode=ExecutionMode(message.body["mode"]),
+            chunk_settings=message.body.get("chunk_settings", default_chunk_settings()),
+            open_request_id=message.request_id,
+        )
+        self._seen.clear()
+        self._controls.clear()
+
     def _reset_runner(self, *, full: bool) -> None:
         """A failed reset leaves model state unknown; only a server restart recovers it."""
         try:
@@ -531,11 +561,21 @@ class SessionWorker:
         if self._failure is not None:
             return message.error(ErrorCode.EXECUTION, self._failure)
         session = self._session
-        if session is None:
+        if session is None and message.message_type is not MessageType.OPEN:
             return message.error(ErrorCode.STALE, "Session closed")
-        if message.message_type is not MessageType.OPEN and message.session_id != session.identity:
+        if (
+            session is not None
+            and message.message_type is not MessageType.OPEN
+            and message.session_id != session.identity
+        ):
             return message.error(ErrorCode.STALE, "Session ownership changed before execution")
         if message.message_type is MessageType.OPEN:
+            with self._lock:
+                if self._session is None:
+                    self._install_session_locked(message)
+                elif self._session.open_request_id != message.request_id:
+                    return message.error(ErrorCode.BUSY, "Deployment is still owned")
+                session = self._session
             self._reset_runner(full=True)
             session.ready = True
             self._recent_operations.clear()
@@ -633,6 +673,21 @@ class SessionWorker:
         )
 
     def _run(self) -> None:
+        if self._boot_fn is not None:
+            try:
+                self._boot_fn()
+            except BaseException as exc:
+                self._boot_error = exc
+                self._failure = f"{type(exc).__name__}: {exc}"
+                logger.exception(
+                    "Policy worker boot failed instance=%s deployment=%s",
+                    self.instance_id,
+                    self.deployment,
+                )
+            finally:
+                self._boot_done.set()
+            if self._boot_error is not None:
+                return
         while not self._stopping.is_set():
             try:
                 message, future, queued_at = self._commands.get(timeout=0.05)
@@ -670,7 +725,11 @@ class SessionWorker:
                     message.request_id,
                 )
                 timed_out = time.monotonic() - queued_at > deadline
-                response = message.error(ErrorCode.TIMEOUT if timed_out else ErrorCode.EXECUTION, str(exc))
+                detail = str(exc).strip() or repr(exc)
+                response = message.error(
+                    ErrorCode.TIMEOUT if timed_out else ErrorCode.EXECUTION,
+                    f"{type(exc).__name__}: {detail}",
+                )
                 if (
                     timed_out or message.message_type is not MessageType.LANGUAGE_REQUEST
                 ) and self._session is not None:
@@ -989,10 +1048,14 @@ class PolicyServer:
             describe = transport.declare_queryable(
                 deployment_prefix(worker.deployment) + "/describe", capacity=4
             )
-            opening = transport.declare_queryable(prefix + "/open", capacity=4)
+            opening = transport.declare_queryable(
+                prefix + "/open",
+                capacity=4,
+                reply_timeout=worker.language_deadline_s + worker.action_deadline_s + 30,
+            )
             transport.declare_token(prefix + "/alive")
             logger.info(
-                "Policy server ready: deployment=%s instance=%s; awaiting one client",
+                "Policy server ready: deployment=%s instance=%s; waiting for clients",
                 worker.deployment,
                 worker.instance_id,
             )

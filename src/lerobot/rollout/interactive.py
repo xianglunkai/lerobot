@@ -353,14 +353,20 @@ class InteractiveSession:
         if result is AskResult.UNSUPPORTED:
             self._print(f"Autosteering is unavailable for this setup. {self._text_support_hint()}")
         elif result is AskResult.NOT_RUNNING:
-            self._print("Not running — /start first so the policy has a live view to plan from.")
+            self._print("Can't arm autosteer — the session has stopped.")
         elif result is AskResult.INVALID:
             self._print(f"Autosteer goal rejected — {self.controller.text_input_error(goal)}")
         elif result is AskResult.QUEUED:
-            self._print(
-                f"Autosteer on — goal {goal!r}. The policy picks its own subtasks; "
-                "each one is announced here. Take over with /subtask <text> or /autosteer off."
-            )
+            if self.controller.running:
+                self._print(
+                    f"Autosteer on — goal {goal!r}. The policy picks its own subtasks; "
+                    "each one is announced here. Take over with /subtask <text> or /autosteer off."
+                )
+            else:
+                self._print(
+                    f"Autosteer armed — goal {goal!r}. Type /start to begin; "
+                    "the first live view will produce a subtask."
+                )
         else:  # a future AskResult variant must not be announced as success
             logger.error("Unhandled AskResult %r for /autosteer", result)
             self._print(f"Could not start autosteer ({result.value}).")

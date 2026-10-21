@@ -31,6 +31,8 @@ from torch import Tensor
 from torch.nn import functional
 from torch.nn.attention.flex_attention import create_block_mask, flex_attention
 
+from lerobot.configs.types import FeatureType
+from lerobot.policies.chunk import ChunkPolicySpec, ExecutionMode
 from lerobot.utils.constants import (
     ACTION,
     ACTION_CODE_TOKEN_MASK,
@@ -1299,6 +1301,51 @@ class FineARTVLAPolicy(PI05Policy):
             reduction,
         )
 
+    def chunk_inference_spec(self) -> ChunkPolicySpec:
+        """Serve one current frame. Visual memory is stacked inside ``predict_action_chunk``."""
+        config = self.config
+        if config.n_obs_steps != 1:
+            raise ValueError("Chunk inference requires n_obs_steps=1; observation history is unsupported.")
+        if getattr(config, "temporal_ensemble_coeff", None) is not None:
+            raise ValueError("Chunk inference does not support temporal ensembling.")
+        if getattr(config, "use_proprioceptive_memory", False):
+            raise ValueError("Chunk inference cannot sample proprioceptive memory.")
+        prediction_steps = getattr(config, "chunk_size", None)
+        if not isinstance(prediction_steps, int) or prediction_steps <= 0:
+            raise ValueError("The default chunk runner requires a positive chunk_size.")
+        execution_steps = getattr(config, "n_action_steps", prediction_steps)
+        modes = [ExecutionMode.CHUNK]
+        training_max_delay = int(getattr(config, "rtc_training_max_delay", 0))
+        if self.supports_rtc():
+            modes.append(ExecutionMode.RTC_GUIDED)
+            if training_max_delay > 0:
+                modes.append(ExecutionMode.RTC_TRAINED)
+        return ChunkPolicySpec(
+            prediction_steps=prediction_steps,
+            execution_steps=execution_steps,
+            modes=tuple(modes),
+            training_max_delay=training_max_delay,
+        )
+
+    def validate_chunk_input_features(self, features) -> None:
+        """Accept HWC camera shapes saved by this checkpoint and the usual CHW contract."""
+        expected = self.config.input_features or {}
+        supplied = {feature.name: feature for feature in features}
+        if supplied.keys() != expected.keys():
+            raise ValueError("Canonical feature names must exactly match policy input_features.")
+        for name, policy_feature in expected.items():
+            feature = supplied[name]
+            if policy_feature.type is FeatureType.VISUAL:
+                shape = tuple(policy_feature.shape)
+                wire = tuple(feature.shape)
+                accepted = {shape}
+                if len(shape) == 3:
+                    accepted.add((shape[1], shape[2], shape[0]))
+                if feature.kind != "rgb" or wire not in accepted:
+                    raise ValueError(f"RGB feature shape differs from checkpoint: {name}.")
+            elif feature.kind != "tensor" or feature.shape != tuple(policy_feature.shape):
+                raise ValueError(f"Tensor feature shape differs from checkpoint: {name}.")
+
     def supports_text_generation(self) -> bool:
         return self.config.text_loss_weight > 0
 
@@ -1312,7 +1359,30 @@ class FineARTVLAPolicy(PI05Policy):
             )
         if self._batch_size_from_observation(batch) != 1:
             raise ValueError("FineART-VLA text generation requires one observation.")
-        return self.select_message(batch)
+        kind = batch.get("query_kind")
+        # Subtask/memory prompts must not emit PaliGemma ``<loc>`` tokens; VQA may.
+        suppress_loc = kind != "vqa"
+        text = self.select_message(
+            batch,
+            suppress_loc_tokens=suppress_loc,
+            min_new_tokens=1 if kind == "next_subtask" else 0,
+        )
+        if not text:
+            raise ValueError(
+                "FineART-VLA text generation produced an empty string "
+                f"(query_kind={kind!r}). Check the camera frames and subtask recipe prompt."
+            )
+        if kind == "next_subtask":
+            # Reject FAST/loc leakage that decodes to mostly non-text for autosteer.
+            ascii_ratio = sum(ch.isascii() and ch.isprintable() for ch in text) / len(text)
+            if ascii_ratio < 0.7:
+                raise ValueError(
+                    "FineART-VLA next_subtask answer is not readable text "
+                    f"(ascii_ratio={ascii_ratio:.2f}, preview={text[:48]!r}). "
+                    "Blank/OOD cameras often trigger this; use a shorter goal, "
+                    "/subtask, or real camera frames."
+                )
+        return text
 
     def select_message(
         self,
@@ -1409,17 +1479,23 @@ class FineARTVLAPolicy(PI05Policy):
             last = _last_valid_prefix_hidden(vlm_out, current_pad) if vlm_out.shape[1] > 1 else vlm_out
             last = last.to(lm_head.weight.dtype)
             logits_step = lm_head(last)[:, -1]  # (B, V)
+            vocab_size = logits_step.shape[-1]
             if special_ids and len(generated) < min_new_tokens:
                 for sid in special_ids:
-                    logits_step[..., sid] = float("-inf")
+                    if 0 <= sid < vocab_size:
+                        logits_step[..., sid] = float("-inf")
             # Suppress FAST-only vocabulary that otherwise leaks into generated text.
-            vocab_size = logits_step.shape[-1]
             fast_skip = int(getattr(self.config, "fast_skip_tokens", 128))
             fast_lo = vocab_size - 1 - fast_skip - (_FAST_ACTION_VOCAB_SIZE - 1)
-            if 0 < fast_lo < 256000:
-                logits_step[..., fast_lo:256000] = float("-inf")
+            if 0 < fast_lo < min(256000, vocab_size):
+                logits_step[..., fast_lo : min(256000, vocab_size)] = float("-inf")
             if suppress_loc_tokens:
-                logits_step[..., 256000:257024] = float("-inf")
+                loc_hi = min(257024, vocab_size)
+                if 256000 < loc_hi:
+                    logits_step[..., 256000:loc_hi] = float("-inf")
+            if not torch.isfinite(logits_step).all():
+                # bf16 vision/language can briefly overflow on empty or OOD frames.
+                logits_step = torch.nan_to_num(logits_step, nan=-1e4, posinf=1e4, neginf=-1e4)
             next_ids = self._sample_next_token(logits_step, temperature, top_p)
             tok_id = int(next_ids[0].item())
             generated.append(tok_id)

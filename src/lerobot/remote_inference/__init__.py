@@ -16,7 +16,7 @@
 
 from .client import RemoteClient, RequestCancelled
 from .configs import ExecutionConfig, LanguageConfig, ModelConfig, ServerConfig
-from .deployment import artifact_identity, load_deployment
+from .deployment import artifact_identity, load_deployment, warmup_runner
 from .engine import RemoteInferenceEngine
 from .protocol import PROTOCOL_VERSION, AdmissionDeniedError, ErrorCode, ProtocolError
 from .server import PolicyServer, SessionWorker
@@ -37,4 +37,5 @@ __all__ = [
     "SessionWorker",
     "artifact_identity",
     "load_deployment",
+    "warmup_runner",
 ]

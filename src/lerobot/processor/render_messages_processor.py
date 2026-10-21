@@ -255,8 +255,9 @@ class RenderRuntimeMessagesStep(ComplementaryDataProcessorStep):
         else:
             raise ValueError(f"Unsupported query kind: {kind!r}. Expected one of: 'vqa', 'next_subtask'.")
 
-        complementary_data.pop(QUERY_KIND)
         complementary_data.pop(QUERY_TEXT)
+        # Keep the kind so FineART can suppress location tokens for subtask prompts.
+        complementary_data[QUERY_KIND] = kind
         complementary_data[MESSAGES_RENDERED] = messages
         return complementary_data
 
