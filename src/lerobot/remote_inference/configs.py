@@ -37,6 +37,10 @@ class ModelConfig:
     repo_or_path: str = ""
     revision: str | None = None
     device: str = "cuda"
+    # Optional overrides for checkpoints that store another machine's tokenizer
+    # path or compile mode. None keeps the saved config.
+    text_tokenizer_name: str | None = None
+    compile_mode: str | None = None
 
 
 @dataclass

@@ -59,9 +59,11 @@ class ProtocolError(ValueError):
 
     def __init__(self, code: ErrorCode, message: str, *, details: dict[str, Any] | None = None) -> None:
         """Attach the machine-readable error category."""
-        super().__init__(message)
+        text = message if isinstance(message, str) and message.strip() else f"remote {code}"
+        super().__init__(text)
         self.code = code
         self.details = details
+        self.remote_message = message if isinstance(message, str) else ""
 
 
 class AdmissionDeniedError(ProtocolError):

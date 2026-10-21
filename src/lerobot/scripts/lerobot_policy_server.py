@@ -30,6 +30,7 @@ from lerobot.remote_inference import (
     SessionWorker,
     load_deployment,
 )
+from lerobot.remote_inference.deployment import warmup_runner
 from lerobot.transport import ZenohTransport
 from lerobot.utils import init_logging, register_third_party_plugins
 
@@ -48,7 +49,8 @@ def serve(cfg: ServerConfig) -> None:
         cfg.model.revision or "default",
         cfg.model.device,
     )
-    runner, identity = load_deployment(cfg)
+    # Warm on the PolicyWorker thread so reduce-overhead CUDA graphs stay TLS-local.
+    runner, identity = load_deployment(cfg, warmup=False)
     worker = SessionWorker(
         runner,
         deployment=cfg.deployment,
@@ -59,6 +61,7 @@ def serve(cfg: ServerConfig) -> None:
         idle_timeout_s=cfg.execution.idle_timeout_s,
         max_input_chars=cfg.language.max_input_chars,
         max_output_chars=cfg.language.max_output_chars,
+        boot_fn=lambda: warmup_runner(runner, cfg),
     )
     server = PolicyServer(worker, ZenohTransport(cfg.zenoh))
     logger.info(

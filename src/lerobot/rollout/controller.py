@@ -331,16 +331,17 @@ class RolloutController:
         """Let the policy decompose ``goal`` and drive its own subtasks.
 
         Every ``autosteer_interval_s`` seconds the engine asks the policy for the next subtask and
-        applies it through the *engine's* ``set_task``.  Plan progress lives in the policy, so the
-        sequencer does not survive a segment; it is also stopped by :meth:`reset` and
-        :meth:`set_task`.  Same guards and rejection values as :meth:`ask`.
+        applies it through the *engine's* ``set_task``.  The goal may be armed before
+        :meth:`start`; the first live observation then triggers planning. Plan progress
+        lives in the policy, so the sequencer does not survive a segment; it is also
+        stopped by :meth:`reset` and :meth:`set_task`.
         """
         if not self._ctx.policy.inference.supports_text_queries:
             return AskResult.UNSUPPORTED
         if self.text_input_error(goal) is not None:
             return AskResult.INVALID
         with self._control_lock:
-            if not self._running.is_set():
+            if self._stopped.is_set() or self._stop_requested.is_set() or self.failed:
                 return AskResult.NOT_RUNNING
             self._ctx.policy.inference.start_autosteer(goal, self._autosteer_interval_s)
             return AskResult.QUEUED

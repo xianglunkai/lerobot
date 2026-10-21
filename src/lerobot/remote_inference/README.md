@@ -58,7 +58,7 @@ Public cross-package symbols are explicitly exported through package APIs. Polic
 
 ### Threads and locks
 
-The control thread captures observations and asks for the next action or interpolation step. It never waits for a model or network round trip. The remote worker performs encoding/exchanges and acceptance; local RTC instead owns a policy worker. The server's protocol pump admits bounded work to `SessionWorker`, whose one execution thread owns runtime policy/processor calls, including reset and language. Loading, warmup and the initial full reset run on the startup thread before that handoff.
+The control thread captures observations and asks for the next action or interpolation step. It never waits for a model or network round trip. The remote worker performs encoding/exchanges and acceptance; local RTC instead owns a policy worker. The server's protocol pump admits bounded work to `SessionWorker`, whose one execution thread owns runtime policy/processor calls, including reset and language. Checkpoint loading runs on the startup thread; warmup and the initial full reset run on the policy worker thread so `reduce-overhead` CUDA graphs stay thread-local.
 
 The engine's coordination lock protects observations and control/hold transitions. Task/query locks order instruction changes and language intent. `ChunkRuntime` owns the atomic request/queue/generation transition; `ActionQueue` provides atomic snapshots and replacement. Retargeting and result acceptance must have one order. A worker can replace eligible future actions, but only control-thread consumption advances the commitment cursor.
 

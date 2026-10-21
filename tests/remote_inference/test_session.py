@@ -147,21 +147,24 @@ def test_queued_controls_cannot_roll_back_a_newer_generation(worker):
         release.set()
 
 
-def test_close_during_blocked_call_keeps_ownership_until_worker_finishes(worker):
+def test_close_during_blocked_call_admits_the_next_client_when_the_worker_finishes(worker):
     session = admit_session(worker)
     entered, release = block_predict(worker)
     try:
         action = worker.submit(action_request(worker, session))
         assert entered.wait(2)
         close = worker.submit(control_request(worker, session, 0, "close"))
+        replacement = worker.submit(open_request(worker))
         assert not close.done()
-        rejected = worker.submit(open_request(worker)).result(2)
-        assert_error(rejected, ErrorCode.BUSY)
+        assert not replacement.done()
         assert worker.session_id == session
         release.set()
         action.result(2)
         assert close.result(2).message_type is MessageType.ACK
-        assert admit_session(worker) != session
+        accepted = replacement.result(2)
+        assert accepted.message_type is MessageType.ACCEPTED
+        assert accepted.session_id != session
+        assert worker.session_id == accepted.session_id
     finally:
         release.set()
 
@@ -239,17 +242,22 @@ def test_absence_cleanup_never_reuses_a_blocked_model_after_grace(worker, cleanu
         assert state["cleanup_reason"] == "client_absence"
         assert state["admission_blocker"] == "unfinished_inference"
         # Neither additional absence nor a late presence token revokes an ordered close.
+        # The next client waits behind that close and does not touch the model until it returns.
         cleanup_clock[0] += 300
         worker.expire(present=False)
         worker.expire(present=True)
-        assert_error(worker.submit(open_request(worker)).result(2), ErrorCode.BUSY)
+        replacement = worker.submit(open_request(worker))
+        assert not replacement.done()
         assert worker.runner.policy.resets == 2
         after_cleanup = worker.submit(control_request(worker, session, 0, "status"))
         assert not after_cleanup.done()
         release.set()
         assert_error(action.result(2), ErrorCode.TIMEOUT)
+        accepted = replacement.result(2)
+        assert accepted.message_type is MessageType.ACCEPTED
+        assert accepted.session_id != session
         assert_error(after_cleanup.result(2), ErrorCode.STALE)
-        assert admit_session(worker) != session
+        assert worker.session_id == accepted.session_id
     finally:
         release.set()
 

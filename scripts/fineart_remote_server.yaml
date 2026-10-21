@@ -1,0 +1,88 @@
+# FineART zip-tie policy server. The robot client is scripts/run_remote_rollout.sh.
+# Nested CLI flags in run_policy_server.sh override the checkpoint path, tokenizer
+# and compile mode.
+deployment: zip_tie
+model:
+  repo_or_path: /home/xlk/work/lerobot/checkpoints/fineart-vla
+  revision: null
+  device: cuda
+  text_tokenizer_name: /home/xlk/work/lerobot/pretrain_model/paligemma-3b-pt-224
+  compile_mode: reduce-overhead
+execution:
+  supported_modes: [rtc_trained]
+  action_fps: 30.0
+  # First post-admit RTC call may recompile under reduce-overhead; keep this above that.
+  action_deadline_s: 180.0
+  idle_timeout_s: 10.0
+  warmup_calls: 2
+  rtc:
+    enabled: true
+    mode: trained
+    execution_horizon: 10
+language:
+  enabled: true
+  deadline_s: 120.0
+zenoh:
+  mode: peer
+  listen_endpoints: [tcp/127.0.0.1:7447]
+semantics: agilex-bimanual-joint-rad-v1
+robot_type: agilex_cobot
+features:
+  - name: observation.state
+    shape: [14]
+    dtype: float32
+    names:
+      [
+        left_joint0.pos,
+        left_joint1.pos,
+        left_joint2.pos,
+        left_joint3.pos,
+        left_joint4.pos,
+        left_joint5.pos,
+        left_joint6.pos,
+        right_joint0.pos,
+        right_joint1.pos,
+        right_joint2.pos,
+        right_joint3.pos,
+        right_joint4.pos,
+        right_joint5.pos,
+        right_joint6.pos,
+      ]
+    semantics: agilex-bimanual-joint-rad-v1
+  - name: observation.images.high
+    shape: [480, 640, 3]
+    dtype: uint8
+    kind: rgb
+    semantics: agilex-cam-high-v1
+  - name: observation.images.left
+    shape: [480, 640, 3]
+    dtype: uint8
+    kind: rgb
+    semantics: agilex-cam-left-v1
+  - name: observation.images.right
+    shape: [480, 640, 3]
+    dtype: uint8
+    kind: rgb
+    semantics: agilex-cam-right-v1
+action_feature:
+  name: action
+  shape: [14]
+  dtype: float32
+  names:
+    [
+      left_joint0.pos,
+      left_joint1.pos,
+      left_joint2.pos,
+      left_joint3.pos,
+      left_joint4.pos,
+      left_joint5.pos,
+      left_joint6.pos,
+      right_joint0.pos,
+      right_joint1.pos,
+      right_joint2.pos,
+      right_joint3.pos,
+      right_joint4.pos,
+      right_joint5.pos,
+      right_joint6.pos,
+    ]
+  semantics: agilex-bimanual-joint-rad-v1

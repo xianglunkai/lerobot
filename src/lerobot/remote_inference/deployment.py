@@ -113,8 +113,12 @@ def _subtask_prompt_unavailable_reason(runner: PolicyRunner) -> str | None:
     return None
 
 
-def load_deployment(cfg: ServerConfig) -> tuple[PolicyRunner, str]:
-    """Resolve contents, load canonical processors and reset all warmed model paths."""
+def load_deployment(cfg: ServerConfig, *, warmup: bool = True) -> tuple[PolicyRunner, str]:
+    """Resolve contents, load canonical processors and optionally warm model paths.
+
+    Pass ``warmup=False`` when the caller will warm on the policy worker thread
+    (required for ``torch.compile(..., mode="reduce-overhead")`` CUDA graphs).
+    """
     action_feature = cfg.action_feature
     if action_feature is None:
         # ServerConfig.__post_init__ already rejects this; the check only narrows the type.
@@ -134,6 +138,14 @@ def load_deployment(cfg: ServerConfig) -> tuple[PolicyRunner, str]:
         policy_cfg = replace(policy_cfg, **overrides)
     policy_cfg.pretrained_path = path
     policy_cfg.device = cfg.model.device
+    if cfg.model.text_tokenizer_name:
+        if not hasattr(policy_cfg, "text_tokenizer_name"):
+            raise ValueError("This checkpoint has no text_tokenizer_name to override")
+        policy_cfg.text_tokenizer_name = cfg.model.text_tokenizer_name
+    if cfg.model.compile_mode:
+        if not hasattr(policy_cfg, "compile_mode"):
+            raise ValueError("This checkpoint has no compile_mode to override")
+        policy_cfg.compile_mode = cfg.model.compile_mode
     modes = tuple(ExecutionMode(mode) for mode in cfg.execution.supported_modes)
     if any(mode != ExecutionMode.CHUNK for mode in modes):
         # Some RTC-capable policy configs obtain this runtime attribute locally
@@ -151,13 +163,22 @@ def load_deployment(cfg: ServerConfig) -> tuple[PolicyRunner, str]:
     else:
         policy = policy_class.from_pretrained(path, config=policy_cfg)
     policy.to(cfg.model.device).eval()
+    preprocessor_overrides = {
+        "device_processor": {"device": cfg.model.device},
+        "rename_observations_processor": {"rename_map": {}},
+    }
+    if cfg.model.text_tokenizer_name:
+        # Saved processor JSON keeps the training machine's tokenizer path.
+        preprocessor_overrides["fineart_vla_text_tokenizer"] = {
+            "tokenizer_name": cfg.model.text_tokenizer_name
+        }
+        preprocessor_overrides["action_tokenizer_processor"] = {
+            "paligemma_tokenizer_name": cfg.model.text_tokenizer_name
+        }
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=policy_cfg,
         pretrained_path=path,
-        preprocessor_overrides={
-            "device_processor": {"device": cfg.model.device},
-            "rename_observations_processor": {"rename_map": {}},
-        },
+        preprocessor_overrides=preprocessor_overrides,
     )
     runner = PolicyRunner(
         policy,
@@ -175,6 +196,17 @@ def load_deployment(cfg: ServerConfig) -> tuple[PolicyRunner, str]:
     if execution_steps is not None and runner.capabilities.execution_steps != execution_steps:
         raise ValueError("Loaded policy does not honor the requested execution.n_action_steps slice")
     identity = artifact_identity(artifacts, _inference_identity(cfg, policy_cfg))
+    if warmup:
+        warmup_runner(runner, cfg)
+    return runner, identity
+
+
+def warmup_runner(runner: PolicyRunner, cfg: ServerConfig) -> None:
+    """Run the configured action/language warmups and reset session state.
+
+    ``reduce-overhead`` CUDA graphs must be captured on the same thread that later
+    serves inference. The policy server therefore calls this from the worker thread.
+    """
     warmup = ObservationSnapshot(
         {feature.name: np.zeros(feature.shape, dtype=feature.dtype) for feature in cfg.features},
         0.0,
@@ -212,4 +244,3 @@ def load_deployment(cfg: ServerConfig) -> tuple[PolicyRunner, str]:
                 )
     finally:
         runner.reset(full=True)
-    return runner, identity
