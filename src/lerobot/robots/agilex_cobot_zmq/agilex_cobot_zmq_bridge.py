@@ -26,6 +26,7 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
+# Absolute imports: this file is run as a script on the ROS1 machine, not as a package.
 from ros_manager import AgilexCobotROSManager  # noqa: E402
 from ros_manager_config import AgilexCobotROSManagerConfig  # noqa: E402
 
@@ -77,6 +78,11 @@ def _parse_args():
     parser.add_argument("--watchdog-s", type=float, default=0.5)
     parser.add_argument("--with-mobile-base", action="store_true")
     parser.add_argument("--ros-timeout-s", type=float, default=30.0)
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Log obs publish / cmd receive stats about once per second",
+    )
     return parser.parse_args()
 
 
@@ -93,20 +99,41 @@ def _encode_images(cameras, quality):
 
 def _observation_loop(ros, obs_socket, stop, args):
     period = 1.0 / args.obs_hz
+    sent = 0
+    dropped = 0
+    last_log = 0.0
     while not stop.is_set() and not rospy.is_shutdown():
         started = time.monotonic()
         try:
             joints, cameras, endpose = ros.get_synchronized_observation()
+            encoded = _encode_images(cameras, args.jpeg_quality)
             packet = protocol.encode_observation(
                 joints=joints,
-                jpeg_images=_encode_images(cameras, args.jpeg_quality),
+                jpeg_images=encoded,
                 timestamp=time.time(),
                 endpose=endpose,
             )
             try:
                 obs_socket.send(packet, flags=zmq.NOBLOCK)
+                sent += 1
             except zmq.Again:
-                pass
+                dropped += 1
+            if args.debug and (time.monotonic() - last_log) >= 1.0:
+                last_log = time.monotonic()
+                cam_info = {
+                    name: f"jpeg={len(blob)}B mean={float(cameras[name].mean()):.1f}"
+                    if name in cameras and cameras[name] is not None
+                    else "missing"
+                    for name, blob in encoded.items()
+                }
+                logger.info(
+                    "ZMQ obs published=%d dropped=%d bytes=%d joints=%d cams=%s",
+                    sent,
+                    dropped,
+                    len(packet),
+                    len(joints),
+                    cam_info,
+                )
         except Exception as exc:
             logger.warning("Failed to build an observation: %s", exc)
         remaining = period - (time.monotonic() - started)
@@ -143,12 +170,17 @@ def _command_loop(ros, cmd_socket, rpc_socket, stop, args):
     poller.register(rpc_socket, zmq.POLLIN)
     last_command = None
     watchdog_latched = False
+    cmd_count = 0
+    last_cmd_log = 0.0
     while not stop.is_set() and not rospy.is_shutdown():
         events = dict(poller.poll(50))
         if rpc_socket in events:
             raw = rpc_socket.recv_string()
             try:
-                reply = _apply_rpc(ros, protocol.decode_command(raw))
+                decoded = protocol.decode_command(raw)
+                if args.debug:
+                    logger.info("ZMQ rpc recv type=%s", decoded.get("type"))
+                reply = _apply_rpc(ros, decoded)
             except Exception as exc:
                 logger.exception("RPC command failed")
                 reply = {"ok": False, "error": str(exc)}
@@ -161,8 +193,19 @@ def _command_loop(ros, cmd_socket, rpc_socket, stop, args):
                 if message.get("type") != "arm":
                     raise ValueError(f"unknown command {message.get('type')}")
                 _apply_arm_command(ros, message)
+                cmd_count += 1
                 last_command = time.monotonic()
                 watchdog_latched = False
+                if args.debug and (time.monotonic() - last_cmd_log) >= 1.0:
+                    last_cmd_log = time.monotonic()
+                    left = message.get("left")
+                    right = message.get("right")
+                    logger.info(
+                        "ZMQ cmd #%d left=%s right=%s",
+                        cmd_count,
+                        None if left is None else [round(float(v), 3) for v in left],
+                        None if right is None else [round(float(v), 3) for v in right],
+                    )
             except Exception as exc:
                 logger.warning("Ignored a bad arm command: %s", exc)
         if (

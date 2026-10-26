@@ -1,5 +1,8 @@
 # Copy of the verified AgilexCobotROSManager, kept in this folder so the robot
 # only needs agilex_cobot_zmq/. The original remains in lerobot.utils for agilex_cobot.
+# Postpone annotation evaluation so list[str] / | work on ROS1 Python 3.8.
+from __future__ import annotations
+
 import logging
 import threading
 import time

@@ -20,13 +20,30 @@
 #   /subtask <instruction>
 #   /start
 # /stop ends the session.
+#
+# Debug ZMQ obs/cmd latency on this machine:
+#   DEBUG_ZMQ=1 bash scripts/run_inference_zmq.sh
+# On the robot bridge, add --debug to start_bridge.sh / the bridge script.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PYTHONPATH="src:${PYTHONPATH:-}"
 
 POLICY_PATH="${POLICY_PATH:-/home/xlk/work/lerobot/checkpoints/fineart-vla}"
 ROBOT_IP="${ROBOT_IP:-192.168.1.139}"
+# Must match paligemma_tokenizer_name inside ${POLICY_PATH}/policy_preprocessor.json
+# (checkpoint was saved under /workspace/... on H20; rewrite that path locally if needed).
 TOKENIZER_PATH="${TOKENIZER_PATH:-/home/xlk/work/lerobot/pretrain_model/paligemma-3b-pt-224}"
+DEBUG_ZMQ="${DEBUG_ZMQ:-0}"
+
+if [[ ! -d "$TOKENIZER_PATH" ]]; then
+  echo "ERROR: TOKENIZER_PATH does not exist: $TOKENIZER_PATH" >&2
+  exit 1
+fi
+
+EXTRA_ROBOT_ARGS=()
+if [[ "$DEBUG_ZMQ" == "1" || "$DEBUG_ZMQ" == "true" ]]; then
+  EXTRA_ROBOT_ARGS+=(--robot.debug_zmq=true)
+fi
 
 exec python3 -m lerobot.scripts.lerobot_rollout \
     --robot.type=agilex_cobot_zmq \
@@ -46,4 +63,5 @@ exec python3 -m lerobot.scripts.lerobot_rollout \
     --torch_compile_mode=reduce-overhead \
     --interactive=true \
     --autosteer_interval_s=3 \
-    --return_to_initial_position=true
+    --return_to_initial_position=true \
+    "${EXTRA_ROBOT_ARGS[@]}"

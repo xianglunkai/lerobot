@@ -47,13 +47,24 @@ class AgilexCobotZmq(Robot):
         self._latest_endpose: dict[str, np.ndarray] = {}
         self._latest_images: dict[str, np.ndarray] = {}
         self._last_obs_time = 0.0
+        self._last_bridge_stamp = 0.0
         self._stale_warned = False
+        self._last_debug_obs_log = 0.0
+        self._last_debug_cmd_log = 0.0
+        self._obs_recv_count = 0
+        self._cmd_send_count = 0
+        self._obs_bytes_window = 0
+        self._obs_window_t0 = 0.0
+        self._obs_count_window = 0
 
         self._last_call_eef_time = None
         self._filtered_vel = np.zeros(6, dtype=np.float64)
         self._integrated_q = None
         self._servo_joint_state_initialized = False
         self._kinematics = None
+
+    def _debug_due(self, last_t: float) -> bool:
+        return self.config.debug_zmq and (time.time() - last_t) >= self.config.debug_zmq_every_s
 
     @property
     def left_arm_joints(self) -> list[str]:
@@ -155,8 +166,11 @@ class AgilexCobotZmq(Robot):
             time.sleep(0.05)
         self.disconnect()
         raise DeviceNotConnectedError(
-            f"Timed out waiting for the AgileX ZMQ bridge at {self.config.remote_ip}. "
-            "Start src/lerobot/robots/agilex_cobot_zmq/run_agilex_cobot_zmq_bridge.sh in the ROS1 Python 3.8 environment first."
+            f"Timed out waiting for ZMQ observations from {self.config.remote_ip}:"
+            f"{self.config.port_zmq_observations}. "
+            "This PC does not need ROS1 — only the robot runs the bridge "
+            "(start_bridge.sh / run_agilex_cobot_zmq_bridge.sh --bind-host=0.0.0.0). "
+            "Check: robot reachable, bridge running, and --robot.remote_ip matches."
         )
 
     def disconnect(self) -> None:
@@ -360,10 +374,22 @@ class AgilexCobotZmq(Robot):
     def _send_command(self, payload: dict) -> None:
         try:
             self.zmq_cmd_socket.send_string(encode_command(payload))
+            self._cmd_send_count += 1
+            if self._debug_due(self._last_debug_cmd_log):
+                self._last_debug_cmd_log = time.time()
+                left = payload.get("left")
+                right = payload.get("right")
+                logger.info(
+                    "ZMQ cmd #%d left=%s right=%s",
+                    self._cmd_send_count,
+                    None if left is None else [round(float(v), 3) for v in left],
+                    None if right is None else [round(float(v), 3) for v in right],
+                )
         except self._zmq.Again:
             logger.warning("Dropped an arm command because the ZMQ bridge is not reading")
 
     def _rpc(self, payload: dict) -> dict:
+        t0 = time.perf_counter()
         try:
             self.zmq_rpc_socket.send_string(json.dumps(payload))
             reply = json.loads(self.zmq_rpc_socket.recv_string())
@@ -372,6 +398,13 @@ class AgilexCobotZmq(Robot):
             raise TimeoutError("AgileX ZMQ bridge did not answer the reset command") from exc
         if not reply.get("ok", False):
             raise RuntimeError(reply.get("error", "AgileX ZMQ bridge rejected the command"))
+        if self.config.debug_zmq:
+            logger.info(
+                "ZMQ rpc type=%s ok=%s rtt=%.1fms",
+                payload.get("type"),
+                reply.get("ok"),
+                (time.perf_counter() - t0) * 1000.0,
+            )
         return reply
 
     def _reopen_rpc(self) -> None:
@@ -411,9 +444,46 @@ class AgilexCobotZmq(Robot):
         images = {}
         for name, blob in header.get("images", {}).items():
             frame = cv2.imdecode(np.frombuffer(blob, dtype=np.uint8), cv2.IMREAD_COLOR)
-            if frame is not None:
-                images[name] = frame
+            if frame is None:
+                continue
+            # Training loads RGB (PIL/PyAV). OpenCV JPEG decode is BGR.
+            if self.config.convert_bgr_to_rgb:
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            images[name] = frame
         if images:
             self._latest_images = images
-        self._last_obs_time = time.time()
+        now = time.time()
+        self._last_obs_time = now
+        self._last_bridge_stamp = float(header.get("t", 0.0) or 0.0)
+        self._obs_recv_count += 1
+        packet_bytes = len(latest)
+        if self._obs_window_t0 == 0.0:
+            self._obs_window_t0 = now
+        self._obs_bytes_window += packet_bytes
+        self._obs_count_window += 1
+        if self._debug_due(self._last_debug_obs_log):
+            dt = max(now - self._obs_window_t0, 1e-6)
+            mbps = self._obs_bytes_window * 8.0 / dt / 1e6
+            hz = self._obs_count_window / dt
+            self._last_debug_obs_log = now
+            bridge_age_ms = (now - self._last_bridge_stamp) * 1000.0 if self._last_bridge_stamp else float("nan")
+            img_stats = {
+                name: f"shape={tuple(img.shape)} mean={float(img.mean()):.1f}"
+                for name, img in self._latest_images.items()
+            }
+            missing = [name for name in self.camera_names if name not in self._latest_images]
+            logger.info(
+                "ZMQ obs #%d bytes=%d rate=%.1fHz bw=%.2fMbps bridge_age=%.1fms joints=%d cams=%s missing=%s",
+                self._obs_recv_count,
+                packet_bytes,
+                hz,
+                mbps,
+                bridge_age_ms,
+                len(self._latest_joints),
+                img_stats,
+                missing,
+            )
+            self._obs_bytes_window = 0
+            self._obs_count_window = 0
+            self._obs_window_t0 = now
         return header

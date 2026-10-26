@@ -381,10 +381,11 @@ class FineARTVLATextTokenizerStep(ProcessorStep):
                     m["content"] = f"{base}, State: {state_str};"
                     break
         prompt, spans = _format_messages(messages, target_indices, getattr(tokenizer, "eos_token", None))
-        if "message_streams" not in complementary and not message_streams and not target_indices:
-            # Runtime queries contain semantic prompt turns without training labels.
-            # Match the prefix immediately preceding an assistant target in training.
-            prompt += "Assistant:"
+        if not target_indices:
+            # Runtime queries (VQA / next_subtask) have no supervised assistant span.
+            # Open the assistant turn the same way training prefixes a target reply.
+            if not prompt.rstrip().endswith("Assistant:"):
+                prompt += "Assistant:"
 
         encoded = tokenizer(
             prompt,

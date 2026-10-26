@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Postpone annotation evaluation so list[str] / | work on ROS1 Python 3.8.
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from typing import Dict, Any
 

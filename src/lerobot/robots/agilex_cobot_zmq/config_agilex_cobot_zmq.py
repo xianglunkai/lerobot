@@ -20,6 +20,9 @@ class AgilexCobotZmqConfig(RobotConfig):
     obs_stale_timeout_s: float = 1.0
     command_send_timeout_ms: int = 100
     rpc_timeout_ms: int = 30000
+    # Log obs age / image stats / outgoing joint cmds (INFO, rate-limited).
+    debug_zmq: bool = False
+    debug_zmq_every_s: float = 1.0
 
     use_external_commands: bool = False
 
@@ -31,6 +34,9 @@ class AgilexCobotZmqConfig(RobotConfig):
     with_front_camera: bool = True
     image_height: int = 480
     image_width: int = 640
+    # Keep false when Rerun colors look correct (this ROS/JPEG path). Set true
+    # only if red/blue are swapped in Rerun relative to the real cameras.
+    convert_bgr_to_rgb: bool = False
 
     left_arm_joints: list[str] = field(
         default_factory=lambda: [
