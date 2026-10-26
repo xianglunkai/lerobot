@@ -18,9 +18,13 @@
 #
 # Live cameras + joint scalars in Rerun:
 #   DISPLAY_DATA=1 bash scripts/run_remote_rollout.sh
-# ZMQ obs bandwidth / age (client) + keep policy-server progress lines visible:
+# ZMQ obs bandwidth / age (client):
 #   DEBUG_ZMQ=1 bash scripts/run_remote_rollout.sh
-# Server already prints every ~5s: worker mean/max = inference latency.
+# Detailed client logs (DEBUG also keeps interactive from muting INFO/DEBUG):
+#   LOG_LEVEL=DEBUG bash scripts/run_remote_rollout.sh
+# Local dataset recording while keeping /start /stop (default on):
+#   RECORD=1 bash scripts/run_remote_rollout.sh
+#   RECORD=0 bash scripts/run_remote_rollout.sh   # viz/logs only
 #
 # First RTC chunk after admit can take tens of seconds under torch.compile;
 # max_observation_age_s must cover that or the client faults with
@@ -33,16 +37,46 @@ ROBOT_IP="${ROBOT_IP:-192.168.1.139}"
 SERVER_ENDPOINT="${SERVER_ENDPOINT:-tcp/127.0.0.1:7447}"
 DISPLAY_DATA="${DISPLAY_DATA:-1}"
 DEBUG_ZMQ="${DEBUG_ZMQ:-1}"
+LOG_LEVEL="${LOG_LEVEL:-DEBUG}"
+LOG_DIR="${LOG_DIR:-logs}"
+RECORD="${RECORD:-1}"
+DATASET_ROOT="${DATASET_ROOT:-data/rollout_fineart_debug}"
+DATASET_REPO_ID="${DATASET_REPO_ID:-local/rollout_fineart_debug}"
+DATASET_TASK="${DATASET_TASK:-Pick up the zip tie}"
+
+mkdir -p "${LOG_DIR}"
+LOG_FILE="${LOG_DIR}/fineart_client.log"
 
 EXTRA_ARGS=()
 if [[ "$DISPLAY_DATA" == "1" || "$DISPLAY_DATA" == "true" ]]; then
   EXTRA_ARGS+=(--display_data=true --display_mode=rerun)
 fi
 if [[ "$DEBUG_ZMQ" == "1" || "$DEBUG_ZMQ" == "true" ]]; then
-  EXTRA_ARGS+=(--robot.debug_zmq=true --inference.log_level=INFO)
+  EXTRA_ARGS+=(--robot.debug_zmq=true)
+fi
+EXTRA_ARGS+=(--inference.log_level="${LOG_LEVEL}")
+
+# sentry keeps interactive (/start,/stop,/subtask) and always-on recording.
+if [[ "$RECORD" == "1" || "$RECORD" == "true" ]]; then
+  # LeRobotDataset.create() requires the root path to not exist yet.
+  mkdir -p "$(dirname "${DATASET_ROOT}")"
+  if [[ -e "${DATASET_ROOT}" ]]; then
+    echo "ERROR: dataset root already exists: ${DATASET_ROOT}" >&2
+    echo "Remove it or set DATASET_ROOT to a new path." >&2
+    exit 1
+  fi
+  EXTRA_ARGS+=(
+    --strategy.type=sentry
+    --dataset.repo_id="${DATASET_REPO_ID}"
+    --dataset.root="${DATASET_ROOT}"
+    --dataset.single_task="${DATASET_TASK}"
+    --dataset.push_to_hub=false
+  )
+  echo "Recording dataset under ${DATASET_ROOT} (repo_id=${DATASET_REPO_ID})"
 fi
 
-exec python3 -m lerobot.scripts.lerobot_rollout \
+echo "Client logging to ${LOG_FILE} (level=${LOG_LEVEL})"
+python3 -m lerobot.scripts.lerobot_rollout \
     --inference.type=remote \
     --inference.endpoint="${SERVER_ENDPOINT}" \
     --inference.deployment=zip_tie \
@@ -60,4 +94,5 @@ exec python3 -m lerobot.scripts.lerobot_rollout \
     --interactive=true \
     --autosteer_interval_s=3 \
     --return_to_initial_position=true \
-    "${EXTRA_ARGS[@]}"
+    "${EXTRA_ARGS[@]}" \
+    2>&1 | tee -i "${LOG_FILE}"

@@ -163,9 +163,12 @@ class InteractiveSession:
 
     def run(self) -> None:
         """Run the session until ``/stop``, EOF, engine failure, or a shutdown signal."""
+        # Keep INFO/DEBUG visible when the operator asked for detailed logs (tee / diagnosis).
+        keep_logs = str(self._runtime.cfg.inference.log_level).upper() == "DEBUG"
+        mute = contextlib.nullcontext() if keep_logs else _mute_system_output()
         try:
-            with _mute_system_output(), self._route_cadence_reports():
-                self._print(self._render_banner())
+            with mute, self._route_cadence_reports():
+                self._print(self._render_banner(keep_logs=keep_logs))
                 self._listener.start()
                 try:
                     self.controller.serve()
@@ -393,14 +396,21 @@ class InteractiveSession:
         lines = [f"  {usages[name]:<{width}}   {entry[2]}" for name, entry in self._commands.items()]
         return "Available commands:\n" + "\n".join(lines)
 
-    def _render_banner(self) -> str:
+    def _render_banner(self, *, keep_logs: bool = False) -> str:
+        log_note = (
+            "Detailed logs stay on (inference.log_level=DEBUG); expect chat and log lines to interleave.\n"
+            if keep_logs
+            else (
+                "Routine system logs and warnings are muted during the session (errors and the "
+                "cadence summary of each run still show).\n"
+            )
+        )
         return (
             f"{_BANNER_RULE}\n"
             "Interactive rollout session — the robot will NOT move until you type /start.\n"
             f"Task: {_format_task(self.controller.initial_task)}\n"
             f"{self._render_help()}\n"
-            "Routine system logs and warnings are muted during the session (errors and the "
-            "cadence summary of each run still show).\n"
+            f"{log_note}"
             f"{_BANNER_RULE}"
         )
 
