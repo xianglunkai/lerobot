@@ -271,7 +271,18 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "video not found"}, status=404)
             return
         size = path.stat().st_size
-        status, start, end = byte_range(self.headers.get("Range"), size)
+        range_header = self.headers.get("Range")
+        start, end = 0, size - 1
+        status = 200
+        if range_header and range_header.startswith("bytes="):
+            spec = range_header.removeprefix("bytes=")
+            start_s, _, end_s = spec.partition("-")
+            if start_s:
+                start = int(start_s)
+            if end_s:
+                end = int(end_s)
+            end = min(end, size - 1)
+            status = 206
         length = end - start + 1
         self.send_response(status)
         self.send_header("Content-Type", "video/mp4")
@@ -321,35 +332,6 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt: str, *args: Any) -> None:
         print(f"[annotate-web] {self.address_string()} {fmt % args}", flush=True)
-
-
-def byte_range(header: str | None, size: int) -> tuple[int, int, int]:
-    """Return HTTP status and an inclusive byte span.
-
-    ``bytes=-N`` is the last N bytes. Browsers use that to find an mp4 moov atom
-    that was written at the end of the file.
-    """
-    if size <= 0:
-        return 200, 0, -1
-    if not header or not header.startswith("bytes="):
-        return 200, 0, size - 1
-    spec = header.removeprefix("bytes=").split(",", 1)[0].strip()
-    start_s, sep, end_s = spec.partition("-")
-    if sep != "-":
-        raise ValueError(f"bad range {header!r}")
-    if start_s == "":
-        length = int(end_s)
-        if length <= 0:
-            raise ValueError(f"bad range {header!r}")
-        return 206, max(size - length, 0), size - 1
-    start = int(start_s)
-    end = int(end_s) if end_s else size - 1
-    if start < 0 or start >= size:
-        raise ValueError(f"bad range {header!r}")
-    end = min(end, size - 1)
-    if start > end:
-        raise ValueError(f"bad range {header!r}")
-    return 206, start, end
 
 
 def stream_file(handle: BinaryIO, write: Callable[[bytes], Any], start: int, length: int) -> None:

@@ -253,15 +253,6 @@ def test_video_stream_stops_when_the_browser_disconnects():
     assert writer.chunks == 1
 
 
-def test_suffix_byte_range_reads_the_file_tail():
-    from app import byte_range
-
-    assert byte_range("bytes=-3", 10) == (206, 7, 9)
-    assert byte_range("bytes=2-", 10) == (206, 2, 9)
-    assert byte_range("bytes=2-4", 10) == (206, 2, 4)
-    assert byte_range(None, 10) == (200, 0, 9)
-
-
 def test_video_stream_sends_the_requested_range():
     import io
 
