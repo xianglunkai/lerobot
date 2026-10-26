@@ -251,7 +251,14 @@ class RenderRuntimeMessagesStep(ComplementaryDataProcessorStep):
             bindings = dict.fromkeys(self.recipe.referenced_binding_names())
             bindings.update(complementary_data)
             bindings["task"] = text
-            messages = render_message_turns(self.recipe.prompt_turns("subtask"), bindings)[MESSAGES_RENDERED]
+            rendered = render_message_turns(self.recipe.prompt_turns("subtask"), bindings)
+            messages = rendered[MESSAGES_RENDERED]
+            # Keep stream tags so the text tokenizer matches training (high_level,
+            # no proprio State: suffix) and still appends the Assistant: prefix.
+            if "message_streams" in rendered:
+                complementary_data["message_streams"] = rendered["message_streams"]
+            if "target_message_indices" in rendered:
+                complementary_data["target_message_indices"] = rendered["target_message_indices"]
         else:
             raise ValueError(f"Unsupported query kind: {kind!r}. Expected one of: 'vqa', 'next_subtask'.")
 

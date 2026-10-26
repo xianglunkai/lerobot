@@ -41,6 +41,7 @@ from lerobot.utils.constants import (
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_CAUSAL_MARKS,
     OBS_LANGUAGE_TOKENS,
+    OBS_STATE,
 )
 from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.import_utils import (
@@ -1376,11 +1377,19 @@ class FineARTVLAPolicy(PI05Policy):
             # Reject FAST/loc leakage that decodes to mostly non-text for autosteer.
             ascii_ratio = sum(ch.isascii() and ch.isprintable() for ch in text) / len(text)
             if ascii_ratio < 0.7:
+                token_ids = getattr(self, "_last_generated_token_ids", [])[:32]
+                logger.error(
+                    "FineART-VLA next_subtask unreadable (ascii_ratio=%.2f); token_ids[:32]=%s preview=%r",
+                    ascii_ratio,
+                    token_ids,
+                    text[:64],
+                )
                 raise ValueError(
                     "FineART-VLA next_subtask answer is not readable text "
                     f"(ascii_ratio={ascii_ratio:.2f}, preview={text[:48]!r}). "
-                    "Blank/OOD cameras often trigger this; use a shorter goal, "
-                    "/subtask, or real camera frames."
+                    "Blank/OOD cameras, a PI0.5-base init without FineART mid-training, "
+                    "or a weak text head often trigger this; use /subtask, or start from "
+                    "lerobot/fineart_vla_base before robot fine-tuning."
                 )
         return text
 
@@ -1422,6 +1431,17 @@ class FineARTVLAPolicy(PI05Policy):
             pass
         if eos_token_id is not None:
             special_ids.add(int(eos_token_id))
+
+        # Match action inference: checkpoints trained with use_visual_memory expect a
+        # (B, T, ...) image stack. Skipping this made next_subtask/VQA see a single
+        # frame and collapse to non-text tokens even when cameras looked fine.
+        if self.config.use_visual_memory or self.config.use_proprioceptive_memory:
+            has_temporal_input = any(
+                key in batch and torch.is_tensor(batch[key]) and batch[key].ndim == 5
+                for key in self.config.image_features
+            )
+            if not has_temporal_input:
+                batch = self._stack_inference_memory(batch)
 
         images, img_masks = self._preprocess_images(batch)
         tokens = batch[OBS_LANGUAGE_TOKENS]
@@ -1511,6 +1531,7 @@ class FineARTVLAPolicy(PI05Policy):
                 current_att = torch.cat([current_att, ones_step], dim=1)
 
         decoded = tokenizer.decode(generated, skip_special_tokens=True).strip()
+        self._last_generated_token_ids = list(generated)
         if not decoded and generated:
             logger.debug("FineART-VLA generated an empty text response; raw token IDs: %s", generated[:16])
         return decoded
@@ -1693,6 +1714,13 @@ class FineARTVLAPolicy(PI05Policy):
     ) -> Tensor:
         """Base ``predict_action_chunk`` plus causal marks on the generated-subtask span."""
         self.eval()
+        if self.config.use_visual_memory or self.config.use_proprioceptive_memory:
+            has_temporal_input = any(
+                key in batch and torch.is_tensor(batch[key]) and batch[key].ndim == 5
+                for key in self.config.image_features
+            ) or (OBS_STATE in batch and torch.is_tensor(batch[OBS_STATE]) and batch[OBS_STATE].ndim == 3)
+            if not has_temporal_input:
+                batch = self._stack_inference_memory(batch)
         images, img_masks = self._preprocess_images(batch)
         tokens = batch[OBS_LANGUAGE_TOKENS]
         masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
