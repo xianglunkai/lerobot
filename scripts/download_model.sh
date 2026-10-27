@@ -3,8 +3,13 @@ set -euo pipefail
 
 # Download source: auto (try HF then ModelScope), hf, modelscope
 DOWNLOAD_SOURCE="${DOWNLOAD_SOURCE:-auto}"
-export HF_HOME="${HF_HOME:-/workspace/huggingface}"
-export HF_ENDPOINT_PUBLIC="${HF_ENDPOINT_PUBLIC:-https://hf-mirror.com}"
+export HF_HOME="${HF_HOME:-/data/huggingface}"
+export HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}"
+export HF_ENDPOINT_PUBLIC="${HF_ENDPOINT_PUBLIC:-${HF_ENDPOINT}}"
+export HF_ENDPOINT_GATED="${HF_ENDPOINT_GATED:-${HF_ENDPOINT}}"
+# hf_transfer can fail on large files via mirror; default off.
+export HF_HUB_ENABLE_HF_TRANSFER="${HF_HUB_ENABLE_HF_TRANSFER:-0}"
+
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -24,6 +29,10 @@ modelscope_ids() {
         lerobot/pi05_base)
             echo "lerobot/pi05_base AI-ModelScope/pi05_base"
             ;;
+        lerobot/FineART-VLA-subtask-midtrained|lerobot/fineart_vla_base)
+            # No reliable ModelScope mirror yet; HF gated (Gemma).
+            echo ""
+            ;;
         *)
             echo ""
             ;;
@@ -35,7 +44,7 @@ local_model_dir() {
         google/siglip-so400m-patch14-384) echo "${PRETRAIN_DIR}/siglip-so400m-patch14-384" ;;
         google/gemma-3-270m) echo "${PRETRAIN_DIR}/gemma-3-270m" ;;
         lerobot/pi05_base) echo "${PRETRAIN_DIR}/pi05_base" ;;
-        lerobot/fineart_vla_base) echo "${PRETRAIN_DIR}/fineart_vla_base" ;;
+        lerobot/FineART-VLA-subtask-midtrained) echo "${PRETRAIN_DIR}/FineART-VLA-subtask-midtrained" ;;
         *) echo "${PRETRAIN_DIR}/$(echo "$1" | tr '/' '_')" ;;
     esac
 }
@@ -74,10 +83,13 @@ download_via_hf() {
             echo ">>> [HF] ${repo_id} is gated and no HF token is configured"
             return 1
         fi
+        # Use mirror by default: huggingface.co is often unreachable (Errno 101 / timeout).
+        # Override with HF_ENDPOINT_GATED=https://huggingface.co if you have direct access.
+        echo ">>> [HF] gated endpoint=${HF_ENDPOINT_GATED} hf_transfer=${HF_HUB_ENABLE_HF_TRANSFER}"
         if [[ -n "${local_dir}" ]]; then
-            env -u HF_ENDPOINT hf download "${repo_id}" --local-dir "${local_dir}"
+            HF_ENDPOINT="${HF_ENDPOINT_GATED}" hf download "${repo_id}" --local-dir "${local_dir}"
         else
-            env -u HF_ENDPOINT hf download "${repo_id}"
+            HF_ENDPOINT="${HF_ENDPOINT_GATED}" hf download "${repo_id}"
         fi
     elif [[ -n "${local_dir}" ]]; then
         HF_ENDPOINT="${HF_ENDPOINT_PUBLIC}" hf download "${repo_id}" --local-dir "${local_dir}"
@@ -127,7 +139,7 @@ download_repo() {
         return 0
     fi
 
-    rm -rf "${local_dir}"
+    # Keep existing files so interrupted hf downloads can resume (.incomplete / cache).
     mkdir -p "${local_dir}"
 
     if [[ "${DOWNLOAD_SOURCE}" == "hf" || "${DOWNLOAD_SOURCE}" == "auto" ]]; then
@@ -137,8 +149,12 @@ download_repo() {
     fi
 
     if [[ "${hf_ok}" == "false" && ( "${DOWNLOAD_SOURCE}" == "modelscope" || "${DOWNLOAD_SOURCE}" == "auto" ) ]]; then
-        rm -rf "${local_dir}"
-        mkdir -p "${local_dir}"
+        # ModelScope path still needs a clean tree; only wipe if HF left nothing usable.
+        if ! compgen -G "${local_dir}/.cache/huggingface/download/**/*.incomplete" >/dev/null \
+            && ! is_complete_model_dir "${local_dir}"; then
+            rm -rf "${local_dir}"
+            mkdir -p "${local_dir}"
+        fi
         if download_via_modelscope "${repo_id}" "${local_dir}"; then
             ms_ok=true
         fi
@@ -168,7 +184,7 @@ PRETRAIN_DIR=${PRETRAIN_DIR}
 VALUE_VISION_REPO_ID=${PRETRAIN_DIR}/siglip-so400m-patch14-384
 VALUE_LANGUAGE_REPO_ID=${PRETRAIN_DIR}/gemma-3-270m
 PI05_PRETRAINED_PATH=${PRETRAIN_DIR}/pi05_base
-FINEART_VLA_PRETRAINED_PATH=${PRETRAIN_DIR}/fineart_vla_base
+FINEART_VLA_PRETRAINED_PATH=${PRETRAIN_DIR}/FineART-VLA-subtask-midtrained
 EOF
     echo ">>> Wrote ${MODEL_PATHS_FILE}"
 }
@@ -176,11 +192,8 @@ EOF
 # --- RECAP value training backbones (Step 1) ---
 download_repo "google/siglip-so400m-patch14-384" false
 download_repo "google/gemma-3-270m" true
+download_repo "lerobot/FineART-VLA-subtask-midtrained" true
 
-# --- VLA finetuning base ---
-# download_repo "lerobot/pi05_base" false
-# Gated: accept the license on Hugging Face, then `hf auth login` in this environment.
-download_repo "lerobot/fineart_vla_base" true
 
 write_model_paths_file
 
