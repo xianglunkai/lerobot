@@ -21,13 +21,15 @@ and :class:`DatasetContext` — assembled into :class:`RolloutContext`.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections import deque
 from collections.abc import Callable
 from copy import copy
 from dataclasses import dataclass, field
+from pathlib import Path
 from threading import Event
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import torch
 
@@ -66,7 +68,7 @@ from lerobot.processor import (
 from lerobot.remote_inference import RemoteClient, RemoteInferenceEngine
 from lerobot.robots import Robot, make_robot_from_config
 from lerobot.teleoperators import Teleoperator, make_teleoperator_from_config
-from lerobot.utils.constants import OBS_STATE
+from lerobot.utils.constants import OBS_STATE, POLICY_PREPROCESSOR_DEFAULT_NAME
 from lerobot.utils.feature_utils import combine_feature_dicts, hw_to_dataset_features
 from lerobot.utils.import_utils import _peft_available, require_package
 
@@ -81,6 +83,13 @@ else:
     PeftModel = None
 
 logger = logging.getLogger(__name__)
+
+# Saved processor steps that load the PaliGemma/text tokenizer by name.
+_TEXT_TOKENIZER_STEP_FIELDS = {
+    "fineart_vla_text_tokenizer": "tokenizer_name",
+    "tokenizer_processor": "tokenizer_name",
+    "action_tokenizer_processor": "paligemma_tokenizer_name",
+}
 
 
 def _wrap_predict_action_chunk_with_torch_compile(
@@ -438,6 +447,34 @@ def _build_rollout_dataset(cfg: RolloutConfig, robot: Robot, dataset_features: d
     return dataset
 
 
+def _text_tokenizer_preprocessor_overrides(
+    pretrained_path: str | Path | None,
+    tokenizer_name: str | None,
+) -> dict[str, dict[str, str]]:
+    """Point saved tokenizer steps at the runtime tokenizer path.
+
+    Training writes the machine path into ``policy_preprocessor.json``.
+    ``--policy.text_tokenizer_name`` updates the policy config, but those
+    processor steps are rebuilt from the JSON and otherwise keep the old path.
+    """
+    if not pretrained_path or not tokenizer_name:
+        return {}
+    config_path = Path(pretrained_path) / f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
+    if not config_path.is_file():
+        return {}
+    loaded = json.loads(config_path.read_text())
+    overrides: dict[str, dict[str, str]] = {}
+    for step in loaded.get("steps", []):
+        step_name = step.get("registry_name")
+        if step_name is None and "class" in step:
+            step_name = str(step["class"]).rsplit(".", 1)[-1]
+        field_name = _TEXT_TOKENIZER_STEP_FIELDS.get(step_name or "")
+        if field_name is None or step_name is None:
+            continue
+        overrides[step_name] = {field_name: tokenizer_name}
+    return overrides
+
+
 def build_rollout_context(
     cfg: RolloutConfig,
     shutdown_event: Event,
@@ -581,15 +618,29 @@ def build_rollout_context(
                 cfg.rename_map,
             )
 
+        preprocessor_overrides: dict[str, Any] = {
+            "device_processor": {"device": cfg.device},
+            "rename_observations_processor": {"rename_map": cfg.rename_map},
+        }
+        tokenizer_name = getattr(policy_config, "text_tokenizer_name", None)
+        tokenizer_overrides = _text_tokenizer_preprocessor_overrides(
+            policy_config.pretrained_path,
+            tokenizer_name,
+        )
+        if tokenizer_overrides:
+            logger.info(
+                "Using text tokenizer '%s' for saved processor steps %s",
+                tokenizer_name,
+                sorted(tokenizer_overrides),
+            )
+        preprocessor_overrides.update(tokenizer_overrides)
+
         preprocessor, postprocessor = make_pre_post_processors(
             policy_cfg=policy_config,
             pretrained_path=policy_config.pretrained_path,
             pretrained_revision=policy_config.pretrained_revision,
             dataset_stats=dataset_stats,
-            preprocessor_overrides={
-                "device_processor": {"device": cfg.device},
-                "rename_observations_processor": {"rename_map": cfg.rename_map},
-            },
+            preprocessor_overrides=preprocessor_overrides,
         )
 
         # Keep relative-action anchors fixed while the local policy's queued chunk drains.

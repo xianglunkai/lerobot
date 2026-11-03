@@ -10,8 +10,8 @@
 # torch.compile uses inductor reduce-overhead for both sample_actions and
 # predict_action_chunk. The first action chunks compile in place;
 # startup_timeout_s covers that wait.
-# This checkpoint was trained with rtc_training_max_delay=8 and chunk_size=32,
-# so execution_horizon must stay in [8, 24].
+# This checkpoint was trained with rtc_training_max_delay=10 and chunk_size=50,
+# so execution_horizon must stay in [10, 40].
 #
 # In the prompt:
 #   /autosteer Pick up zip tie, then thread its tail through the lock.
@@ -28,10 +28,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 export PYTHONPATH="src:${PYTHONPATH:-}"
 
-POLICY_PATH="${POLICY_PATH:-/home/xlk/work/lerobot/checkpoints/fineart-vla}"
+POLICY_PATH="${POLICY_PATH:-/home/xlk/work/lerobot/checkpoints/outputs/fineart_vla_zip_tie_clean_v30_ep127_lerobot_annotate/checkpoints/030000/pretrained_model}"
 ROBOT_IP="${ROBOT_IP:-192.168.1.139}"
-# Must match paligemma_tokenizer_name inside ${POLICY_PATH}/policy_preprocessor.json
-# (checkpoint was saved under /workspace/... on H20; rewrite that path locally if needed).
+# Checkpoints saved on the training machine keep /workspace/... in
+# policy_preprocessor.json. --policy.text_tokenizer_name rewrites those steps.
 TOKENIZER_PATH="${TOKENIZER_PATH:-/home/xlk/work/lerobot/pretrain_model/paligemma-3b-pt-224}"
 DEBUG_ZMQ="${DEBUG_ZMQ:-0}"
 
@@ -55,7 +55,7 @@ exec python3 -m lerobot.scripts.lerobot_rollout \
     --policy.compile_mode=reduce-overhead \
     --inference.type=rtc \
     --inference.rtc.mode=trained \
-    --inference.rtc.execution_horizon=10 \
+    --inference.rtc.execution_horizon=16 \
     --inference.queue_threshold=30 \
     --inference.startup_timeout_s=1800 \
     --fps=30 \

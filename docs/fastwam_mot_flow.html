@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MoT 一层内部计算</title>
+<style>
+  :root {
+    --bg: #f6f4ef;
+    --ink: #1c1915;
+    --muted: #5e584f;
+    --line: #ddd6c8;
+    --card: #fffdf8;
+    --mid: #efe8db;
+    --accent: #8c3a1e;
+    --on-accent: #fffdf8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Iowan Old Style", Palatino, "Songti SC", serif;
+    color: var(--ink);
+    background: var(--bg);
+    line-height: 1.5;
+  }
+  main { max-width: 1080px; margin: 0 auto; padding: 36px 22px 72px; }
+  h1 { font-size: 1.8rem; line-height: 1.2; margin: 0 0 0.4rem; }
+  h2 { font-size: 1.25rem; margin: 2rem 0 0.6rem; }
+  p { margin: 0.4rem 0 0.8rem; }
+  .lead { color: var(--muted); }
+  figure { margin: 0 0 1.2rem; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+  figcaption { color: var(--muted); font-size: 0.95rem; margin-top: 8px; }
+  svg { width: 100%; height: auto; display: block; }
+  .mask { width: 100%; border-collapse: separate; border-spacing: 8px; }
+  .mask th { color: var(--muted); font-weight: 650; text-align: left; font-size: 0.92rem; }
+  .mask td { border: 1px solid var(--line); border-radius: 6px; padding: 14px 12px; background: var(--bg); }
+  .mask td.yes { background: var(--mid); }
+  .mask td.link { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+  .mask td.no { color: #8a8378; }
+  code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.88rem; background: var(--mid); padding: 0.05em 0.3em; }
+</style>
+</head>
+<body>
+<main>
+<h1>MoT 一层内部计算</h1>
+<p class="lead">这是可拷贝的静态图，不依赖 Cursor。形状按螺丝分拣默认窗口：训练时视频 294 token、动作 32 token；推理时当前帧 98 token。来源是 <code>MoTLayer._forward_joint</code> 与 <code>FastWAMAttentionBlock</code>。</p>
+
+<h2>训练：一层联合注意力</h2>
+<figure>
+<svg viewBox="0 0 1040 860" role="img" aria-label="MoT 一层联合注意力流程图">
+  <defs>
+    <marker id="joint-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#1c1915"/>
+    </marker>
+  </defs>
+  <text x="20" y="18" fill="#5e584f" font-size="12">视频专家</text>
+  <text x="720" y="18" fill="#5e584f" font-size="12">动作专家</text>
+
+  <g><rect x="20" y="28" width="300" height="72" rx="6" fill="#fffdf8" stroke="#ddd6c8"/>
+    <text x="34" y="50" fill="#1c1915" font-size="13" font-weight="600">视频 token</text>
+    <text x="34" y="70" fill="#5e584f" font-size="12">[B, 294, 3072]</text>
+    <text x="34" y="86" fill="#5e584f" font-size="12">3 个 latent 帧 × 98 个 patch</text></g>
+  <g><rect x="720" y="28" width="300" height="72" rx="6" fill="#fffdf8" stroke="#ddd6c8"/>
+    <text x="734" y="50" fill="#1c1915" font-size="13" font-weight="600">动作 token</text>
+    <text x="734" y="70" fill="#5e584f" font-size="12">[B, 32, 1024]</text>
+    <text x="734" y="86" fill="#5e584f" font-size="12">action_encoder(加噪动作)</text></g>
+  <line x1="170" y1="100" x2="170" y2="124" stroke="#1c1915" stroke-width="1.5" marker-end="url(#joint-arrow)"/>
+  <line x1="870" y1="100" x2="870" y2="124" stroke="#1c1915" stroke-width="1.5" marker-end="url(#joint-arrow)"/>
+
+  <g><rect x="20" y="124" width="300" height="78" rx="6" fill="#fffdf8" stroke="#ddd6c8"/>
+    <text x="34" y="146" fill="#1c1915" font-size="13" font-weight="600">AdaLN，按 token</text>
+    <text x="34" y="166" fill="#5e584f" font-size="12">LN(x)·(1+scale)+shift</text>
+    <text x="34" y="182" fill="#5e584f" font-size="12">第 0 帧的时间步被写成 0</text></g>
+  <g><rect x="720" y="124" width="300" height="78" rx="6" fill="#fffdf8" stroke="#ddd6c8"/>
+    <text x="734" y="146" fill="#1c1915" font-size="13" font-weight="600">AdaLN，整段共用</text>
+    <text x="734" y="166" fill="#5e584f" font-size="12">同一个动作 timestep</text>
+    <text x="734" y="182" fill="#5e584f" font-size="12">调制出 6 个向量</text></g>
+  <line x1="170" y1="202" x2="170" y2="226" stroke="#1c1915" stroke-width="1.5" marker-end="url(#joint-arrow)"/>
+  <line x1="870" y1="202" x2="870" y2="226" stroke="#1c1915" stroke-width="1.5" marker-end="url(#joint-arrow)"/>
+
+  <g><rect x="20" y="226" width="300" height="92" rx="6" fill="#fffdf8" stroke="#ddd6c8"/>
+    <text x="34" y="248" fill="#1c1915" font-size="13" font-weight="600">Q K V + 3D RoPE</text>
+    <text x="34" y="268" fill="#5e584f" font-size="12">q,k = RMSNorm 后再旋转</text>
+    <text x="34" y="284" fill="#5e584f" font-size="12">v 不旋转</text>
+    <text x="34" y="300" fill="#5e584f" font-size="12">[B, 294, 24×128]</text></g>
+  <g><rect x="720" y="226" width="300" height="92" rx="6" fill="#fffdf8" stroke="#ddd6c8"/>
+    <text x="734" y="248" fill="#1c1915" font-size="13" font-weight="600">Q K V + 1D RoPE</text>
+    <text x="734" y="268" fill="#5e584f" font-size="12">Linear 1024 → 3072</text>
+    <text x="734" y="284" fill="#5e584f" font-size="12">按动作时间下标旋转</text>
+    <text x="734" y="300" fill="#5e584f" font-size="12">[B, 32, 24×128]</text></g>
+
+  <line x1="170" y1="318" x2="500" y2="356" stroke="#1c1915" stroke-width="1.5" marker-end="url(#joint-arrow)"/>
+  <line x1="870" y1="318" x2="540" y2="356" stroke="#1c1915" stroke-width="1.5" marker-end="url(#joint-arrow)"/>
+
+  <g><rect x="360" y="356" width="320" height="64" rx="6" fill="#efe8db" stroke="#ddd6c8"/>
+    <text x="374" y="378" fill="#1c1915" font-size="13" font-weight="600">沿序列维拼接</text>
+    <text x="374" y="398" fill="#5e584f" font-size="12">视频在前，动作在后</text>
+    <text x="374" y="414" fill="#5e584f" font-size="12">Q, K, V → [B, 326, 3072]</text></g>
+  <line x1="520" y1="420" x2="520" y2="444" stroke="#1c1915" stroke-width="1.5" marker-end="url(#joint-arrow)"/>
+
+  <g><rect x="330" y="444" width="380" height="108" rx="6" fill="#8c3a1e" stroke="#8c3a1e"/>
+    <text x="344" y="466" fill="#fffdf8" font-size="13" font-weight="600">一次掩码注意力</text>
+    <text x="344" y="486" fill="#fffdf8" font-size="12">拆成 [B, 24, 326, 128]</text>
+    <text x="344" y="502" fill="#fffdf8" font-size="12">分数 = Q Kᵀ / √128，fp32</text>
+    <text x="344" y="518" fill="#fffdf8" font-size="12">掩码为 false 的 key 不进 softmax</text>
+    <text x="344" y="534" fill="#fffdf8" font-size="12">输出再拼回 [B, 326, 3072]</text></g>
+
+  <line x1="520" y1="552" x2="170" y2="590" stroke="#1c1915" stroke-width="1.5" marker-end="url(#joint-arrow)"/>
+  <line x1="520" y1="552" x2="870" y2="590" stroke="#1c1915" stroke-width="1.5" marker-end="url(#joint-arrow)"/>
+  <text x="250" y="568" fill="#5e584f" font-size="11">切出前 294</text>
+  <text x="690" y="568" fill="#5e584f" font-size="11">切出后 32</text>
+
+  <g><rect x="20" y="590" width="300" height="72" rx="6" fill="#fffdf8" stroke="#ddd6c8"/>
+    <text x="34" y="612" fill="#1c1915" font-size="13" font-weight="600">残差 + 输出投影</text>
+    <text x="34" y="632" fill="#5e584f" font-size="12">x ← x + gate · Wo(attn)</text>
+    <text x="34" y="648" fill="#5e584f" font-size="12">Wo 仍是 3072 → 3072</text></g>
+  <g><rect x="720" y="590" width="300" height="72" rx="6" fill="#fffdf8" stroke="#ddd6c8"/>
+    <text x="734" y="612" fill="#1c1915" font-size="13" font-weight="600">残差 + 输出投影</text>
+    <text x="734" y="632" fill="#5e584f" font-size="12">x ← x + gate · Wo(attn)</text>
+    <text x="734" y="648" fill="#5e584f" font-size="12">Wo 把 3072 投回 1024</text></g>
+  <line x1="170" y1="662" x2="170" y2="686" stroke="#1c1915" stroke-width="1.5" marker-end="url(#joint-arrow)"/>
+  <line x1="870" y1="662" x2="870" y2="686" stroke="#1c1915" stroke-width="1.5" marker-end="url(#joint-arrow)"/>
+
+  <g><rect x="20" y="686" width="300" height="64" rx="6" fill="#fffdf8" stroke="#ddd6c8"/>
+    <text x="34" y="708" fill="#1c1915" font-size="13" font-weight="600">文本交叉注意力</text>
+    <text x="34" y="728" fill="#5e584f" font-size="12">K/V 来自 UMT5，不是动作</text>
+    <text x="34" y="744" fill="#5e584f" font-size="12">默认 action_conditioned 关闭</text></g>
+  <g><rect x="720" y="686" width="300" height="64" rx="6" fill="#fffdf8" stroke="#ddd6c8"/>
+    <text x="734" y="708" fill="#1c1915" font-size="13" font-weight="600">文本交叉注意力</text>
+    <text x="734" y="728" fill="#5e584f" font-size="12">同一句任务的 context</text>
+    <text x="734" y="744" fill="#5e584f" font-size="12">mask 挡住 padding token</text></g>
+  <line x1="170" y1="750" x2="170" y2="774" stroke="#1c1915" stroke-width="1.5" marker-end="url(#joint-arrow)"/>
+  <line x1="870" y1="750" x2="870" y2="774" stroke="#1c1915" stroke-width="1.5" marker-end="url(#joint-arrow)"/>
+
+  <g><rect x="20" y="774" width="300" height="64" rx="6" fill="#fffdf8" stroke="#ddd6c8"/>
+    <text x="34" y="796" fill="#1c1915" font-size="13" font-weight="600">门控 FFN</text>
+    <text x="34" y="816" fill="#5e584f" font-size="12">3072 → 14336 → 3072</text>
+    <text x="34" y="832" fill="#5e584f" font-size="12">GELU(tanh)，再乘 gate_mlp</text></g>
+  <g><rect x="720" y="774" width="300" height="64" rx="6" fill="#fffdf8" stroke="#ddd6c8"/>
+    <text x="734" y="796" fill="#1c1915" font-size="13" font-weight="600">门控 FFN</text>
+    <text x="734" y="816" fill="#5e584f" font-size="12">1024 → 4096 → 1024</text>
+    <text x="734" y="832" fill="#5e584f" font-size="12">GELU(tanh)，再乘 gate_mlp</text></g>
+</svg>
+<figcaption>第 ℓ 层。输出 token 送进下一层，Q 不往下传。30 层共用同一张掩码。视频头还原成 [B, 48, 3, 14, 28]，动作头 Linear(1024→7) 得到 [B, 32, 7]。</figcaption>
+</figure>
+
+<h2>这一层允许谁看见谁</h2>
+<p class="lead">行是 query，列是 key。视频在序列前面，动作接在后面。视频 query 看不到动作。</p>
+<table class="mask">
+  <tr><th></th><th>key · 当前帧 98</th><th>key · 未来视频 196</th><th>key · 动作 32</th></tr>
+  <tr><th>query · 当前帧 98</th><td class="yes">看自己</td><td class="no">不看未来</td><td class="no">不看动作</td></tr>
+  <tr><th>query · 未来视频 196</th><td class="yes">看当前帧</td><td class="yes">帧间互看</td><td class="no">不看动作</td></tr>
+  <tr><th>query · 动作 32</th><td class="link">只看当前帧</td><td class="no">不看未来</td><td class="yes">动作互看</td></tr>
+</table>
+
+<h2>推理：缓存当前帧</h2>
+<figure>
+<svg viewBox="0 0 1040 560" role="img" aria-label="推理时 MoT 的缓存计算流程">
+  <defs>
+    <marker id="infer-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#1c1915"/>
+    </marker>
+  </defs>
+  <text x="20" y="18" fill="#5e584f" font-size="12">只做一次</text>
+  <text x="560" y="18" fill="#5e584f" font-size="12">每个动作去噪步都做</text>
+
+  <g><rect x="20" y="32" width="460" height="72" rx="6" fill="#fffdf8" stroke="#ddd6c8"/>
+    <text x="34" y="54" fill="#1c1915" font-size="13" font-weight="600">当前帧 latent</text>
+    <text x="34" y="74" fill="#5e584f" font-size="12">[1, 48, 1, 14, 28]，时间步 = 0</text>
+    <text x="34" y="90" fill="#5e584f" font-size="12">patch 后 98 个 token，隐藏维 3072</text></g>
+  <line x1="250" y1="104" x2="250" y2="128" stroke="#1c1915" stroke-width="1.5" marker-end="url(#infer-arrow)"/>
+  <g><rect x="20" y="128" width="460" height="88" rx="6" fill="#fffdf8" stroke="#ddd6c8"/>
+    <text x="34" y="150" fill="#1c1915" font-size="13" font-weight="600">30 层 video_prefill</text>
+    <text x="34" y="170" fill="#5e584f" font-size="12">每层：AdaLN → QKV → 98 个 token 自注意力</text>
+    <text x="34" y="186" fill="#5e584f" font-size="12">存下该层的 K、V：[1, 98, 3072]</text>
+    <text x="34" y="202" fill="#5e584f" font-size="12">不调用视频速度头</text></g>
+  <line x1="250" y1="216" x2="250" y2="248" stroke="#1c1915" stroke-width="1.5" marker-end="url(#infer-arrow)"/>
+  <g><rect x="20" y="248" width="460" height="72" rx="6" fill="#efe8db" stroke="#ddd6c8"/>
+    <text x="34" y="270" fill="#1c1915" font-size="13" font-weight="600">视频 K/V 缓存</text>
+    <text x="34" y="290" fill="#5e584f" font-size="12">列表长度 30</text>
+    <text x="34" y="306" fill="#5e584f" font-size="12">去噪过程中不再重算</text></g>
+  <line x1="480" y1="284" x2="548" y2="284" stroke="#1c1915" stroke-width="1.5" marker-end="url(#infer-arrow)"/>
+
+  <g><rect x="560" y="32" width="460" height="72" rx="6" fill="#fffdf8" stroke="#ddd6c8"/>
+    <text x="574" y="54" fill="#1c1915" font-size="13" font-weight="600">加噪动作</text>
+    <text x="574" y="74" fill="#5e584f" font-size="12">[1, 32, 7] 从高斯噪声开始</text>
+    <text x="574" y="90" fill="#5e584f" font-size="12">encoder 后 [1, 32, 1024]</text></g>
+  <line x1="790" y1="104" x2="790" y2="128" stroke="#1c1915" stroke-width="1.5" marker-end="url(#infer-arrow)"/>
+  <g><rect x="560" y="128" width="460" height="88" rx="6" fill="#8c3a1e" stroke="#8c3a1e"/>
+    <text x="574" y="150" fill="#fffdf8" font-size="13" font-weight="600">每层 action_cached</text>
+    <text x="574" y="170" fill="#fffdf8" font-size="12">只算动作的 Q、K、V</text>
+    <text x="574" y="186" fill="#fffdf8" font-size="12">K = cat(缓存K, 动作K) → [1, 130, 3072]</text>
+    <text x="574" y="202" fill="#fffdf8" font-size="12">query 仍是 32，看 98 个画面 token</text></g>
+  <line x1="790" y1="216" x2="790" y2="248" stroke="#1c1915" stroke-width="1.5" marker-end="url(#infer-arrow)"/>
+  <g><rect x="560" y="248" width="460" height="72" rx="6" fill="#fffdf8" stroke="#ddd6c8"/>
+    <text x="574" y="270" fill="#1c1915" font-size="13" font-weight="600">动作速度头</text>
+    <text x="574" y="290" fill="#5e584f" font-size="12">Linear 1024 → 7</text>
+    <text x="574" y="306" fill="#5e584f" font-size="12">x ← x + v · (σ_next − σ)</text></g>
+  <line x1="790" y1="320" x2="790" y2="352" stroke="#1c1915" stroke-width="1.5" marker-end="url(#infer-arrow)"/>
+  <g><rect x="560" y="352" width="460" height="64" rx="6" fill="#efe8db" stroke="#ddd6c8"/>
+    <text x="574" y="374" fill="#1c1915" font-size="13" font-weight="600">回到加噪动作</text>
+    <text x="574" y="394" fill="#5e584f" font-size="12">重复到 σ = 0，视频缓存原样复用</text></g>
+
+  <text x="20" y="470" fill="#1c1915" font-size="13">画面分支不进这个循环。动作每一步都重新投影，画面的 K、V 保持第一次 prefill 的结果。</text>
+  <text x="20" y="496" fill="#5e584f" font-size="12">因为没有未来帧，训练里「只看当前帧 98 个 token」的那一列，在这里就是全部视频 K。</text>
+</svg>
+<figcaption>推理走 video_prefill，再走 action_cached。当前帧的 K、V 在整段动作去噪里保持不变。</figcaption>
+</figure>
+</main>
+</body>
+</html>

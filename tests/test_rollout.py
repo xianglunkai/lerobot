@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import logging
 import sys
 import threading
@@ -235,6 +236,45 @@ def test_rollout_config_rejects_a_multiplier_below_one(multiplier):
     # parse time rather than after the hardware is already connected.
     with pytest.raises(ValueError, match="interpolation_multiplier must be >= 1"):
         RolloutConfig(robot=MockRobotConfig(), interpolation_multiplier=multiplier)
+
+
+def test_text_tokenizer_override_rewrites_saved_workspace_path(tmp_path: Path) -> None:
+    from lerobot.rollout.context import _text_tokenizer_preprocessor_overrides
+
+    local_tokenizer = "/data/pretrain_model/paligemma-3b-pt-224"
+    (tmp_path / "policy_preprocessor.json").write_text(
+        json.dumps(
+            {
+                "steps": [
+                    {"registry_name": "device_processor", "config": {"device": "cuda"}},
+                    {
+                        "registry_name": "fineart_vla_text_tokenizer",
+                        "config": {"tokenizer_name": "/workspace/lerobot/pretrain_model/paligemma-3b-pt-224"},
+                    },
+                    {
+                        "registry_name": "action_tokenizer_processor",
+                        "config": {
+                            "paligemma_tokenizer_name": "/workspace/lerobot/pretrain_model/paligemma-3b-pt-224"
+                        },
+                    },
+                    {
+                        "registry_name": "tokenizer_processor",
+                        "config": {"tokenizer_name": "/workspace/lerobot/pretrain_model/paligemma-3b-pt-224"},
+                    },
+                ]
+            }
+        )
+    )
+
+    overrides = _text_tokenizer_preprocessor_overrides(tmp_path, local_tokenizer)
+
+    assert overrides == {
+        "fineart_vla_text_tokenizer": {"tokenizer_name": local_tokenizer},
+        "action_tokenizer_processor": {"paligemma_tokenizer_name": local_tokenizer},
+        "tokenizer_processor": {"tokenizer_name": local_tokenizer},
+    }
+    assert _text_tokenizer_preprocessor_overrides(tmp_path, None) == {}
+    assert _text_tokenizer_preprocessor_overrides(tmp_path / "missing", local_tokenizer) == {}
 
 
 def test_build_rollout_context_rejects_missing_policy() -> None:

@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FastWAM 全流程计算图 · screw_sorting</title>
+<style>
+  :root {
+    --bg: #f4f1ea;
+    --paper: #fffdf8;
+    --ink: #1c1915;
+    --muted: #5e584f;
+    --faint: #8a8378;
+    --line: #ddd4c6;
+    --card: #fffdf8;
+    --mid: #efe8db;
+    --accent: #8c3a1e;
+    --video: #243028;
+    --video-bg: #e7efe9;
+    --action-bg: #f8efe6;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; color: var(--ink); background: var(--bg); font-family: "Iowan Old Style", Palatino, "Songti SC", serif; line-height: 1.45; }
+  main { max-width: 1080px; margin: 0 auto; padding: 36px 22px 80px; }
+  h1 { font-size: 2rem; line-height: 1.15; margin: 0 0 8px; }
+  h2 { font-size: 1.35rem; margin: 0; }
+  h3 { font-size: 1.05rem; margin: 22px 0 8px; }
+  p { margin: 0; }
+  .kicker { letter-spacing: 0.08em; text-transform: uppercase; font-size: 0.75rem; color: var(--accent); font-family: "IBM Plex Mono", ui-monospace, monospace; }
+  .lead { color: var(--muted); max-width: 72ch; }
+  .mono, code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.82rem; }
+  a { color: var(--accent); }
+  .scope { margin-top: 18px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+  .scope li { margin: 4px 0; }
+  .map { margin: 22px 0 8px; display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+  .map a { text-decoration: none; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 10px 8px; color: var(--ink); }
+  .map .n { display: block; color: var(--accent); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.75rem; }
+  .map strong { display: block; margin-top: 2px; }
+  section { margin-top: 36px; }
+  .stage-head { display: flex; gap: 14px; align-items: baseline; border-top: 1px solid var(--line); padding-top: 16px; margin-bottom: 8px; }
+  .stage-head .num { font-family: "IBM Plex Mono", ui-monospace, monospace; color: var(--accent); font-size: 0.9rem; }
+  .note { margin: 12px 0; padding: 10px 12px; background: #fff7e8; border-left: 3px solid var(--accent); }
+  .graph { margin-top: 14px; display: flex; flex-direction: column; align-items: center; }
+  .node { width: min(720px, 100%); background: var(--card); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .node header { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; padding: 8px 12px; background: var(--mid); }
+  .node header .fn { font-weight: 650; }
+  .node header .loc { color: var(--muted); }
+  .node .body { padding: 8px 12px 10px; }
+  .node .eq { margin-top: 4px; }
+  .shape { display: inline-block; margin-top: 6px; padding: 2px 8px; border-radius: 999px; background: var(--bg); border: 1px solid var(--line); }
+  .arrow { width: 0; height: 18px; border-left: 1.5px solid var(--accent); position: relative; }
+  .arrow::after { content: ""; position: absolute; left: -4px; bottom: -1px; border: 4px solid transparent; border-top-color: var(--accent); }
+  .fork { width: min(980px, 100%); display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .lane { display: flex; flex-direction: column; align-items: center; }
+  .lane .node { width: 100%; }
+  .lane-label { align-self: flex-start; margin-bottom: 6px; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.75rem; letter-spacing: 0.06em; text-transform: uppercase; }
+  .lane.video .lane-label { color: var(--video); }
+  .lane.action .lane-label { color: var(--accent); }
+  .lane.video .node { border-top: 3px solid var(--video); }
+  .lane.action .node { border-top: 3px solid var(--accent); }
+  table { width: min(720px, 100%); border-collapse: collapse; background: var(--card); margin-top: 8px; }
+  th, td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
+  th { background: var(--mid); font-weight: 650; }
+  .yes { background: var(--mid); }
+  .link { background: var(--accent); color: #fffdf8; }
+  .no { color: var(--faint); }
+  .layer { width: min(720px, 100%); border: 1px solid var(--ink); border-radius: 8px; padding: 10px 12px 12px; background: var(--card); }
+  .layer h3 { margin: 0 0 8px; font-size: 1rem; }
+  .ops { display: grid; grid-template-columns: 1fr 28px 1fr; gap: 8px; align-items: stretch; }
+  .op { border: 1px solid var(--line); border-radius: 6px; padding: 8px; background: var(--bg); }
+  .op b { display: block; margin-bottom: 2px; }
+  .join { grid-column: 1 / -1; background: var(--ink); color: #f4efe6; border-radius: 6px; padding: 8px 10px; }
+  .board { background: var(--paper); border: 1px solid var(--line); border-radius: 14px; padding: 18px 18px 14px; }
+  .band { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .band + .band { margin-top: 12px; }
+  .lbl { width: 64px; flex: none; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+  .chip { border: 1px solid var(--line); background: white; border-radius: 8px; padding: 7px 10px 6px; min-width: 108px; }
+  .chip .t { display: block; font-size: 0.92rem; }
+  .chip .s { display: block; margin-top: 2px; color: var(--muted); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.68rem; line-height: 1.35; }
+  .chip.dash { border-style: dashed; background: transparent; }
+  .chip.ink { background: var(--ink); border-color: var(--ink); color: #f6f1e8; }
+  .chip.ink .s { color: #e4d8c8; }
+  .chip.video { background: var(--video-bg); border-color: #c5d5cc; }
+  .chip.action { background: var(--action-bg); border-color: #ead3c4; }
+  .arr { color: var(--accent); }
+  .cut { margin: 12px 0 4px; border-top: 1px dashed var(--accent); position: relative; }
+  .cut span { position: absolute; top: -0.7em; left: 70px; background: var(--paper); padding: 0 8px; color: var(--accent); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.68rem; }
+  .expert .tag { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; margin: 12px 0 6px; }
+  .expert.video .tag { color: var(--video); }
+  .expert.action .tag { color: var(--accent); }
+  .track { display: grid; grid-template-columns: 176px 18px 128px 18px 118px 18px 158px 18px 168px; align-items: center; margin: 6px 0; }
+  .wire { height: 1px; background: var(--ink); opacity: 0.45; }
+  .merge { margin-top: 12px; display: grid; grid-template-columns: 1.1fr 1fr; gap: 10px; }
+  .eqbox { background: var(--ink); color: #f4efe6; border-radius: 10px; padding: 14px 16px; }
+  .eqbox p { margin: 0 0 6px; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.78rem; line-height: 1.55; }
+  .eqbox p:last-child { margin: 0; }
+  .split2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+  svg.fig { width: 100%; height: auto; display: block; }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; color: var(--muted); font-size: 0.88rem; }
+  .sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; border: 1px solid var(--line); }
+  figcaption { margin-top: 8px; color: var(--muted); }
+  @media (max-width: 900px) {
+    .map, .fork, .ops, .merge, .split2, .track { grid-template-columns: 1fr; }
+    .join { grid-column: auto; }
+    .wire { display: none; }
+  }
+</style>
+</head>
+<body>
+<main>
+<p class="kicker">FastWAM · screw_sorting_single_sft_ep280_v30_steam</p>
+<h1>从一帧数据到一个关节指令的计算图</h1>
+<p class="lead">前五节按代码调用顺序写完一次训练和一次推理：每个框是一处实际执行的函数，带张量形状和公式。第六节起才是各模块内部的图形，不替换上面的步骤。形状按这份数据的默认窗口，<code>proprio_dim = 7</code>，<code>lite_kv_fusion</code> 关闭。</p>
+
+<div class="scope">
+  <p>后面每个框都用这组数：</p>
+  <ul>
+    <li>当前下标 <code>t</code>。图像与状态的偏移是 <code>[0, 4, 8, 12, 16, 20, 24, 28, 32]</code>，共 9 帧。动作偏移是 <code>0…31</code>，共 32 步。</li>
+    <li>两路相机各缩成 224×224，沿宽度拼成 <code>[B, 3, 9, 224, 448]</code>。VAE 之后是 <code>[B, 48, 3, 14, 28]</code>，patch 后视频 token 294 个，动作 token 32 个。</li>
+    <li>任务句套进模板后补到 128，再接 1 个本体 token，context 是 <code>[B, 129, 4096]</code>。</li>
+  </ul>
+</div>
+
+<nav class="map">
+  <a href="#data"><span class="n">01</span><strong>采样窗口</strong></a>
+  <a href="#pre"><span class="n">02</span><strong>前处理</strong></a>
+  <a href="#train"><span class="n">03</span><strong>训练</strong></a>
+  <a href="#post"><span class="n">04</span><strong>后处理</strong></a>
+  <a href="#infer"><span class="n">05</span><strong>推理</strong></a>
+  <a href="#inside"><span class="n">06</span><strong>模块内部</strong></a>
+</nav>
+
+<section id="data">
+  <div class="stage-head"><span class="num">01</span><h2>数据准备：一个下标展开成两段时间</h2></div>
+  <p class="lead">数据集本身每行只有当前帧。多帧是策略配置里的偏移，经 <code>delta_timestamps = index / 30</code> 交给读取器。越出该条轨迹时夹到端点，并写下 <code>{key}_is_pad</code>。</p>
+  <div class="graph">
+    <article class="node">
+      <header><span class="fn">observation_delta_indices / action_delta_indices</span><span class="loc mono">configuration_fastwam.py:479</span></header>
+      <div class="body">
+        <p class="eq mono">video_idx = t + [0, 4, …, 32]</p>
+        <p class="eq mono">action_idx = t + [0, 1, …, 31]</p>
+        <p class="eq">9 帧满足 <code>T % 4 == 1</code>。32 个动作能被 8 个视频间隔整除，每个视频间隔对应 4 个动作。</p>
+        <span class="shape mono">图像、状态各 9 步 · 动作 32 步</span>
+      </div>
+    </article>
+    <div class="arrow"></div>
+    <article class="node">
+      <header><span class="fn">resolve_delta_timestamps</span><span class="loc mono">datasets/factory.py:72</span></header>
+      <div class="body">
+        <p class="eq mono">Δt = index / fps</p>
+        <p class="eq">图像 key 和 <code>observation.state</code> 都用上面那 9 个偏移。动作单独用 32 个偏移。所以状态进 batch 时是 9 帧，不是 1 帧。</p>
+        <span class="shape mono">high / right: [B, 9, 3, 480, 640] · state: [B, 9, 7] · action: [B, 32, 7]</span>
+      </div>
+    </article>
+    <div class="arrow"></div>
+    <article class="node">
+      <header><span class="fn">DatasetReader._get_query_indices</span><span class="loc mono">dataset_reader.py:298</span></header>
+      <div class="body">
+        <p class="eq">按当前行所在 episode 的 <code>[dataset_from_index, dataset_to_index)</code> 裁剪。被裁掉的位置重复端点帧，对应的 <code>*_is_pad</code> 为真。</p>
+        <span class="shape mono">action_is_pad: [B, 32] · observation.images.*_is_pad: [B, 9]</span>
+      </div>
+    </article>
+  </div>
+  <div class="note"><code>build_inputs</code> 只认名为 <code>image_is_pad</code> 的张量。读取器实际写出的是 <code>observation.images.high_is_pad</code> 和 <code>observation.images.right_is_pad</code>。默认训练循环没有把它们改名，因此视频损失里的 pad 掩码是空的，9 帧都会进入后续计算。动作的 <code>action_is_pad</code> 名字一致，会被用上。</div>
+</section>
+
+<section id="pre">
+  <div class="stage-head"><span class="num">02</span><h2>前处理：归一化、拼图、编码，停在 latent</h2></div>
+  <p class="lead">这一段在 <code>policy.forward</code> 之前和它的入口里完成。图像保持 <code>[0, 1]</code>，关节才做 mean/std。</p>
+  <div class="graph">
+    <article class="node">
+      <header><span class="fn">_preprocess_dataset_batch</span><span class="loc mono">lerobot_train.py:167</span></header>
+      <div class="body">
+        <p class="eq mono">若像素 dtype 是 uint8：x = x / 255</p>
+        <p class="eq">然后 <code>rename_batch_keys</code>，再进入策略的 preprocessor。</p>
+        <span class="shape mono">图像 [0, 1]</span>
+      </div>
+    </article>
+    <div class="arrow"></div>
+    <article class="node">
+      <header><span class="fn">make_fastwam_pre_post_processors</span><span class="loc mono">processor_fastwam.py:102</span></header>
+      <div class="body">
+        <p class="eq">顺序固定为四步：<code>rename_observations → add_batch_dim → to_device → normalize</code>。没有在这里改分辨率。</p>
+        <p class="eq mono">VISUAL = IDENTITY</p>
+        <p class="eq mono">STATE, ACTION = (x − mean) / (std + 1e-8)</p>
+        <p class="eq">统计来自这份数据的 <code>meta/stats.json</code>。例如动作第 0 维 mean = −0.0001，std = 0.0981，原始值 0.1000 变成 1.0194。状态的 9 帧都按同一组 mean/std 变换，后面只用第 0 帧。</p>
+        <span class="shape mono">state [B, 9, 7] · action [B, 32, 7]，都在归一化空间</span>
+      </div>
+    </article>
+    <div class="arrow"></div>
+    <article class="node">
+      <header><span class="fn">FastWAMPolicy.forward → _batch_to_training_sample</span><span class="loc mono">modeling_fastwam.py:264</span></header>
+      <div class="body"><p class="eq">这里才把 LeRobot 的 batch 译成 FastWAM 的 sample。三件事：拼视频、编码句子、给状态补时间维。</p></div>
+    </article>
+    <div class="arrow"></div>
+    <div class="fork">
+      <div class="lane video">
+        <div class="lane-label">图像</div>
+        <article class="node">
+          <header><span class="fn">_stack_video_from_images</span><span class="loc mono">modeling_fastwam.py:494</span></header>
+          <div class="body">
+            <p class="eq">key 按名字排序，先 <code>high</code> 后 <code>right</code>。每路双线性缩到 224×224，沿宽度拼接，再换成 <code>[B, C, T, H, W]</code>。</p>
+            <span class="shape mono">video [B, 3, 9, 224, 448]</span>
+          </div>
+        </article>
+      </div>
+      <div class="lane action">
+        <div class="lane-label">语言与本体</div>
+        <article class="node">
+          <header><span class="fn">_prompt_from_batch · encode_prompt</span><span class="loc mono">modeling_fastwam.py:422 · modular.py:1254</span></header>
+          <div class="body">
+            <p class="eq">模板是 <code>A video recorded from a robot's point of view executing the following instruction: {task}</code>。UMT5 tokenizer 补到 128。padding 位置的 embedding 被写成 0，随后 mask 被改成全 1。</p>
+            <p class="eq mono">proprio = state[:, 0, :] 经过 Linear(7 → 4096) 接到 context 末尾</p>
+            <span class="shape mono">context [B, 129, 4096] · mask [B, 129]</span>
+          </div>
+        </article>
+      </div>
+    </div>
+    <div class="arrow"></div>
+    <article class="node">
+      <header><span class="fn">build_inputs → _encode_video_latents</span><span class="loc mono">modular.py:1340 · adapters.py:90</span></header>
+      <div class="body">
+        <p class="eq mono">pixels = video * 2 − 1</p>
+        <p class="eq mono">μ = VAE.encode(pixels).latent_dist.mode()</p>
+        <p class="eq mono">z = (μ − latents_mean) / latents_std</p>
+        <p class="eq">VAE 冻结。取分布的 mode，不采样。默认 <code>fuse_vae_embedding_in_latents=True</code>，于是第 0 个 latent 帧被另存为条件。</p>
+        <span class="shape mono">input_latents [B, 48, 3, 14, 28] · first_frame_latents [B, 48, 1, 14, 28]</span>
+      </div>
+    </article>
+  </div>
+</section>
+
+<section id="train">
+  <div class="stage-head"><span class="num">03</span><h2>训练：两条独立的流，在一层里只交汇一次</h2></div>
+  <p class="lead"><code>training_loss</code> 先采样目标，再跑 MoT，再把两个速度场的 MSE 加起来。视频和动作的噪声、时间步互不共享。</p>
+  <div class="graph">
+    <article class="node">
+      <header><span class="fn">_sample_training_targets</span><span class="loc mono">modular.py:1511 · video_dit.py:132</span></header>
+      <div class="body">
+        <p class="eq mono">u ~ Uniform(0, 1)，σ = 5u / (1 + 4u)，t = σ · 1000</p>
+        <p class="eq mono">x_t = (1 − σ) x + σ ε</p>
+        <p class="eq mono">v = ε − x</p>
+        <p class="eq">视频、动作各抽一次。抽完之后执行 <code>latents[:, :, 0:1] = first_frame_latents</code>，当前帧 latent 回到干净值，它的时间步在 <code>pre_dit</code> 里也会被写成 0。</p>
+        <span class="shape mono">latents [B, 48, 3, 14, 28] · noisy_action [B, 32, 7]</span>
+      </div>
+    </article>
+    <div class="arrow"></div>
+    <div class="fork">
+      <div class="lane video">
+        <div class="lane-label">视频 pre_dit</div>
+        <article class="node">
+          <header><span class="fn">WanVideoDiT.pre_dit</span><span class="loc mono">video_dit.py:752</span></header>
+          <div class="body">
+            <p class="eq">patch <code>[1, 2, 2]</code>：每帧 14×28 变成 7×14 = 98 个 token，3 帧共 294。文本 4096 投到 3072。每个 token 一套 6 个 AdaLN 向量；第 0 帧的时间步强制为 0。</p>
+            <span class="shape mono">tokens [B, 294, 3072] · t_mod [B, 294, 6, 3072]</span>
+          </div>
+        </article>
+      </div>
+      <div class="lane action">
+        <div class="lane-label">动作 pre_dit</div>
+        <article class="node">
+          <header><span class="fn">ActionDiT.pre_dit</span><span class="loc mono">modular.py:142</span></header>
+          <div class="body">
+            <p class="eq"><code>Linear(7 → 1024)</code>。整段 32 步共用一个 timestep，所以一套 6 个 AdaLN 向量给所有动作 token。文本 4096 投到 1024。RoPE 是长度 32 的 1D 频率。</p>
+            <span class="shape mono">tokens [B, 32, 1024] · t_mod [B, 6, 1024]</span>
+          </div>
+        </article>
+      </div>
+    </div>
+    <div class="arrow"></div>
+    <article class="node">
+      <header><span class="fn">_build_mot_attention_mask</span><span class="loc mono">modular.py:1447</span></header>
+      <div class="body">
+        <p class="eq">布尔矩阵，视频在前、动作在后。视频块来自 <code>first_frame_causal</code>：当前帧 98 行不能看后面的列。动作块全开。动作行只把前 98 列打开。</p>
+        <span class="shape mono">mask [326, 326]，30 层共用</span>
+      </div>
+    </article>
+    <table>
+      <tr><th></th><th>key 当前帧 98</th><th>key 未来视频 196</th><th>key 动作 32</th></tr>
+      <tr><th>query 当前帧</th><td class="yes">开</td><td class="no">关</td><td class="no">关</td></tr>
+      <tr><th>query 未来视频</th><td class="yes">开</td><td class="yes">开</td><td class="no">关</td></tr>
+      <tr><th>query 动作</th><td class="link">开</td><td class="no">关</td><td class="yes">开</td></tr>
+    </table>
+    <div class="arrow"></div>
+    <div class="layer">
+      <h3>MoTLayer._forward_joint × 30　<span class="mono" style="font-weight:400;color:#5e584f">modular.py:482</span></h3>
+      <div class="ops">
+        <div class="op"><b>视频支路</b><span class="mono">LN(x)·(1+s)+b</span><br><span class="mono">Q,K：RMSNorm 后 3D RoPE</span><br><span class="mono">V 不旋转</span><br><span class="shape mono">[B, 294, 24×128]</span></div>
+        <div></div>
+        <div class="op"><b>动作支路</b><span class="mono">同一套 AdaLN 给 32 步</span><br><span class="mono">Linear 1024→3072</span><br><span class="mono">Q,K：1D RoPE</span><br><span class="shape mono">[B, 32, 24×128]</span></div>
+        <div class="join"><b>一次注意力。</b> <span class="mono">cat 在序列维 → [B, 326, 3072]，拆成 [B, 24, 326, 128]</span><br><span class="mono">softmax(Q Kᵀ / √128) V</span>，掩码为假的位置不进 softmax，计算用 fp32。再按 294 / 32 切开。</div>
+        <div class="op"><b>写回视频</b><span class="mono">x ← x + gate · Wo(attn)</span><br><span class="mono">+ CrossAttn(文本)</span><br><span class="mono">+ gate · FFN(3072→14336→3072)</span></div>
+        <div></div>
+        <div class="op"><b>写回动作</b><span class="mono">Wo：3072→1024</span><br><span class="mono">+ CrossAttn(同一句文本)</span><br><span class="mono">+ gate · FFN(1024→4096→1024)</span></div>
+      </div>
+      <p class="eq" style="margin-top:8px">下一层只接收 token。Q 不缓存。默认 <code>action_conditioned=False</code>，文本交叉注意力的 K/V 里没有动作。第六节把这一层的 Q、K、V 按运算顺序摊开。</p>
+    </div>
+    <div class="arrow"></div>
+    <div class="fork">
+      <div class="lane video">
+        <div class="lane-label">视频头</div>
+        <article class="node">
+          <header><span class="fn">WanVideoDiT.post_dit</span><span class="loc mono">video_dit.py:875</span></header>
+          <div class="body">
+            <p class="eq">Head 用进入 MoT 之前的时间嵌入，再 <code>unpatchify</code>。每个 token 先投到 <code>1×2×2×48 = 192</code> 维，再还原成 latent 速度，不是像素。</p>
+            <span class="shape mono">pred_video [B, 48, 3, 14, 28]</span>
+          </div>
+        </article>
+      </div>
+      <div class="lane action">
+        <div class="lane-label">动作头</div>
+        <article class="node">
+          <header><span class="fn">ActionDiT.post_dit</span><span class="loc mono">modular.py:233</span></header>
+          <div class="body">
+            <p class="eq"><code>Linear(1024 → 7)</code>，没有 unpatchify，也没有视频头那一层 AdaLN。输出仍在归一化空间。</p>
+            <span class="shape mono">pred_action [B, 32, 7]</span>
+          </div>
+        </article>
+      </div>
+    </div>
+    <div class="arrow"></div>
+    <article class="node">
+      <header><span class="fn">_compute_training_video_loss + _compute_training_action_loss</span><span class="loc mono">modular.py:1632</span></header>
+      <div class="body">
+        <p class="eq">视频：因为第 0 个 latent 帧是条件，<code>pred</code> 和 <code>target</code> 都丢掉 <code>[:, :, 0]</code>，只在后 2 个 latent 帧上对通道和空间做 MSE。</p>
+        <p class="eq">动作：先对 7 维做 MSE，再用 <code>~action_is_pad</code> 在 32 步上平均。</p>
+        <p class="eq mono">y = exp(−2 ((t − 500) / 1000)²)</p>
+        <p class="eq mono">weight = (y − y_min) / mean(y − y_min)</p>
+        <p class="eq mono">loss = 1 · mean(L_video · w_video) + 1 · mean(L_action · w_action)</p>
+        <span class="shape mono">标量。反传进 MoT 与 Linear(7→4096) 的本体编码器</span>
+      </div>
+    </article>
+  </div>
+  <div class="note">VAE 和 UMT5 用 <code>object.__setattr__</code> 挂上，不在 <code>parameters()</code> 里，也不写进策略的 <code>model.safetensors</code>。<code>encode_prompt</code> 和 <code>_encode_video_latents</code> 都在 <code>no_grad</code> 里。可训练的是两个专家的嵌入、时间层、速度头，被放进 30 个 <code>MoTLayer</code> 的注意力块和 FFN，以及本体线性层。</div>
+</section>
+
+<section id="post">
+  <div class="stage-head"><span class="num">04</span><h2>后处理：从归一化动作回到关节角</h2></div>
+  <p class="lead">训练损失停在归一化空间，不经过这一段。推理和评测在模型外面调用 postprocessor。</p>
+  <div class="graph">
+    <article class="node">
+      <header><span class="fn">select_action</span><span class="loc mono">modeling_fastwam.py:319</span></header>
+      <div class="body">
+        <p class="eq">队列空时调用 <code>predict_action_chunk</code>，取前 <code>n_action_steps</code> 步。默认 32，也就是整块。每步控制弹出 1 个动作。</p>
+        <span class="shape mono">一步 [7]，仍是归一化值</span>
+      </div>
+    </article>
+    <div class="arrow"></div>
+    <article class="node">
+      <header><span class="fn">UnnormalizerProcessorStep</span><span class="loc mono">normalize_processor.py:364 · inference/prediction.py:179</span></header>
+      <div class="body">
+        <p class="eq mono">a = a_norm · std + mean</p>
+        <p class="eq">第 0 维的逆运算：1.0194 × 0.0981 + (−0.0001) = 0.1000。然后 <code>to_cpu</code>。</p>
+        <p class="eq"><code>toggle_action_dimensions</code> 默认是空列表。LIBERO 那种把最后一维改成 ±1 的步骤在这份数据上不执行。</p>
+        <span class="shape mono">[7]，单位与数据集 action 相同</span>
+      </div>
+    </article>
+  </div>
+</section>
+
+<section id="infer">
+  <div class="stage-head"><span class="num">05</span><h2>推理：当前帧只编码一次，动作去噪十步</h2></div>
+  <p class="lead">rollout 走 <code>select_action → predict_action_chunk → infer_action</code>。这条路径不生成未来视频，也不调用 <code>infer_joint</code>。图像仍然先走第 02 节的 preprocessor，但实时观测通常只有当前这一帧。</p>
+  <div class="graph">
+    <article class="node">
+      <header><span class="fn">_batch_to_infer_kwargs</span><span class="loc mono">modeling_fastwam.py:403</span></header>
+      <div class="body">
+        <p class="eq"><code>_input_image_from_batch</code> 取当前帧，两路相机仍拼成 224×448。<code>num_inference_steps</code> 默认 10，<code>action_horizon</code> 为 32。种子默认 42，噪声在 CPU 上生成再搬到模型设备。</p>
+        <span class="shape mono">input_image [1, 3, 224, 448] · noise [1, 32, 7]</span>
+      </div>
+    </article>
+    <div class="arrow"></div>
+    <div class="fork">
+      <div class="lane video">
+        <div class="lane-label">只做一次</div>
+        <article class="node">
+          <header><span class="fn">_encode_input_image_latents_tensor</span><span class="loc mono">modular.py:1309</span></header>
+          <div class="body">
+            <p class="eq mono">像素 ×2−1，VAE mode，再 (μ−mean)/std</p>
+            <p class="eq">时间步张量是 0。<code>pre_dit</code> 得到 98 个 token。</p>
+            <span class="shape mono">[1, 48, 1, 14, 28] → [1, 98, 3072]</span>
+          </div>
+        </article>
+        <div class="arrow"></div>
+        <article class="node">
+          <header><span class="fn">MoT.prefill_video_cache</span><span class="loc mono">modular.py:881</span></header>
+          <div class="body">
+            <p class="eq">30 层都走 <code>video_prefill</code>：自注意力、文本交叉注意力、FFN。每层留下已经做过 RoPE 的 K、V。不调用视频速度头。</p>
+            <span class="shape mono">30 × {k,v: [1, 98, 3072]}</span>
+          </div>
+        </article>
+      </div>
+      <div class="lane action">
+        <div class="lane-label">每步去噪都做</div>
+        <article class="node">
+          <header><span class="fn">_predict_action_noise_with_cache</span><span class="loc mono">modular.py:1818</span></header>
+          <div class="body">
+            <p class="eq">只重算动作的 Q、K、V。K、V 与该层缓存拼接：</p>
+            <p class="eq mono">K = cat(k_video, k_action) → [1, 130, 3072]</p>
+            <p class="eq">query 长度仍是 32。没有未来帧，所以「只看当前帧 98 个 token」就是全部视频 K。</p>
+            <span class="shape mono">速度 [1, 32, 7]</span>
+          </div>
+        </article>
+        <div class="arrow"></div>
+        <article class="node">
+          <header><span class="fn">WanContinuousFlowMatchScheduler.step</span><span class="loc mono">video_dit.py:190</span></header>
+          <div class="body">
+            <p class="eq">10 步的 σ 由 <code>infer_shift = 5</code> 的采样日程给出。最后一步的下一 σ 是 0。</p>
+            <p class="eq mono">x ← x + v · (σ_next − σ)</p>
+            <p class="eq">视频 K、V 在这 10 步里不更新。循环结束，<code>latents_action[0]</code> 回到 CPU、float32，再进入第 04 节。</p>
+            <span class="shape mono">[32, 7]，交给反归一化</span>
+          </div>
+        </article>
+      </div>
+    </div>
+  </div>
+  <div class="note"><code>infer_action</code> 的签名里有 <code>text_cfg_scale</code>，函数体没有读取它。默认 rollout 不做 classifier-free guidance。会同时去噪未来视频的是 <code>infer_joint</code>，不在这条调用链上。</div>
+</section>
+
+<section id="inside">
+  <div class="stage-head"><span class="num">06</span><h2>各模块内部的计算图</h2></div>
+  <p class="lead">上面五节的调用顺序不变。这里把每个模块里实际做的运算按数据流画开，形状仍是这份数据的默认窗口。</p>
+
+  <h3>采样：9 个视频时刻，每格 4 个动作</h3>
+  <figure>
+    <div class="board">
+      <svg class="fig" viewBox="0 0 980 168" role="img" aria-label="视频帧和动作步的时间对齐">
+        <text x="8" y="28" fill="#243028" font-size="13" font-family="Palatino, serif">视频下标</text>
+        <g font-family="IBM Plex Mono, monospace" font-size="12" fill="#1c1915">
+          <rect x="90" y="12" width="70" height="28" rx="4" fill="#e7efe9" stroke="#c5d5cc"/>
+          <text x="104" y="31">t+0</text>
+          <rect x="190" y="12" width="70" height="28" rx="4" fill="#e7efe9" stroke="#c5d5cc"/>
+          <text x="204" y="31">t+4</text>
+          <rect x="290" y="12" width="70" height="28" rx="4" fill="#e7efe9" stroke="#c5d5cc"/>
+          <text x="304" y="31">t+8</text>
+          <rect x="390" y="12" width="86" height="28" rx="4" fill="#efe8db" stroke="#ddd4c6"/>
+          <text x="400" y="31">… 共 9 帧</text>
+          <rect x="506" y="12" width="78" height="28" rx="4" fill="#e7efe9" stroke="#c5d5cc"/>
+          <text x="516" y="31">t+32</text>
+        </g>
+        <text x="8" y="92" fill="#8c3a1e" font-size="13" font-family="Palatino, serif">动作下标</text>
+        <g font-family="IBM Plex Mono, monospace" font-size="11" fill="#1c1915">
+          <rect x="90" y="74" width="36" height="24" rx="4" fill="#f8efe6" stroke="#ead3c4"/><text x="98" y="90">+0</text>
+          <rect x="130" y="74" width="36" height="24" rx="4" fill="#f8efe6" stroke="#ead3c4"/><text x="138" y="90">+1</text>
+          <rect x="170" y="74" width="36" height="24" rx="4" fill="#f8efe6" stroke="#ead3c4"/><text x="178" y="90">+2</text>
+          <rect x="210" y="74" width="36" height="24" rx="4" fill="#f8efe6" stroke="#ead3c4"/><text x="218" y="90">+3</text>
+          <text x="258" y="90" fill="#5e584f">下一视频帧</text>
+          <rect x="360" y="74" width="220" height="24" rx="4" fill="#f8efe6" stroke="#ead3c4"/>
+          <text x="390" y="90">+4 … +31，一共 32 步</text>
+        </g>
+        <text x="90" y="132" fill="#5e584f" font-size="13" font-family="Palatino, serif">30 fps 下，32 步覆盖 32/30 ≈ 1.07 秒。状态用和图像相同的 9 个下标，模型只取第 0 帧。</text>
+        <text x="90" y="154" fill="#5e584f" font-size="13" font-family="Palatino, serif">越界夹到 episode 端点，并写 *_is_pad。动作这份掩码会进损失，相机那份默认进不去。</text>
+      </svg>
+    </div>
+    <figcaption>对应 <code>observation_delta_indices</code> 与 <code>action_delta_indices</code>。</figcaption>
+  </figure>
+
+  <h3>归一化、拼图、VAE：梯度在 latent 之前断开</h3>
+  <figure>
+    <div class="board">
+      <div class="band">
+        <div class="lbl">关节</div>
+        <div class="chip dash"><span class="t">a₀ = 0.1000</span><span class="s">mean −0.0001<br>std 0.0981</span></div>
+        <span class="arr">→</span>
+        <div class="chip"><span class="t">(a−μ)/(σ+10⁻⁸)</span><span class="s">= 1.0194<br>状态 9 帧同样做</span></div>
+        <span class="arr">→</span>
+        <div class="chip action"><span class="t">只用 state[:,0]</span><span class="s">Linear(7→4096)<br>这层有梯度</span></div>
+      </div>
+      <div class="band">
+        <div class="lbl">图像</div>
+        <div class="chip dash"><span class="t">两路 480×640</span><span class="s">uint8 则先 /255<br>VISUAL 不再归一化</span></div>
+        <span class="arr">→</span>
+        <div class="chip dash"><span class="t">各缩到 224×224</span><span class="s">high 在左，right 在右<br>[B,3,9,224,448]</span></div>
+        <span class="arr">→</span>
+        <div class="chip dash"><span class="t">×2−1 后 VAE mode</span><span class="s">z=(μ−m)/s<br>[B,48,3,14,28]</span></div>
+      </div>
+      <div class="cut"><span>no_grad 停在 z 和 UMT5 输出</span></div>
+      <div class="band">
+        <div class="lbl">文本</div>
+        <div class="chip dash"><span class="t">模板 + 任务句</span><span class="s">tokenizer 长度 128</span></div>
+        <span class="arr">→</span>
+        <div class="chip dash"><span class="t">padding embedding = 0</span><span class="s">mask 随后改成全 1</span></div>
+        <span class="arr">→</span>
+        <div class="chip"><span class="t">cat 本体 token</span><span class="s">[B,129,4096]</span></div>
+      </div>
+    </div>
+    <figcaption>像素到 latent 的空间账：时间 <code>(9−1)/4+1=3</code>，高 <code>224/16=14</code>，宽 <code>448/16=28</code>，通道 48。<code>encode_prompt</code> 与 VAE 编码不反传。</figcaption>
+  </figure>
+
+  <h3>流匹配：两条独立的直线</h3>
+  <figure>
+    <div class="board">
+      <div class="eqbox">
+        <p>u ~ U(0,1)　　σ = 5u / (1+4u)　　t = 1000 σ</p>
+        <p>x_t = (1−σ) x + σ ε　　目标速度 v* = ε − x</p>
+        <p>视频、动作各抽一个 u。抽完后 latents[:,:,0:1] = first_frame_latents</p>
+      </div>
+      <div class="split2">
+        <div class="chip video"><span class="t">例：视频 u = 0.5</span><span class="s">σ = 2.5/3 = 0.8333，t = 833.3<br>z_t = 0.1667 z + 0.8333 ε<br>第 0 帧被写回干净 z</span></div>
+        <div class="chip action"><span class="t">例：动作 u = 0.2</span><span class="s">σ = 1/1.8 = 0.5556，t = 555.6<br>a_t = 0.4444 a + 0.5556 ε<br>32 步共用这一个 t</span></div>
+      </div>
+    </div>
+    <figcaption>加噪后的张量对参数是常数。网络要预测的是 <code>ε−x</code>，不是噪声本身，也不是干净样本。</figcaption>
+  </figure>
+
+  <h3>一层 MoT：Q、K、V 怎么算</h3>
+  <figure>
+    <div class="board">
+      <div class="expert video">
+        <div class="tag">视频 · h 来自 [B, 294, 3072]，第 0 帧时间步为 0</div>
+        <div class="track">
+          <div class="chip video"><span class="t">h = LN(x)⊙(1+s)+b</span><span class="s">LN 无仿射参数<br>ε = 10⁻⁶</span></div>
+          <div class="wire"></div>
+          <div class="chip"><span class="t">Wq · h</span><span class="s">3072 → 3072</span></div>
+          <div class="wire"></div>
+          <div class="chip"><span class="t">RMSNorm</span><span class="s">u/√(mean u²+ε)·γ</span></div>
+          <div class="wire"></div>
+          <div class="chip video"><span class="t">3D RoPE</span><span class="s">Q [B,24,294,128]</span></div>
+          <div class="wire"></div>
+          <div class="chip"><span class="t">64 对复数</span><span class="s">22 / 21 / 21<br>分给 t, h, w</span></div>
+        </div>
+        <div class="track">
+          <div class="chip video"><span class="t">同一 h</span><span class="s">K 与 Q 同式</span></div>
+          <div class="wire"></div>
+          <div class="chip"><span class="t">Wk · h</span><span class="s">3072 → 3072</span></div>
+          <div class="wire"></div>
+          <div class="chip"><span class="t">RMSNorm</span><span class="s">γ 可训练</span></div>
+          <div class="wire"></div>
+          <div class="chip video"><span class="t">3D RoPE</span><span class="s">K [B,24,294,128]</span></div>
+          <div class="wire"></div>
+          <div class="chip"><span class="t">K 已旋转</span><span class="s">推理缓存的就是它</span></div>
+        </div>
+        <div class="track">
+          <div class="chip video"><span class="t">同一 h</span><span class="s">V 不再做 Norm、RoPE</span></div>
+          <div class="wire"></div>
+          <div class="chip"><span class="t">Wv · h</span><span class="s">3072 → 3072</span></div>
+          <div class="wire"></div>
+          <div></div><div></div><div></div><div></div>
+          <div class="wire"></div>
+          <div class="chip"><span class="t">V</span><span class="s">[B,24,294,128]</span></div>
+        </div>
+      </div>
+      <div class="expert action">
+        <div class="tag">动作 · h 来自 [B, 32, 1024]，32 步共用一套 s、b</div>
+        <div class="track">
+          <div class="chip action"><span class="t">h = LN(x)⊙(1+s)+b</span><span class="s">AdaLN 对 32 步广播</span></div>
+          <div class="wire"></div>
+          <div class="chip"><span class="t">Wq · h</span><span class="s">1024 → 3072</span></div>
+          <div class="wire"></div>
+          <div class="chip"><span class="t">RMSNorm</span><span class="s">仍在 3072 维上</span></div>
+          <div class="wire"></div>
+          <div class="chip action"><span class="t">1D RoPE</span><span class="s">Q [B,24,32,128]</span></div>
+          <div class="wire"></div>
+          <div class="chip"><span class="t">按时间下标</span><span class="s">64 对不再拆轴</span></div>
+        </div>
+        <div class="track">
+          <div class="chip action"><span class="t">同一 h</span><span class="s">K 与 Q 同式</span></div>
+          <div class="wire"></div>
+          <div class="chip"><span class="t">Wk · h</span><span class="s">1024 → 3072</span></div>
+          <div class="wire"></div>
+          <div class="chip"><span class="t">RMSNorm</span><span class="s">γ 可训练</span></div>
+          <div class="wire"></div>
+          <div class="chip action"><span class="t">1D RoPE</span><span class="s">K [B,24,32,128]</span></div>
+          <div class="wire"></div>
+          <div class="chip"><span class="t">与视频 K 拼接</span><span class="s">视频在前</span></div>
+        </div>
+        <div class="track">
+          <div class="chip action"><span class="t">同一 h</span><span class="s">V 不旋转</span></div>
+          <div class="wire"></div>
+          <div class="chip"><span class="t">Wv · h</span><span class="s">1024 → 3072</span></div>
+          <div class="wire"></div>
+          <div></div><div></div><div></div><div></div>
+          <div class="wire"></div>
+          <div class="chip"><span class="t">V</span><span class="s">[B,24,32,128]</span></div>
+        </div>
+      </div>
+      <div class="merge">
+        <div class="eqbox">
+          <p>Q = cat(Qv, Qa)　　[B, 24, 326, 128]</p>
+          <p>K、V 同样沿序列拼接</p>
+          <p>S = Q Kᵀ / √128　　[B, 24, 326, 326]</p>
+          <p>mask 为假的位置：S ← −∞</p>
+          <p>O = softmax(S) V</p>
+          <p>拼回 [B, 326, 3072]，按 294 / 32 切开</p>
+          <p>x ← x + g_attn · Wo(O)</p>
+          <p>残差用的是进层的 x，不是 h</p>
+        </div>
+        <div>
+          <svg class="fig" viewBox="0 0 360 348" role="img" aria-label="注意力掩码按 98、196、32 划分">
+            <text x="186" y="16" text-anchor="middle" fill="#5e584f" font-size="11" font-family="IBM Plex Mono, monospace">key：98 · 196 · 32</text>
+            <g transform="translate(48,26)">
+              <rect x="0" y="0" width="90.2" height="90.2" fill="#d5e4da"/>
+              <rect x="90.2" y="0" width="180.4" height="90.2" fill="#f4f0e8"/>
+              <rect x="270.6" y="0" width="29.4" height="90.2" fill="#f4f0e8"/>
+              <rect x="0" y="90.2" width="90.2" height="180.4" fill="#d5e4da"/>
+              <rect x="90.2" y="90.2" width="180.4" height="180.4" fill="#d5e4da"/>
+              <rect x="270.6" y="90.2" width="29.4" height="180.4" fill="#f4f0e8"/>
+              <rect x="0" y="270.6" width="90.2" height="29.4" fill="#8c3a1e"/>
+              <rect x="90.2" y="270.6" width="180.4" height="29.4" fill="#f4f0e8"/>
+              <rect x="270.6" y="270.6" width="29.4" height="29.4" fill="#f3d2c2"/>
+              <rect x="0" y="0" width="300" height="300" fill="none" stroke="#1c1915"/>
+            </g>
+          </svg>
+          <div class="legend">
+            <span><i class="sw" style="background:#d5e4da"></i>视频可看</span>
+            <span><i class="sw" style="background:#8c3a1e"></i>动作只看当前帧</span>
+            <span><i class="sw" style="background:#f3d2c2"></i>动作互看</span>
+            <span><i class="sw" style="background:#f4f0e8"></i>S 置 −∞</span>
+          </div>
+        </div>
+      </div>
+      <div class="split2">
+        <div class="chip video"><span class="t">视频写回</span><span class="s">Wo：3072×3072<br>+ CrossAttn(文本 129 个 token)<br>+ g_ffn · FFN(3072→14336→3072)<br>GELU 用 tanh 近似</span></div>
+        <div class="chip action"><span class="t">动作写回</span><span class="s">Wo：3072×1024<br>+ CrossAttn(同一句文本)<br>+ g_ffn · FFN(1024→4096→1024)<br>文本 K/V 里没有动作</span></div>
+      </div>
+    </div>
+    <figcaption>对应 <code>project_self_attention</code>、<code>fastwam_masked_attention</code>、<code>_apply_expert_post_block</code>。RMSNorm 在拆成 24 个头之前，作用在整个 3072 维上。SDPA 用 fp32。</figcaption>
+  </figure>
+
+  <h3>速度头和损失：梯度从哪里回来</h3>
+  <figure>
+    <div class="board">
+      <div class="split2">
+        <div class="chip video"><span class="t">视频头</span><span class="s">token 用时间嵌入再做一次 AdaLN<br>Linear 到 192，unpatchify<br>得到 [B,48,3,14,28]</span></div>
+        <div class="chip action"><span class="t">动作头</span><span class="s">Linear(1024→7)<br>没有 unpatchify<br>得到 [B,32,7]</span></div>
+      </div>
+      <div class="eqbox" style="margin-top:10px">
+        <p>Lᵥ = mean( MSE(v̂ᵥ[:,:,1:], εᵥ−z[:,:,1:]) · w(tᵥ) )</p>
+        <p>Lₐ = mean( 对 7 维 MSE 后，在 ~action_is_pad 上平均 · w(tₐ) )</p>
+        <p>y = exp(−2((t−500)/1000)²)　　w = (y−y_min) / mean(y−y_min)</p>
+        <p>L = Lᵥ + Lₐ</p>
+      </div>
+      <div class="split2">
+        <div class="chip video"><span class="t">Lᵥ 更新谁</span><span class="s">视频 query 看不见动作 key<br>所以不进入动作的 Wq、Wk、Wv<br>更新视频嵌入、30 层、视频头</span></div>
+        <div class="chip action"><span class="t">Lₐ 更新谁</span><span class="s">动作 query 看见当前帧 98 个 K、V<br>因此也更新产生这些 token 的视频层<br>以及本体 Linear(7→4096)</span></div>
+      </div>
+    </div>
+    <figcaption>视频第 0 个 latent 帧是条件，比较速度时丢掉。两条时间权重用各自的 t。</figcaption>
+  </figure>
+
+  <h3>推理：同一套 QKV，视频 K、V 只算一次</h3>
+  <figure>
+    <div class="board">
+      <div class="band">
+        <div class="lbl">一次</div>
+        <div class="chip video"><span class="t">当前帧</span><span class="s">[1,3,224,448]<br>→ z [1,48,1,14,28]</span></div>
+        <span class="arr">→</span>
+        <div class="chip video"><span class="t">时间步写 0</span><span class="s">98 个 token<br>走上面的视频 QKV</span></div>
+        <span class="arr">→</span>
+        <div class="chip video"><span class="t">30 层留下 K、V</span><span class="s">每层 [1,98,3072]<br>不走视频速度头</span></div>
+      </div>
+      <div class="band">
+        <div class="lbl">×10</div>
+        <div class="chip action"><span class="t">重算动作 Q、K、V</span><span class="s">投影和 1D RoPE 与训练相同<br>[1,24,32,128]</span></div>
+        <span class="arr">→</span>
+        <div class="chip ink"><span class="t">K = cat(Kᵥ, Kₐ)</span><span class="s">[1,24,130,128]<br>Q 仍是 32 行</span></div>
+        <span class="arr">→</span>
+        <div class="chip action"><span class="t">x ← x + v·Δσ</span><span class="s">Δσ = σ_next − σ<br>末步 σ_next = 0</span></div>
+        <span class="arr">→</span>
+        <div class="chip"><span class="t">a·std + mean</span><span class="s">1.0194 回到 0.1000<br>[32,7] 关节角</span></div>
+      </div>
+    </div>
+    <figcaption>去噪 10 步里，视频 K、V 不重算。动作头仍是 <code>Linear(1024→7)</code>，反归一化在模型外面。</figcaption>
+  </figure>
+</section>
+</main>
+</body>
+</html>

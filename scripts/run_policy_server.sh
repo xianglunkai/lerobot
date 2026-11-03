@@ -10,7 +10,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 export PYTHONPATH="src:${PYTHONPATH:-}"
 
-POLICY_PATH="${POLICY_PATH:-/home/xlk/work/lerobot/checkpoints/fineart-vla}"
+POLICY_PATH="${POLICY_PATH:-/home/xlk/work/lerobot/checkpoints/outputs/fineart_vla_zip_tie_clean_v30_ep127_lerobot_annotate/checkpoints/030000/pretrained_model}"
 TOKENIZER_PATH="${TOKENIZER_PATH:-/home/xlk/work/lerobot/pretrain_model/paligemma-3b-pt-224}"
 LOG_LEVEL="${LOG_LEVEL:-DEBUG}"
 LOG_DIR="${LOG_DIR:-logs}"

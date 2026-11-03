@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FastWAM × screw_sorting 全流程推导</title>
+<style>
+  :root {
+    --bg: #f6f4ef;
+    --ink: #1c1915;
+    --muted: #5e584f;
+    --line: #ddd6c8;
+    --card: #fffdf8;
+    --accent: #8c3a1e;
+    --code: #f3efe6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Iowan Old Style", Palatino, "Songti SC", serif;
+    color: var(--ink);
+    background: var(--bg);
+    line-height: 1.55;
+  }
+  main { max-width: 920px; margin: 0 auto; padding: 40px 22px 80px; }
+  h1 { font-size: 2rem; line-height: 1.2; margin-bottom: 0.3rem; }
+  h2 { font-size: 1.35rem; margin-top: 2.4rem; border-top: 1px solid var(--line); padding-top: 1.2rem; }
+  h3 { font-size: 1.05rem; margin-top: 1.4rem; }
+  p, li { font-size: 1.02rem; }
+  .lead { color: var(--muted); font-size: 1.05rem; }
+  code, pre { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.86rem; }
+  code { background: var(--code); padding: 0.1em 0.35em; border-radius: 4px; }
+  pre {
+    background: #231f1b; color: #f4efe6; padding: 14px 16px; overflow-x: auto;
+    border-radius: 8px; line-height: 1.45;
+  }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0 18px; background: var(--card); }
+  th, td { border: 1px solid var(--line); padding: 7px 9px; text-align: left; vertical-align: top; }
+  th { background: #efe8db; font-weight: 650; }
+  .note { background: #fff7e8; border-left: 4px solid var(--accent); padding: 10px 14px; margin: 14px 0; }
+  .flow { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+  .flow span {
+    background: var(--card); border: 1px solid var(--line); border-radius: 999px;
+    padding: 4px 10px; font-size: 0.92rem;
+  }
+  .flow span::after { content: " →"; color: var(--accent); }
+  .flow span:last-child::after { content: ""; }
+</style>
+</head>
+<body>
+<main>
+<h1>FastWAM 在螺丝分拣数据上的完整计算过程</h1>
+<p class="lead">数据集 <code>/data/huggingface/lerobot/lerobot/screw_sorting_single_sft_ep280_v30_steam</code>。下面按 LeRobot 默认 FastWAM 配置，把这条数据从采样、前处理、训练损失到推理去噪走一遍。形状和一次数值例子都按这份数据的 <code>meta/info.json</code> 与 <code>meta/stats.json</code> 计算。</p>
+
+<div class="note">
+目录名写的是 ep280，元数据里实际是 <strong>279 条轨迹、115130 帧、30 fps、1 个任务</strong>。任务原文：<em>Please sort and return the silver screws in the grey box to their proper places.</em>
+</div>
+
+<h2>0. 这份数据长什么样</h2>
+<table>
+  <tr><th>字段</th><th>形状 / 类型</th><th>含义</th></tr>
+  <tr><td><code>observation.images.high</code></td><td>视频 480×640×3</td><td>头顶相机，HWC</td></tr>
+  <tr><td><code>observation.images.right</code></td><td>视频 480×640×3</td><td>右腕相机，HWC</td></tr>
+  <tr><td><code>observation.state</code></td><td>float32 [7]</td><td>右臂 7 个关节，含夹爪 <code>right_joint6.pos</code></td></tr>
+  <tr><td><code>action</code></td><td>float32 [7]</td><td>同名的 7 维目标关节</td></tr>
+</table>
+<p>关节统计（用于后面的 mean/std 归一化）：</p>
+<pre>state mean = [0.1951, 1.3723, -1.0164, 0.0354, 0.7873, 0.0116, 0.0048]
+state std  = [0.2194, 0.7205,  0.3850, 0.0820, 0.2080, 0.0993, 0.0091]
+action mean = [-0.0001, 0.0096, -0.0054, -0.0001, 0.0024, 0.0002, 0.0053]
+action std  = [ 0.0981, 0.3288,  0.1846,  0.0366, 0.1070, 0.0342, 0.0093]</pre>
+<p>默认 <code>FastWAMConfig.proprio_dim = 8</code> 对不上这 7 维状态。下面的推导把 <code>proprio_dim</code> 和 <code>action_dim</code> 都设为 7。图像仍用默认 <code>image_size = (224, 448)</code>：两路相机各缩到 224×224，沿宽度拼成 448。</p>
+
+<h2>1. 一次训练样本取哪些时刻</h2>
+<p>默认 <code>num_video_frames = 33</code>，<code>action_video_freq_ratio = 4</code>，<code>action_horizon = 32</code>。当前帧记为数据集下标 <code>t</code>。</p>
+<p>视频只取每隔 4 帧的观测，来自 <code>observation_delta_indices</code>：</p>
+<pre>deltas = [0, 4, 8, 12, 16, 20, 24, 28, 32]
+帧号   = t + deltas
+模型帧数 model_video_frames = (33 - 1) / 4 + 1 = 9
+约束：9 % 4 == 1，VAE 时间下采样才合法</pre>
+<p>动作取连续 32 步，来自 <code>action_delta_indices = range(32)</code>，即 <code>action[t : t+32]</code>。32 能被视频间隔数 8 整除，所以每两个相邻视频帧之间正好对应 4 个动作。</p>
+<div class="flow">
+  <span>t 的两路图像 + state</span>
+  <span>未来 8 个视频帧</span>
+  <span>未来 32 个动作</span>
+  <span>任务字符串</span>
+</div>
+<p>30 fps 下，这 32 个动作覆盖 <code>32/30 ≈ 1.067 s</code>。视频帧的时间戳是 0、4/30、8/30 … 32/30 秒。</p>
+
+<h2>2. 前处理：LeRobot processor</h2>
+<p><code>make_fastwam_pre_post_processors</code> 的输入流水线只有四步，没有图像归一化，也没有在这里改分辨率：</p>
+<pre>rename_observations → add_batch_dim → to_device → normalize</pre>
+<p>归一化表是 <code>VISUAL=IDENTITY</code>，<code>STATE/ACTION=MEAN_STD</code>。图像保持数据集解码后的 <code>[0, 1]</code>。状态和动作做：</p>
+<pre>x_norm = (x - mean) / std</pre>
+<p>数值例子。设某一帧 <code>state[0] = 0.1951</code>（正好是均值），<code>action[0] = 0.1000</code>：</p>
+<pre>state_norm[0]  = (0.1951 - 0.1951) / 0.2194 = 0
+action_norm[0] = (0.1000 - (-0.0001)) / 0.0981 = 1.0194</pre>
+<p>7 维都这样算，得到 <code>state_norm</code>、<code>action_norm</code>，形状仍是 <code>[7]</code>，进 batch 后是 <code>[B, 7]</code> 和 <code>[B, 32, 7]</code>。</p>
+<p>图像真正的缩放发生在模型里的 <code>_stack_video_from_images</code>，不在 processor。两路 key 按名字排序是 <code>high</code> 然后 <code>right</code>。每路从 <code>[B, 9, 3, 480, 640]</code> 双线性缩到 <code>[B, 9, 3, 224, 224]</code>，再沿最后一维拼接：</p>
+<pre>[B, 9, 3, 224, 224] ∥ [B, 9, 3, 224, 224]
+        → [B, 9, 3, 224, 448]
+permute → video [B, 3, 9, 224, 448]</pre>
+<p>语言不进这个 processor。模型在 <code>_batch_to_training_sample</code> 里用冻结的 UMT5 把任务句子编成 <code>context [B, L, 4096]</code> 和 <code>context_mask [B, L]</code>，<code>L ≤ 128</code>。</p>
+
+<h2>3. 训练：从像素到两个速度场</h2>
+<p>调用链：</p>
+<pre>FastWAMPolicy.forward
+  → _batch_to_training_sample
+  → FastWAM.build_inputs
+  → _sample_training_targets
+  → _run_training_mot
+  → loss = 1.0 * loss_video + 1.0 * loss_action</pre>
+
+<h3>3.1 VAE 编码</h3>
+<p>Wan2.2 VAE 空间下采样 16、时间下采样 4、latent 通道 48。9 帧视频变成：</p>
+<pre>T_lat = (9 - 1) / 4 + 1 = 3
+H_lat = 224 / 16 = 14
+W_lat = 448 / 16 = 28
+input_latents: [B, 48, 3, 14, 28]</pre>
+<p>第 0 个 latent 帧被单独保存为 <code>first_frame_latents [B, 48, 1, 14, 28]</code>。本体只取第 0 帧：<code>proprio[:, 0, :]</code> 得到 <code>[B, 7]</code>，编码后接到 text context 后面。</p>
+
+<h3>3.2 加噪：两条独立的直线流</h3>
+<p>调度器 <code>train_shift = 5</code>，<code>num_train_timesteps = 1000</code>。对一个均匀随机数 <code>u ∈ (0, 1)</code>：</p>
+<pre>σ = 5u / (1 + 4u)
+timestep = σ * 1000
+x_t = (1 - σ) * x + σ * ε
+目标速度 v = ε - x</pre>
+<p>视频和动作各抽各的 <code>u</code>。例子：视频抽到 <code>u = 0.5</code>：</p>
+<pre>σ_video = 2.5 / 3 = 0.8333
+timestep_video = 833.3
+latents = 0.1667 * input_latents + 0.8333 * ε_video
+target_video = ε_video - input_latents</pre>
+<p>动作若抽到 <code>u = 0.2</code>：</p>
+<pre>σ_action = 1.0 / 1.8 = 0.5556
+timestep_action = 555.6
+noisy_action = 0.4444 * action_norm + 0.5556 * ε_action     # [B, 32, 7]
+target_action = ε_action - action_norm</pre>
+<p>加噪之后，第 0 个视频 latent 被写回干净的 <code>first_frame_latents</code>。未来两帧保持噪声，当前帧是条件。</p>
+
+<h3>3.3 切 token，送进 MoT</h3>
+<p>视频 patch 是 <code>[1, 2, 2]</code>。每一帧 latent 14×28 变成 <code>(14/2) × (28/2) = 98</code> 个 token。3 个 latent 帧共 <strong>294</strong> 个视频 token，隐藏维 3072（24 头 × 128）。动作序列长度就是 32，每个动作一步一个 token，动作 expert 隐藏维 1024，注意力投影仍是 24×128。</p>
+<p>当前帧的 98 个 token 排在视频序列最前面，它们的时间嵌入被写成 0。注意力掩码：</p>
+<table>
+  <tr><th>谁看谁</th><th>是否允许</th></tr>
+  <tr><td>当前帧 token → 未来视频 token</td><td>否（<code>first_frame_causal</code> 把左上块对未来清掉）</td></tr>
+  <tr><td>未来视频 token → 当前帧 token</td><td>是</td></tr>
+  <tr><td>视频 token → 动作 token</td><td>否</td></tr>
+  <tr><td>动作 token → 当前帧的 98 个 token</td><td>是</td></tr>
+  <tr><td>动作 token → 未来视频 token</td><td>否</td></tr>
+  <tr><td>动作 token → 全部动作 token</td><td>是</td></tr>
+</table>
+<p>所以动作损失读不到未来画面。未来画面只通过视频自己的速度损失来学习。共享的是同一套 MoT 层的权重，不是让动作直接看见未来帧。</p>
+
+<h3>3.4 损失</h3>
+<p>两个头各自输出速度，和 <code>ε - x</code> 做 MSE。视频损失丢掉第 0 个 latent 步（它是条件，不是预测目标），只在后 2 个 latent 帧上平均；<code>image_is_pad</code> / <code>action_is_pad</code> 为真的步不计入。再乘时间权重：</p>
+<pre>y = exp(-2 * ((t - 500) / 1000)^2)
+weight = (y - y_min) / mean(y - y_min)
+
+loss = 1.0 * mean(video_mse * weight_video) + 1.0 * mean(action_mse * weight_action)</pre>
+<p>可训练的是 MoT 和 proprio 编码器。VAE 与 UMT5 冻结，不写进策略的 <code>model.safetensors</code>。</p>
+
+<h2>4. 后处理</h2>
+<p>训练没有把动作解码回关节角。推理时 <code>predict_action_chunk</code> 得到的是归一化空间的 <code>[B, 32, 7]</code>，再走 postprocessor：</p>
+<pre>unnormalize →（可选）gripper toggle → to_cpu</pre>
+<p>反归一化是前处理的逆：</p>
+<pre>action_raw = action_norm * std + mean
+例：action_norm[0] = 1.0194
+    action_raw[0] = 1.0194 * 0.0981 + (-0.0001) = 0.1000</pre>
+<p>这份机器人数据不要开 LIBERO 的 <code>toggle_action_dimensions</code>。那个开关默认是空列表；若设成 <code>[-1]</code>，会把夹爪维从 <code>[0,1]</code> 映到符号 <code>±1</code>，和这里的连续关节角不一致。</p>
+<p><code>select_action</code> 并不把 32 步一次发出去。它只把前 <code>n_action_steps</code> 步放进队列（默认 32，即整块），每次控制循环弹出 1 步。队列空了再预测下一块。</p>
+
+<h2>5. 推理：当前帧如何进 MoT</h2>
+<p>rollout 调用的是 <code>select_action → predict_action_chunk → infer_action</code>，不是会生成未来视频的 <code>infer_joint</code>。</p>
+<p>实时观测通常只有当前这一帧。两路图仍缩成 <code>[1, 3, 224, 448]</code>，VAE 只编这一帧：</p>
+<pre>first_frame_latents: [1, 48, 1, 14, 28]
+patch 之后: 98 个 token，每个 3072 维
+时间嵌入: 全部写成 0，表示 σ = 0，输入已经是干净画面</pre>
+<p>这 98 个 token 过 30 层视频 Transformer，每层只留下 K/V，不走视频速度头 <code>post_dit</code>：</p>
+<pre>列表长度 30
+每一层 k, v: [1, 98, 3072]
+3072 = 24 个头 × 128，头被拼在最后一维
+注意力时才拆成 [1, 24, 98, 128]</pre>
+<p>动作从 <code>[1, 32, 7]</code> 的高斯噪声开始。默认推理步数下，action scheduler 给出一串 σ 和步长 <code>delta = σ_next - σ</code>。每一步：</p>
+<pre>动作 token 的 Q,K,V 按当前噪声重新算
+K_cat = concat(当前帧的 K, 动作的 K)    # 序列维 98 + 32
+V_cat 同样拼接
+动作 query 同时看这 98 个画面 token 和 32 个动作 token
+速度头输出 v_action，形状与噪声相同
+x ← x + v_action * delta</pre>
+<p>当前帧的 K/V 在这 32 步动作去噪里不更新。循环结束时 <code>x</code> 就是归一化动作 <code>[32, 7]</code>，再按第 4 节乘回 std、加回 mean，得到要发给右臂的 7 个关节目标。</p>
+
+<h2>6. 和这份数据对齐时要改的配置</h2>
+<table>
+  <tr><th>配置</th><th>默认</th><th>这份数据</th></tr>
+  <tr><td><code>action_dim</code></td><td>7</td><td>7，不用改</td></tr>
+  <tr><td><code>proprio_dim</code></td><td>8</td><td>必须改成 7</td></tr>
+  <tr><td><code>image_size</code></td><td>(224, 448)</td><td>两相机可保持：各 224×224，宽向拼接</td></tr>
+  <tr><td><code>input_features</code></td><td>单相机</td><td>声明 <code>high</code> 与 <code>right</code>，形状 <code>(3, 224, 224)</code></td></tr>
+  <tr><td><code>toggle_action_dimensions</code></td><td>[]</td><td>保持空</td></tr>
+  <tr><td>视频 / 动作窗口</td><td>33 帧抽 9，动作 32</td><td>可直接用；要改窗口必须同时满足第 1 节的整除约束</td></tr>
+</table>
+
+<h2>7. 一条样本的形状清单</h2>
+<table>
+  <tr><th>阶段</th><th>张量</th><th>形状</th></tr>
+  <tr><td>采样</td><td>两路视频帧</td><td>各 <code>[B, 9, 3, 480, 640]</code></td></tr>
+  <tr><td>采样</td><td>state / action</td><td><code>[B, 7]</code> / <code>[B, 32, 7]</code></td></tr>
+  <tr><td>缩放拼接</td><td><code>video</code></td><td><code>[B, 3, 9, 224, 448]</code></td></tr>
+  <tr><td>VAE</td><td><code>input_latents</code></td><td><code>[B, 48, 3, 14, 28]</code></td></tr>
+  <tr><td>MoT 训练</td><td>视频 token</td><td><code>[B, 294, 3072]</code></td></tr>
+  <tr><td>MoT 训练</td><td>动作 token</td><td><code>[B, 32, …]</code>，注意力维 24×128</td></tr>
+  <tr><td>推理缓存</td><td>每层 K、V</td><td><code>[1, 98, 3072]</code> × 30 层</td></tr>
+  <tr><td>推理输出</td><td>归一化动作</td><td><code>[1, 32, 7]</code></td></tr>
+  <tr><td>反归一化</td><td>关节目标</td><td><code>[32, 7]</code>，单位与数据集 action 相同</td></tr>
+</table>
+</main>
+</body>
+</html>

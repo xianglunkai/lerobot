@@ -3,7 +3,7 @@
 # and compile mode.
 deployment: zip_tie
 model:
-  repo_or_path: /home/xlk/work/lerobot/checkpoints/fineart-vla
+  repo_or_path: /home/xlk/work/lerobot/checkpoints/outputs/fineart_vla_zip_tie_clean_v30_ep127_lerobot_annotate/checkpoints/030000/pretrained_model
   revision: null
   device: cuda
   text_tokenizer_name: /home/xlk/work/lerobot/pretrain_model/paligemma-3b-pt-224
