@@ -30,7 +30,7 @@ CFG_BETA="${CFG_BETA:-1.0}"
 case "$SELECT" in
     s)
         python examples/rac/hil_data_collection.py \
-            --policy.path=/home/xlk/work/lerobot/checkpoints/outputs/pi05_policy_screw_sorting_single_sft_ep280_v30/checkpoints/030000/pretrained_model \
+            --policy.path=/home/xlk/work/lerobot/checkpoints/outputs/pi05_policy_screw_sorting_single_sft_ep279_v30_annotated-pi07/checkpoints/030000/pretrained_model \
             --robot.type=agilex_cobot \
             --robot.use_external_commands=false \
             --robot.ros_config.with_mobile_base=false \
@@ -43,15 +43,15 @@ case "$SELECT" in
             --subtask="$SUBTASK" \
             --dataset.fps=30 \
             --dataset.video=True \
-            --dataset.episode_time_s=30 \
+            --dataset.episode_time_s=60 \
             --dataset.push_to_hub=false \
-            --dataset.num_episodes=121 \
+            --dataset.num_episodes=120 \
             --dataset.vcodec=libsvtav1 \
             --dataset.streaming_encoding=true \
             --display_data=false \
             --rtc.enabled=true \
             --rtc.execution_horizon=10 \
-            --fixed_inference_delay=7 \
+            --fixed_inference_delay=6 \
             --rtc.max_guidance_weight=10.0 \
             --rtc.prefix_attention_schedule=EXP \
             --rtc.sigma_d=0.2 \
@@ -59,7 +59,7 @@ case "$SELECT" in
             --calibrate=true \
             --use_torch_compile=true \
             --device=cuda \
-            --action_queue_size_to_get_new_actions=22 \
+            --action_queue_size_to_get_new_actions=12 \
             --enable_episode_outcome_labeling=true \
             --default_episode_success="success" \
             --require_episode_success_label=true \

@@ -181,9 +181,9 @@ class QPActionSmoothingProcessor(PolicyActionProcessorStep):
     vel_limits: Optional[Tuple[float, float]] = None
     acc_limits: Optional[Tuple[float, float]] = None
     w_data: float = 1.0
-    w_acc: float = 1.0
-    w_jerk: float = 0.0
-    fix_ends: bool = True
+    w_acc: float = 100.0
+    w_jerk: float = 100.0
+    fix_ends: bool = False
     eps: float = 1e-6
     verbose: bool = False
     fps: Optional[float] = None
