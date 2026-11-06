@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<title>π0.5 分拣螺丝：Jetson Orin / Thor OpenPI-Torch 边缘加速实施手册</title>
+<style>
+  @page { size: A4; margin: 16mm 14mm 18mm 14mm; }
+  html { font-family: "Noto Sans CJK SC", "Noto Sans CJK TC", sans-serif; font-size: 10.5pt; line-height: 1.55; color: #1a1a1a; }
+  body { margin: 0; }
+  h1 { font-size: 18pt; line-height: 1.3; margin: 0 0 8px; }
+  h2 { font-size: 14pt; margin: 22px 0 8px; border-bottom: 1px solid #ccc; padding-bottom: 3px; page-break-after: avoid; }
+  h3 { font-size: 12pt; margin: 16px 0 6px; page-break-after: avoid; }
+  p, li { orphans: 3; widows: 3; }
+  code, pre { font-family: "Noto Sans Mono CJK SC", "DejaVu Sans Mono", monospace; font-size: 8.6pt; }
+  pre { background: #f4f4f4; padding: 8px 10px; white-space: pre-wrap; word-break: break-all; page-break-inside: avoid; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0 14px; page-break-inside: avoid; font-size: 9.2pt; }
+  th, td { border: 1px solid #bbb; padding: 4px 6px; vertical-align: top; text-align: left; }
+  th { background: #eee; }
+  .meta { color: #444; margin-bottom: 14px; }
+  .box { border: 1px solid #888; padding: 8px 10px; margin: 10px 0; page-break-inside: avoid; }
+  ol, ul { padding-left: 1.3em; }
+</style>
+</head>
+<body>
+
+<h1>π0.5 分拣螺丝：Jetson Orin / Thor<br/>OpenPI-Torch 边缘加速实施手册</h1>
+<p class="meta">权重：<code>pi05_policy_screw_sorting_single_sft_ep279_v30_annotated-pi07</code>，step 030000。<br/>
+入口：OpenPI / LeRobot 的 PyTorch <code>model.safetensors</code>。按阶段执行，上一阶段门禁没过就停。</p>
+
+<h2>1. 先选板、先定配置</h2>
+<p>这份策略在工作站 RTX 3090（SM 8.6）上继续用现有 <code>torch.compile</code>。边缘侧只使用下面两块板。两块板都读同一份 safetensors，都把键名里的 <code>model.</code> 前缀自动剥掉，都不需要先把权重转成另一份文件。</p>
+<table>
+<tr><th></th><th>Jetson AGX Orin</th><th>Jetson AGX Thor</th></tr>
+<tr><td>计算能力</td><td>SM 8.7</td><td>SM 11.0</td></tr>
+<tr><td>系统</td><td>JetPack 6.x，CUDA 12.6</td><td>JetPack 7.2，CUDA 13</td></tr>
+<tr><td>前端类</td><td><code>Pi05TorchFrontendRtx</code></td><td><code>Pi05TorchFrontendThor</code></td></tr>
+<tr><td>编译架构</td><td><code>-DGPU_ARCH=87</code></td><td><code>-DGPU_ARCH=110</code>，并打开 <code>FLASHRT_ENABLE_PI05_THOR</code></td></tr>
+<tr><td>动作长度</td><td>构造参数 <code>chunk_size=32</code></td><td>源码里写死为 10。落地前改成 32 再编译</td></tr>
+<tr><td>能用的量化</td><td>BF16；W8A8（INT8）</td><td>BF16；FP8；NVFP4</td></tr>
+<tr><td>开不了的</td><td>FP8、NVFP4、W4A8</td><td>INT8 那套 Orin 环境变量</td></tr>
+<tr><td>公开延迟的含义</td><td>64GB、INT8、cache=1：约 124 ms。测的是默认 chunk 10 的 DROID</td><td>官方镜像 FP8 约 40.7 ms，NVFP4 约 20.3 ms。测的是 LIBERO、horizon 10</td></tr>
+</table>
+<div class="box">
+<strong>建议落地配置（两块板同一条策略，只是精度不同）</strong>
+<ul>
+<li>形状固定：2 路相机，chunk 32，去噪 10 步，prompt 上限 200，<code>state_prompt_mode=fixed</code>，CUDA graph 开，视觉层 27，不做 token 池化。</li>
+<li>Orin：BF16 对齐通过后，打开 <code>FVK_PI05_RTX_FORCE_INT8=1</code>，<code>cache_frames=1</code>。官方在 DROID 上这档与 BF16 余弦为 1.000。</li>
+<li>Thor：先 <code>use_fp8=False</code> 对齐，再 <code>use_fp8=True</code> 并用真实图像校准。NVFP4 放在 FP8 门禁之后，而且要确认 <code>pipe.Sa == 32</code>。</li>
+<li>Training-time RTC 的前缀长度固定为 6，和 HIL 的 <code>fixed_inference_delay=6</code> 一致。两块板的公开 <code>infer()</code> 都没有这个前缀，接机械臂之前要先改前端并通过第 8 节的门禁。</li>
+</ul>
+</div>
+
+<h2>2. 这份权重的合同</h2>
+<p>目录：</p>
+<pre>checkpoints/outputs/pi05_policy_screw_sorting_single_sft_ep279_v30_annotated-pi07/checkpoints/030000/pretrained_model</pre>
+<p>拷到板上时这 7 个文件都要在：<code>config.json</code>、<code>model.safetensors</code>、<code>policy_preprocessor.json</code>、<code>policy_preprocessor_step_3_normalizer_processor.safetensors</code>、<code>policy_postprocessor.json</code>、<code>policy_postprocessor_step_0_unnormalizer_processor.safetensors</code>、<code>train_config.json</code>。</p>
+<table>
+<tr><th>项</th><th>值</th><th>落到前端时</th></tr>
+<tr><td>相机</td><td><code>observation.images.high</code>，然后 <code>observation.images.right</code>。480×640，模型 224×224</td><td><code>num_views=2</code>。high 送给 <code>image</code>，right 送给 <code>wrist_image</code></td></tr>
+<tr><td>状态 / 动作</td><td>各 7 维，内部 pad 到 32。夹爪是 <code>right_joint6.pos</code></td><td>比较和后处理都只看前 7 维</td></tr>
+<tr><td>动作语义</td><td>相对动作，夹爪排除在外，保持绝对</td><td>FlashRT 不做这一步。留在 LeRobot 的 <code>absolute_actions_processor</code></td></tr>
+<tr><td>归一化</td><td>state、action 都是分位数</td><td>两块板都会自动读上面的 processor safetensors</td></tr>
+<tr><td>chunk / 步数</td><td>32 / 10</td><td>Orin 用参数；Thor 改 <code>Sa</code></td></tr>
+<tr><td>文本</td><td>tokenizer 最长 200。任务句见第 10 节</td><td><code>fixed</code> 模式把 state 写进 prompt 后垫到固定长度，整段只捕获一张 graph</td></tr>
+<tr><td>RTC</td><td><code>rtc_training_config.enabled=true</code>，<code>max_delay=10</code>。<code>rtc_config</code> 为空</td><td>用训练时硬写入，不用推理时 guidance</td></tr>
+<tr><td>精度</td><td>训练是 bfloat16，gemma_2b + gemma_300m</td><td>见第 4 节</td></tr>
+<tr><td>后处理</td><td>反归一化 → 绝对动作 → OSQP（fps 30）→ cpu</td><td>OSQP 留在 LeRobot，不放进 CUDA graph</td></tr>
+</table>
+
+<h2>3. 两块板怎么编译</h2>
+<p>先确认板子。不是这两行之一就停。</p>
+<pre>nvidia-smi --query-gpu=name,compute_cap --format=csv
+python -c "import torch; print(torch.cuda.get_device_capability())"
+cat /etc/nv_tegra_release</pre>
+<p>Orin 必须打印 <code>(8, 7)</code>。Thor 必须打印 <code>(11, 0)</code>。锁最高功耗和固定时钟，后面的毫秒数才有意义：</p>
+<pre>sudo nvpmodel -m 0
+sudo jetson_clocks</pre>
+
+<h3>3.1 Orin</h3>
+<pre>git clone https://github.com/flashrt-project/FlashRT.git
+cd FlashRT
+git clone --depth 1 --branch v4.4.2 https://github.com/NVIDIA/cutlass.git third_party/cutlass
+python3 -m venv --system-site-packages .venv
+source .venv/bin/activate
+pip install -e ".[torch]"
+export PATH=/usr/local/cuda/bin:$PATH
+export CUDACXX=/usr/local/cuda/bin/nvcc
+cmake -B build_orin_sm87 -S . \
+  -DGPU_ARCH=87 \
+  -DFA2_ARCH_NATIVE_ONLY=ON \
+  -DFA2_HDIMS='96;128;256' \
+  -DFA2_DTYPES='bf16' \
+  -DPython3_EXECUTABLE="$(which python3)"
+cmake --build build_orin_sm87 -j4</pre>
+<p><code>-j4</code> 是为了避开 32GB 内存在全核编译时被换出。64GB 可以试 <code>-j6</code>，内存吃紧就回到 4。编完：</p>
+<pre>python -c "from flash_rt.hardware import detect_arch; print(detect_arch())"</pre>
+<p>输出必须是 <code>rtx_sm87</code>。</p>
+
+<h3>3.2 Thor</h3>
+<p>官方镜像 <code>ghcr.io/flashrt-project/flashrt-thor:thor-v0.2.0</code> 用来复现 LIBERO、horizon 10。这份螺丝模型是 horizon 32，不要拿这个镜像直接 <code>predict()</code>。在源码里改完再编。</p>
+<p>打开 <code>flash_rt/frontends/torch/pi05_thor.py</code>，找到：</p>
+<pre>Sa, Da, Ha, La = 10, 1024, 4096, 18</pre>
+<p>只把 <code>Sa</code> 从 10 改成 32。<code>Da/Ha/La</code> 不动。文件里其余的 <code>steps = 10</code> 是去噪步数，保持 10。保存后搜索构造函数附近，确认没有第二处把动作长度又写成 10。然后：</p>
+<pre>git clone https://github.com/flashrt-project/FlashRT.git
+cd FlashRT
+python3 -m venv --system-site-packages .venv
+source .venv/bin/activate
+export PATH=/usr/local/cuda/bin:$PATH
+export CUTE_DSL_ARCH=sm_101a
+python -c "import torch; assert torch.cuda.get_device_capability()== (11, 0)"
+pip install numpy==1.26.4 safetensors==0.8.0 sentencepiece pillow pybind11 ninja \
+  nvidia-cutlass-dsl==4.5.1 quack-kernels==0.4.1
+pip install --no-deps --no-build-isolation -e .
+git clone --depth 1 --branch v4.4.2 https://github.com/NVIDIA/cutlass.git third_party/cutlass
+cmake -S . -B build -DGPU_ARCH=110 -DCMAKE_CUDA_ARCHITECTURES=OFF \
+  -DCMAKE_BUILD_TYPE=Release -DFLASHRT_ENABLE_PI05_THOR=ON
+cmake --build build -j2 --target flash_rt_kernels flash_rt_fp4 fmha_fp16_strided flash_rt_pi05_thor
+python -c "from flash_rt import flash_rt_kernels, flash_rt_fp4, flash_rt_pi05_thor; \
+from flash_rt.hardware import detect_arch; print(detect_arch())"</pre>
+<p>输出必须是 <code>thor</code>。Thor 编译用 <code>-j2</code>，和官方指南一致。</p>
+<p>PaliGemma 分词器：</p>
+<pre>mkdir -p "$HOME/.cache/openpi/big_vision"
+curl -fL --retry 3 \
+  https://storage.googleapis.com/big_vision/paligemma_tokenizer.model \
+  -o "$HOME/.cache/openpi/big_vision/paligemma_tokenizer.model"
+export FLASH_RT_PALIGEMMA_TOKENIZER="$HOME/.cache/openpi/big_vision/paligemma_tokenizer.model"</pre>
+<p>Orin 的 RTX 前端会优先用本机的 OpenPI <code>PaligemmaTokenizer</code>。板上若能装 openpi，两块板都设置同一个 <code>FLASH_RT_PALIGEMMA_TOKENIZER</code>，避免词表不一致。</p>
+
+<h2>4. 优化项对照</h2>
+<p>下表每一行都是一次独立实验。一次只改一行里的那一个旋钮，其余保持第 1 节的建议配置。公开毫秒数来自 chunk 10 的 DROID 或 LIBERO，不能当作这份 chunk 32 的验收线。验收线是第 7、8 节的余弦，再加上本机测到的中位数。</p>
+<table>
+<tr><th>旋钮</th><th>Orin</th><th>Thor</th><th>改变了什么</th><th>对这份策略</th></tr>
+<tr><td>BF16 / FP16 参考</td><td><code>use_fp8=False</code>，不要设 INT8</td><td><code>use_fp8=False</code></td><td>权重和激活保持 16 位浮点</td><td>第一道门禁。后面的量化都和它比</td></tr>
+<tr><td>W8A8</td><td><code>FVK_PI05_RTX_FORCE_INT8=1</code></td><td>没有这条路径</td><td>大矩阵的权重、激活都是 INT8，结果回到 BF16。Orin 部署文档在 DROID、cache=1 上写成与 BF16 逐位一致，延迟从约 193 ms 降到约 124 ms</td><td>Orin 的正式精度。本机余弦要自己再测</td></tr>
+<tr><td>只量化编码器</td><td><code>FVK_PI05_RTX_INT8_ENCODER_ONLY=1</code></td><td>无</td><td>编码器 INT8，解码器留 BF16。解码器序列短，INT8 tile 在 16 个 SM 上经常更慢</td><td>全量 INT8 余弦掉了才退回这里</td></tr>
+<tr><td>视觉 INT8</td><td><code>FVK_PI05_RTX_INT8_VISION=1</code></td><td>无</td><td>作者标明当时未做余弦验证。静态视觉 INT8 会把编码器余弦从 0.991 打到 0.282，代码里已关掉</td><td>不要开</td></tr>
+<tr><td>FP8</td><td>SM 8.7 没有 FP8 tensor core，<code>use_fp8=True</code> 会被跳过</td><td><code>use_fp8=True</code>，先 <code>calibrate</code></td><td>权重和激活都是 FP8 E4M3，缩放来自真实图像。官方 LIBERO：约 40.7 ms，平均余弦 0.999905</td><td>Thor 的正式精度</td></tr>
+<tr><td>NVFP4</td><td>无</td><td><code>use_fp4=True</code> 且 <code>use_fp4_decoder=True</code>，并带官方的 <code>use_fa4=True</code>、<code>awq_alpha=0.5</code>、<code>encoder_p1_combiner="epilogue_hw_nod"</code>、<code>encoder_down_variant=8</code></td><td>4 位浮点，权重和激活都是 4 位。官方 LIBERO：约 20.3 ms，平均余弦 0.999707</td><td>FP8 门禁通过、并且 <code>Sa==32</code> 之后才测</td></tr>
+<tr><td><code>cache_frames=1</code></td><td>默认。每帧都跑完整编码器</td><td>Thor 前端没有这个参数</td><td>Orin 文档写明与 BF16 路径逐位一致</td><td>Orin 落地用这个</td></tr>
+<tr><td><code>cache_frames=2</code></td><td>偶数帧复用上一帧编码器 K/V</td><td>无</td><td>DROID 上有效约 12.2 Hz，余弦 0.991。两帧的耗时不一样（约 127 ms 和 39 ms），推理延迟一帧一个数</td><td>先不要和 d=6 的静态 RTC 图叠在一起。RTC 门禁通过之后再单开一轮</td></tr>
+<tr><td><code>vision_pool_factor</code></td><td>1、2 或 4</td><td>不在 Thor 构造函数里</td><td>2 或 4 会把视觉 token 做 2×2 / 4×4 池化，序列变短，网络和训练时不同</td><td>保持 1</td></tr>
+<tr><td><code>vision_num_layers</code></td><td>1 到 27</td><td>Thor 按 27 层 SigLIP 编进图</td><td>小于 27 等于拆掉后面的视觉层</td><td>保持 27</td></tr>
+<tr><td><code>num_steps</code></td><td>构造参数，这份模型是 10</td><td>源码里 <code>steps = 10</code></td><td>改步数就是另一条 ODE</td><td>保持 10</td></tr>
+<tr><td><code>state_prompt_mode</code></td><td><code>exact</code> 按当次 prompt 长度各捕获一张图；<code>fixed</code> 垫到固定长度，一张图</td><td>同左，另有 <code>state_prompt_fixed_max_len</code></td><td>state 离散化之后写进 prompt，长度会变。<code>exact</code> 在控制循环里反复重建图</td><td>用 <code>fixed</code>，上限 200</td></tr>
+<tr><td>CUDA graph</td><td><code>use_cuda_graph=True</code></td><td>同左。<code>autotune=3</code> 是默认试跑次数</td><td>捕获之后重放不再走 Python 调度。关掉只为了用 nsys 看单个 kernel</td><td>测速和上机都开着。nsys 时临时关掉</td></tr>
+<tr><td>Thor 的 <code>rtc_prefix</code> 图</td><td>无</td><td>按 <code>prefix_len</code> 另捕获一张解码图，缓冲名叫 <code>rtc_guidance_weight</code></td><td>这是推理时 guidance RTC。本权重的 <code>rtc_config</code> 是空的</td><td>不要调用。训练时 RTC 按第 8 节另做</td></tr>
+</table>
+
+<h2>5. 构造模型</h2>
+<p><code>load_model()</code> 不转发 <code>chunk_size</code> 和 <code>max_prompt_len</code>。Orin 直接构造 RTX 类。Thor 在改完 <code>Sa</code> 之后构造 Thor 类，不要用官方示例里 horizon 10 的 <code>load_model</code> 片段当作这份权重的入口。</p>
+<h3>5.1 Orin，BF16 参考</h3>
+<pre>from flash_rt.frontends.torch.pi05_rtx import Pi05TorchFrontendRtx
+
+CKPT = "/abs/path/to/pretrained_model"
+pipe = Pi05TorchFrontendRtx(
+    CKPT,
+    num_views=2,
+    chunk_size=32,
+    num_steps=10,
+    max_prompt_len=200,
+    vision_pool_factor=1,
+    vision_num_layers=27,
+    cache_frames=1,
+    state_prompt_mode="fixed",
+    use_fp8=False,
+    use_cuda_graph=True,
+    denoise_trace=True,
+)
+assert pipe.chunk_size == 32 and pipe._num_steps == 10</pre>
+<h3>5.2 Orin，W8A8</h3>
+<p>环境变量要在导入前端之前设置。</p>
+<pre>import os
+os.environ["FVK_PI05_RTX_FORCE_INT8"] = "1"
+# 然后用与 5.1 相同的参数再构造一次</pre>
+<h3>5.3 Thor</h3>
+<pre>from flash_rt.frontends.torch.pi05_thor import Pi05TorchFrontendThor
+
+pipe = Pi05TorchFrontendThor(
+    CKPT,
+    num_views=2,
+    use_cuda_graph=True,
+    autotune=3,
+    use_fp8=False,          # 第一轮对齐。通过后改为 True
+    use_fa4=True,
+    state_prompt_mode="fixed",
+    state_prompt_fixed_max_len=200,
+)
+print("Sa", pipe.Sa)
+assert pipe.Sa == 32</pre>
+<p><code>Sa</code> 若仍是 10，说明改动没有进到正在导入的那份源码，停。FP8 轮把 <code>use_fp8=True</code>，在 <code>set_prompt</code> 之后、进控制循环之前调用：</p>
+<pre>pipe.calibrate(real_observations, percentile=99.9)</pre>
+<p><code>real_observations</code> 用现场的 high / right 图像，至少 8 帧，覆盖盒子在画面里的正常位置。校准会按这些帧的激活统计写 FP8 缩放并重新捕获 graph。换场景之后重新校准。</p>
+
+<h2>6. 输入输出约定</h2>
+<p>图像用 224×224、HWC、uint8，范围 0–255，交给前端自己做 <code>/127.5 - 1</code>。不要先用 LeRobot 的视觉归一化再送进去，否则会归一化两次。相机顺序是 high，然后 right。</p>
+<p>Prompt 与 HIL 脚本相同：</p>
+<pre>Please sort and return the silver screws in the grey box to their proper places.</pre>
+<p>状态 7 维，顺序与数据集 feature 名一致，夹爪在最后。前端把离散化后的状态写进 prompt。</p>
+<p>噪声形状 <code>(32, 32)</code>，后 25 维是 pad。对齐时两边喂同一份噪声。</p>
+<table>
+<tr><th></th><th>Orin <code>infer</code> 的返回值</th><th>Thor <code>infer</code> 的返回值</th></tr>
+<tr><td>已反归一化的 7 维</td><td><code>actions</code>，形状 (32, 7)</td><td><code>actions</code>，形状 (32, 7)</td></tr>
+<tr><td>归一化的 32 维</td><td><code>denoise_trace=True</code> 时的 <code>raw_actions</code>，形状 (32, 32)</td><td>在返回前存在 <code>_g_noise</code>，默认不放进返回值。对齐时用 <code>debug=True</code> 的日志，或在 <code>unnormalize_actions</code> 之前把 <code>raw_actions</code> 存下来</td></tr>
+</table>
+<p>接入 LeRobot 时：</p>
+<ul>
+<li>Orin 取 <code>raw_actions[:, :7]</code>，还原成 <code>(1, 32, 7)</code>，走完整后处理：分位数反归一化 → 绝对动作（夹爪保持绝对）→ OSQP → cpu。</li>
+<li>Thor 的 <code>actions</code> 已经做过反归一化。再跑一遍 unnormalizer 会把量纲乘错。只跑绝对动作和 OSQP。</li>
+</ul>
+
+<h2>7. 第一帧对齐（没有 RTC）</h2>
+<p>第一帧没有上一 chunk，LeRobot 的 <code>sample_actions</code> 走普通 10 步去噪。准备一条离线样本：两张 uint8 图、7 维状态、同一句 prompt、同一份噪声。</p>
+<p>LeRobot 侧：<code>inference_delay=None</code>，<code>prev_chunk_left_over=None</code>，<code>num_steps=10</code>。取出反归一化之后、绝对动作之前的 <code>(32, 7)</code>。</p>
+<p>FlashRT 侧：<code>set_prompt</code> 一次，再 <code>infer</code>。Orin 用反归一化后的 <code>actions</code>。Thor 同样用 <code>actions</code>。比较这 32×7。</p>
+<p>门禁，BF16 参考：</p>
+<ul>
+<li>最大绝对误差 &lt; 1e-2。</li>
+<li>余弦 &gt; 0.999。</li>
+<li>32 个数都是有限值。</li>
+</ul>
+<p>不过就只查这四项：<code>chunk</code> 是不是 32、<code>steps</code> 是不是 10、相机是不是 high 在前、prompt 有没有被截到 48（Orin 的类默认值）。Thor 再查一次 <code>pipe.Sa</code>。</p>
+<p>BF16 通过之后再测正式精度，样本和噪声不变：</p>
+<table>
+<tr><th>板</th><th>配置</th><th>相对 BF16 参考的门禁</th></tr>
+<tr><td>Orin</td><td>INT8，cache_frames=1</td><td>余弦 &gt; 0.999。官方 DROID 写的是 1.000。本机若低于 0.999，退回 BF16 上机</td></tr>
+<tr><td>Thor</td><td>FP8，已用现场图像校准</td><td>平均余弦 ≥ 0.999，最差样本 ≥ 0.995。这是官方 LIBERO 的验收线，沿用到这份权重</td></tr>
+<tr><td>Thor</td><td>NVFP4</td><td>同上，而且 <code>Sa==32</code>。低于 0.995 就固定用 FP8</td></tr>
+</table>
+<p>测速丢掉前 200 次（含校准和捕获），再取 1000 次的中位数和 p95。把功耗模式、时钟、<code>Sa</code>、精度写进第 11 节的表。Orin 的 124 ms、Thor 的 20–41 ms 只作为数量级，不作为失败条件。</p>
+
+<h2>8. Training-time RTC</h2>
+<p>本权重每一步去噪做两件事，以 <code>src/lerobot/policies/pi05/modeling_pi05.py</code> 的 <code>sample_actions</code> 为准：</p>
+<ol>
+<li>算速度之前，把 <code>x_t</code> 的前 6 步写成上一 chunk 的剩余动作。这 6 个位置的 flow time 是 0，后 26 个位置用当前步的 time。<code>dt = -1/10</code>，time 从 1.0 走到 0.1。</li>
+<li>Euler 更新 <code>x_t = x_t + dt * v_t</code> 之后，再把前 6 步写回同一段剩余动作。</li>
+</ol>
+<p>第一帧 <code>prev_chunk_left_over is None</code>，不钉。从第二帧起钉前 6 步。前缀在归一化空间，pad 维是 0。不要把后处理之后的绝对关节角喂回去。</p>
+<h3>8.1 Orin</h3>
+<p><code>Pi05TorchFrontendRtx._precompute_decoder_styles</code> 现在把一个 time 铺满 32 个位置。改成静态的两段，这样 CUDA graph 仍然只有一张：</p>
+<ul>
+<li>对 <code>step = 0 .. 9</code>，<code>t_suffix = 1.0 + step * (-1/10)</code>。</li>
+<li>位置 <code>0:6</code> 用 <code>t = 0</code> 的 time MLP 输出。</li>
+<li>位置 <code>6:32</code> 用 <code>t_suffix</code> 的输出。</li>
+<li><code>time_emb</code>、<code>style_attn</code>、<code>style_ffn</code>、<code>style_final</code> 都按位置写，不再 <code>expand</code> 成整段同一个向量。</li>
+</ul>
+<p>去噪循环里加两次固定长度的拷贝，放进已捕获的 graph：每个 step 算速度之前，以及 Euler 之后，执行 <code>x_t[:6, :] = prefix[:6, :]</code>。<code>infer</code> 增加 <code>prev_action_norm</code>，形状 <code>(32, 32)</code>。第一帧传 <code>None</code>，走第 7 节那张普通图；之后传剩余动作，走这张 d=6 的图。两张图都是静态的，不要为 0–10 的延迟各捕获一张。</p>
+<h3>8.2 Thor</h3>
+<p>Thor 的 <code>infer()</code> 不读上一 chunk。类里已有的 <code>_capture_model_runtime_rtc_prefix_graph</code> 使用 <code>rtc_guidance_weight</code>，那是推理时 guidance，和这份权重的训练方式不是同一条。不要把 <code>prefix_len=6</code> 配上 guidance 权重当作训练时 RTC。</p>
+<p>要改的是 Thor 解码循环里的 time 和 <code>x_t</code>，语义与 8.1 相同：前 6 个位置 time 为 0，Euler 前后各写回一次前缀，<code>Sa</code> 已经是 32。捕获一张 <code>prefix_len=6</code> 的静态图。图的输入缓冲是归一化剩余动作，不是 guidance 标量。</p>
+<h3>8.3 第二帧门禁</h3>
+<ol>
+<li>第一帧两边都不带前缀，保存 LeRobot 的归一化 chunk，记为 <code>prev</code>，形状 <code>(32, 32)</code>。</li>
+<li>第二帧换图、换噪声。LeRobot 调用 <code>sample_actions(..., inference_delay=6, prev_chunk_left_over=prev)</code>。FlashRT 传入同一份 <code>prev</code>。</li>
+<li>比较反归一化之后、绝对动作之前的 <code>(32, 7)</code>。</li>
+</ol>
+<p>门禁：</p>
+<ul>
+<li>前 6 步与 <code>prev</code> 反归一化后的前 7 维最大绝对误差 &lt; 1e-5。</li>
+<li>后 26 步最大绝对误差 &lt; 1e-2，余弦 &gt; 0.999（BF16）。量化档再相对这条 BF16+RTC 结果：Orin INT8 余弦 &gt; 0.999，Thor FP8 / NVFP4 平均余弦 ≥ 0.999、最差 ≥ 0.995。</li>
+</ul>
+<p>前 6 步对不上，是前缀没写进 <code>x_t</code>，或写进之后被 Euler 冲掉。后 26 步对不上而前 6 步是对的，是 time 仍然整段相同。两种都回到 8.1 或 8.2。</p>
+
+<h2>9. 接到 HIL</h2>
+<p>只替换 <code>examples/rac/hil_data_collection.py</code> 推理线程里 <code>predict_action_chunk</code> 所进入的去噪。队列、<code>ActionQueue.merge</code>、<code>fixed_inference_delay=6</code>、<code>execution_horizon=10</code>、<code>action_queue_size_to_get_new_actions=12</code> 不动。</p>
+<p><code>scripts/run_hil_collect_data.sh</code> 的 spacemouse 分支改成：</p>
+<pre>--use_torch_compile=false
+--fixed_inference_delay=6
+--rtc.execution_horizon=10
+--action_queue_size_to_get_new_actions=12
+--dataset.fps=30</pre>
+<p><code>rtc.max_guidance_weight</code> 在训练时 RTC 打开时不会进入去噪，留着即可。不要把它改成推理时 guidance 来配合 FlashRT。</p>
+<p>数据流：</p>
+<ol>
+<li>LeRobot preprocessor 继续做相机顺序、resize 到 224、分位数归一化、状态写入 prompt。送给 FlashRT 的图像用 resize 之后的 uint8，让前端做自己的 <code>/127.5-1</code>。</li>
+<li>第一帧 <code>prev_action_norm=None</code>。之后把队列里尚未执行的归一化动作按时间对齐，长度不足 6 的用上一 chunk 里已经对齐的剩余补齐，pad 维填 0。</li>
+<li>Orin 把 <code>raw_actions[:, :7]</code> 送进完整后处理。Thor 把已反归一化的 <code>actions</code> 送进绝对动作和 OSQP。</li>
+<li>后处理后的 chunk 仍交给原来的 <code>merge</code>。</li>
+</ol>
+<p>控制周期是 30 Hz，一步 33 ms。chunk 32、阈值 12 时，两次推理之间大约执行 20 步，队列里留下约 12 步，也就是大约 400 ms。推理中位数要低于 400 ms，队列才不会被抽空。训练允许的最大延迟是 10 步（约 333 ms），<code>fixed_inference_delay=6</code>（约 200 ms）盖住 Orin INT8 大约 4 步、Thor FP8 大约 1 到 2 步的实际耗时。测完之后如果中位数稳定地只占 1 到 2 步，可以再把 d 改小，但要连同第 8 节的静态图一起改，并重做第二帧门禁。</p>
+<p>Orin 32GB 的公开 BF16 大约 216 ms，仍低于 400 ms，可以跑。优先用 64GB 跑 INT8，显存里同时放得下 graph 和校准缓冲。Thor 的统一内存更宽裕，限制在 <code>Sa=32</code> 的图能不能捕获，不在权重装不装得下。</p>
+
+<h2>10. 上机</h2>
+<p>空跑一个 episode，手不要放在示教器上。任务句：</p>
+<pre>Please sort and return the silver screws in the grey box to their proper places.</pre>
+<p>日志里应看到：第一次推理没有前缀，之后每次延迟是 6；<code>delayqueue</code> 在一次推理之后降到 12 附近再触发下一次，而不是停在 28 附近。停在 28 说明几乎只发出了被钉住的前缀，手臂会停在当前关节。那是队列阈值，阈值保持 12。</p>
+<p>记录里 <code>|action - state|</code> 的均值应明显高于 0.001 rad。回到 0.001 附近时，先看阈值是不是 12，再看传给 FlashRT 的前缀是不是上一 chunk 的真实剩余。</p>
+<p>同时满足才算落地：</p>
+<ol>
+<li>第 7 节第一帧门禁通过。</li>
+<li>第 8 节前 6 步被钉住，后 26 步过余弦门禁。</li>
+<li>正式精度（Orin INT8 或 Thor FP8）相对 BF16 的门禁通过。NVFP4 未过就不要上机。</li>
+<li>一个 episode 里队列会消费到阈值 12，手臂离开当前关节。</li>
+<li>后处理仍是绝对动作加 OSQP。干预数据仍由原来的 spacemouse 分支写入。</li>
+</ol>
+
+<h2>11. 现场记录表</h2>
+<table>
+<tr><th>项</th><th>Orin</th><th>Thor</th></tr>
+<tr><td>板型 / 内存</td><td></td><td></td></tr>
+<tr><td><code>detect_arch()</code></td><td></td><td></td></tr>
+<tr><td><code>chunk</code> / <code>Sa</code></td><td></td><td></td></tr>
+<tr><td>精度</td><td></td><td></td></tr>
+<tr><td>nvpmodel / jetson_clocks</td><td></td><td></td></tr>
+<tr><td>第一帧最大误差 / 余弦</td><td></td><td></td></tr>
+<tr><td>第二帧前 6 步误差</td><td></td><td></td></tr>
+<tr><td>第二帧后 26 步余弦</td><td></td><td></td></tr>
+<tr><td>量化相对 BF16 的余弦</td><td></td><td></td></tr>
+<tr><td>200 次预热后的中位数 / p95（ms）</td><td></td><td></td></tr>
+<tr><td>空跑时 delayqueue 最低值</td><td></td><td></td></tr>
+<tr><td><code>|action-state|</code> 均值（rad）</td><td></td><td></td></tr>
+</table>
+
+<h2>12. 停手条件</h2>
+<ul>
+<li>计算能力不是 8.7 或 11.0。</li>
+<li>Thor 上 <code>pipe.Sa</code> 不是 32。</li>
+<li>用官方 <code>load_model(...).predict()</code> 直接驱动这份 chunk 32 的权重。</li>
+<li>在 Orin 上设置 <code>use_fp8=True</code> 或 NVFP4，指望它生效。</li>
+<li>打开 <code>FVK_PI05_RTX_INT8_VISION</code>、<code>vision_pool_factor</code> 不为 1，或 <code>vision_num_layers</code> 小于 27。</li>
+<li>把 Thor 的 <code>rtc_guidance_weight</code> 图当作训练时 RTC。</li>
+<li>在 FlashRT 去噪之外再套 <code>torch.compile</code>。</li>
+<li>把 FlashRT 已经反归一化的 7 维再送进 LeRobot unnormalizer，或把 Orin 的归一化 <code>raw_actions</code> 直接发给关节。</li>
+<li>为了延迟把去噪步数改成不是 10，或把 chunk 改成不是 32。</li>
+<li>单独修改 <code>fixed_inference_delay</code>，而第 8 节的静态图仍是另一个 d。</li>
+</ul>
+
+<p class="meta">公开数字出处：FlashRT <code>docs/deployment_orin.md</code>（Orin 64GB，INT8，cache 1/2，chunk 为前端默认 10），<code>docs/thor/pi05.md</code>（Thor 官方镜像，LIBERO，horizon 10，FP8 40.71 ms，NVFP4 20.33 ms）。本手册的验收以第 7、8 节在这份 030000 权重上的测量为准。</p>
+</body>
+</html>
